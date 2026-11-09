@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEv
 import { flushSync } from 'react-dom'
 import type { Hit, Skill } from '../shared/types'
 import { Loader } from './ui/bits'
-import { Logo } from './ui/Logo'
 import { IconAgents, IconBrowser, IconClock, IconFlows, IconLibrary, IconPlus, IconPool, IconSave, IconSearch, IconSettings } from './ui/icons'
 import { Onboarding } from './views/Onboarding'
 import { RoomView } from './views/Room'
@@ -15,7 +14,7 @@ import { Savings } from './views/Savings'
 import { Library } from './views/Library'
 import { Browser, useBrowser } from './views/Browser'
 import { Palette, type Command } from './views/Palette'
-import { ago, boot, desk, isMac, mod, reload, unavailable, useApp, type Access } from './lib/desk'
+import { ago, boot, desk, mod, reload, unavailable, useApp, type Access } from './lib/desk'
 
 export type View =
   | { name: 'room'; id: string; focus?: string }
@@ -58,8 +57,6 @@ export function App() {
   const [look, setLookState] = useState<Look>(() => (new URLSearchParams(location.search).get('look') as Look | null) ?? saved('look', 'lunchbox'))
   const [ready, setReady] = useState<boolean>(saved('ready', false))
   const [arriving, setArriving] = useState(false)
-  const [full, setFull] = useState(false)
-  useEffect(() => { desk.call('fullscreen').then((f: boolean) => setFull(!!f)).catch(() => {}); return desk.on('fullscreen', (f) => setFull(!!f)) }, [])
   const [view, setView] = useState<View>(() => saved<View>('view', { name: 'new' }))
   const [palette, setPalette] = useState(false)
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
@@ -181,7 +178,7 @@ export function App() {
   return (
     <div className={`app${arriving ? ' arriving' : ''}`}>
       <aside className="sidebar">
-        <div className={`sbtop${isMac && !full ? ' mac' : ''}`}><Logo size={18} /></div>
+        <div className="sbtop" />
         <button className={`sbitem${on('new') ? ' on' : ''}`} onClick={() => go({ name: 'new' })}>{on('new') && sel}<IconPlus />New room<kbd>{mod}N</kbd></button>
         <button ref={searchButton} className={`sbitem${palette ? ' on' : ''}`} onClick={() => openPalette(true)}><IconSearch />Search<kbd>{mod}K</kbd></button>
         <div className="sbgap" />

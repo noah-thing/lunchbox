@@ -86,9 +86,6 @@ function createWindow() {
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   })
   win.once('ready-to-show', () => win?.show())
-  // macOS hides the window buttons in full screen; the sidebar moves the mark into their place.
-  win.on('enter-full-screen', () => emit('fullscreen', true))
-  win.on('leave-full-screen', () => emit('fullscreen', false))
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url)
     return { action: 'deny' }
@@ -117,7 +114,6 @@ function wire() {
   const h = (channel: string, fn: (...args: any[]) => unknown) => ipcMain.handle(channel, (_e, ...args) => fn(...args))
 
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
-  h('fullscreen', () => win?.isFullScreen() ?? false)
   h('agents', () => engine.agents)
   h('agents:refresh', () => engine.refresh())
   h('limits', () => limits.get())

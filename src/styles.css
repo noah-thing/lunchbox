@@ -95,10 +95,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 /* Window: a dark frame holding one sheet. The frame is chrome, the sheet is work. */
 .app{height:100%;display:grid;grid-template-columns:232px 1fr}
 .sidebar{display:flex;flex-direction:column;padding:0 8px 8px;min-height:0}
-.sbtop{height:44px;flex:none;display:flex;align-items:center;padding:0 7px;color:var(--ink);-webkit-app-region:drag}
-/* macOS: just after the window buttons (they end at 70px), on the same line */
-.sbtop.mac{padding-left:84px}
-.sbtop .logo{opacity:.92}
+.sbtop{height:44px;flex:none;-webkit-app-region:drag}
 .oblogo{display:block;margin-bottom:22px;color:var(--ink)}
 .about{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12.5px;color:var(--faint)}
 .about b{font-weight:500;color:var(--dim)}
@@ -329,6 +326,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .newbody{width:100%;max-width:var(--col);margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .newbody .band{margin-bottom:16px}
 .newbody h1{font-size:30px;font-weight:500;letter-spacing:-.02em;line-height:1.15}
+/* The mark greets you on the home screen, set to the cap height of the question. */
+.newbody h1.hello{display:flex;align-items:center;gap:12px}
+.newbody h1.hello .logo{flex:none;margin-top:-2px}
 .ideas{display:flex;gap:8px;flex-wrap:wrap}
 .ideas button{height:28px;padding:0 12px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--line2);font-size:12px;color:var(--dim);transition:color 140ms var(--out),background-color 140ms var(--out)}
 @media (hover:hover){.ideas button:hover{color:var(--ink);background:var(--hover)}}
