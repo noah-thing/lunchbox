@@ -8,6 +8,7 @@ import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/type
 import { env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
 import { chat, listModels, PROVIDERS } from './http'
+import { logoOf } from '../../shared/logos'
 import { localSetup } from '../local'
 
 export type Input = {
@@ -87,7 +88,7 @@ export const CATALOG: Def[] = [
     id: 'claude', name: 'Claude Code', short: 'Claude', maker: 'Anthropic', via: 'cli', bin: 'claude', tools: true, mark: 'claude',
     good: 'Design, careful edits, long reasoning', alphabet: '.:-=+*#%@',
     spawn: (i, file) => {
-      const allowed = [...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
+      const allowed = ['Task', 'Agent', ...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
       const hands = claudeHands(i, file)
       return {
         extra: hands.extra,
@@ -173,7 +174,7 @@ export function words(s: string) {
 }
 
 function fromConnector(c: Connector): Def {
-  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: c.kind === 'cli', mark: c.id, good: c.good || 'Added by you', alphabet: '.:+*#' }
+  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: c.kind === 'cli', mark: logoOf(c), good: c.good || 'Added by you', alphabet: '.:+*#' }
   if (c.kind !== 'cli') {
     PROVIDERS[`conn:${c.id}`] = { base: (c.base ?? '').replace(/\/+$/, ''), style: c.kind, prefer: c.model ? new RegExp(`^${c.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) : /./ }
     return { ...base, via: 'api', key: `conn:${c.id}`, provider: `conn:${c.id}` }
@@ -244,8 +245,13 @@ export async function detect(keys: Record<string, string>, models: Record<string
   )
 }
 
+// What Claude Code's --model takes: its short names follow the newest of each line, the full ids
+// pin a version. Anything else typed in the field is passed through as is.
+const CLAUDE_MODELS = ['fable', 'opus', 'sonnet', 'haiku', 'claude-fable-5-2', 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
+
 export async function modelsFor(id: string, keys: Record<string, string>) {
   const d = def(id)
+  if (d?.id === 'claude') return CLAUDE_MODELS
   if (!d || d.via === 'cli') return []
   const all = await listModels(providerOf(d), keys[d.key!] ?? '')
   return d.via === 'local' ? all.filter((m) => !/embed/i.test(m)) : all

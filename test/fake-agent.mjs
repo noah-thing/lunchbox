@@ -29,6 +29,23 @@ if (process.env.FAKE_SCRIPT === 'showcase') {
   process.exit(0)
 }
 
+// FAKE_SCRIPT=subagents: Claude splits the work across three subagents and reports back.
+if (process.env.FAKE_SCRIPT === 'subagents' && name === 'claude') {
+  const tasks = [['a', 'Map where auth tokens are checked', 'Explore', 'haiku'], ['b', 'Write tests for the token parser', 'general-purpose', 'sonnet'], ['c', 'Review the session middleware', 'code-reviewer', 'opus']]
+  say({ type: 'system', subtype: 'init', session_id: 'subs' })
+  say({ type: 'assistant', message: { content: [{ type: 'text', text: 'Splitting this into three parts that can run at once.' }, ...tasks.map(([id, description, subagent_type, model]) => ({ type: 'tool_use', id, name: 'Task', input: { description, prompt: description, subagent_type, model } }))] } })
+  const steps = [['a', 'Grep', { pattern: 'verifyToken' }], ['b', 'Read', { file_path: 'src/auth/token.ts' }], ['c', 'Read', { file_path: 'src/middleware/session.ts' }], ['a', 'Read', { file_path: 'src/auth/guard.ts' }], ['b', 'Write', { file_path: 'test/token.test.ts' }], ['b', 'Bash', { command: 'npm test -- token' }], ['c', 'Grep', { pattern: 'expires' }]]
+  for (const [parent, tool, input] of steps) { sleep(900); say({ type: 'assistant', parent_tool_use_id: parent, message: { content: [{ type: 'tool_use', id: parent + tool, name: tool, input }] } }) }
+  sleep(1200)
+  say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: 'Tokens are checked in src/auth/guard.ts and token.ts.' }] } })
+  sleep(Number(process.env.SUBS_HOLD ?? 0))
+  say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: '6 tests written, all passing.' }] } })
+  say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'c', content: 'Sessions never expire when the clock is skewed; one fix suggested.' }] } })
+  say({ type: 'assistant', message: { content: [{ type: 'text', text: '\n\nAll three are back. Tokens are checked in two places, the parser now has six passing tests, and the review found one real bug: sessions never expire when the clock is skewed.' }] } })
+  say({ type: 'result', subtype: 'success', is_error: false, result: 'done', session_id: 'subs', total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 80 } })
+  process.exit(0)
+}
+
 if (name === 'codex') {
   say({ type: 'thread.started', thread_id: 'thread-1' })
   say({ type: 'error', message: "You've hit your usage limit. Try again in 2 hours." })

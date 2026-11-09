@@ -39,4 +39,5 @@ export const IconForward = () => <svg {...P}><path d="M6.5 4l4 4-4 4" /></svg>
 export const IconReload = () => <svg {...P}><path d="M12.5 7.5A4.5 4.5 0 1 0 11 11" /><path d="M12.75 3.5v4h-4" /></svg>
 export const IconCamera = () => <svg {...P}><rect x="2" y="4.5" width="12" height="8.5" rx="1.5" /><circle cx="8" cy="8.75" r="2.25" /><path d="M5.5 4.5 6.5 3h3l1 1.5" /></svg>
 export const IconCode = () => <svg {...P}><path d="M5.5 5 2.5 8l3 3M10.5 5l3 3-3 3" /></svg>
+export const IconBranches = () => <svg {...P}><circle cx="4" cy="3.5" r="1.5" /><path d="M4 5v8" /><path d="M4 7.5c0 1.6 1 2 2.6 2h3.9" /><path d="M4 5.8c0 .9.7 1.2 1.6 1.2h4.9" /><circle cx="12" cy="7" r="1.25" /><circle cx="12" cy="9.5" r="1.25" /></svg>
 export const IconStop = () => <svg {...P}><rect x="4.5" y="4.5" width="7" height="7" rx="1" fill="currentColor" stroke="none" /></svg>

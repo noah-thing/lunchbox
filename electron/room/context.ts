@@ -50,7 +50,7 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
 }
 
 function acts(list: Act[]) {
-  const parts = list.slice(-8).map((a) => (a.t === 'cmd' ? `ran \`${a.command}\` (exit ${a.exit ?? '?'})` : a.t === 'edit' ? `edited ${a.path}` : `${a.name} ${a.detail}`.trim()))
+  const parts = list.slice(-8).map((a) => (a.t === 'cmd' ? `ran \`${a.command}\` (exit ${a.exit ?? '?'})` : a.t === 'edit' ? `edited ${a.path}` : a.t === 'agent' ? `subagent "${a.task}" (${a.state})` : `${a.name} ${a.detail}`.trim()))
   return parts.length ? `\n  [${parts.join('; ')}]` : ''
 }
 

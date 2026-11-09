@@ -112,7 +112,9 @@ export async function chat(name: string, key: string, model: string, system: str
     res = await fetch(`${p.base}/messages`, {
       method: 'POST', signal, headers: headers(p.style, key),
       body: JSON.stringify({
-        model: id, max_tokens: 8192, stream: true,
+        // Fable and Mythos think on every request and the thinking counts toward max_tokens, so
+        // the 5 family gets room for both; older models keep the smaller cap they accept.
+        model: id, max_tokens: /-5(-|$)/.test(id) ? 32000 : 8192, stream: true,
         // The system block is the same for the whole room, so it is kept for an hour, not five
         // minutes: a room left for lunch still starts from the cache.
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } }],

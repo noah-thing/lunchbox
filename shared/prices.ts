@@ -3,6 +3,7 @@
 // Haiku 5.5 doubles to $0.50 / $2.50 when a prompt runs past 100K tokens.
 // Only prices we know go in here; anything else is counted in tokens, never guessed in dollars.
 const CLAUDE: [RegExp, number, number, number][] = [
+  [/(fable|mythos)-5-2/, 8, 0.2, 40],
   [/(fable|mythos)-5-1/, 10, 0.25, 50],
   [/(fable|mythos)-5/, 10, 1, 50],
   [/opus-5-5/, 4, 0.2, 20],

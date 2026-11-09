@@ -81,7 +81,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    backgroundColor: dark ? '#0d0d0c' : '#f4f3ef',
+    backgroundColor: dark ? '#080807' : '#f4f3ef',
     ...(mac
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 15 } }
       : { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 44 } }),

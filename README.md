@@ -167,4 +167,4 @@ CI runs the type check, tests and build on macOS, Windows and Linux for every pu
 
 Copyright © 2026 noah-thing. All rights reserved.
 
-Agent marks come from [Lobe Icons](https://github.com/lobehub/lobe-icons) under the MIT license, see [licenses/lobe-icons.txt](licenses/lobe-icons.txt). Product names belong to their owners.
+Agent marks come from [Lobe Icons](https://github.com/lobehub/lobe-icons) under the MIT license, see [licenses/lobe-icons.txt](licenses/lobe-icons.txt). The llama.cpp, Aider and Crush marks come from those projects' own files, and the terminal and server icons from [Phosphor](https://phosphoricons.com) under the MIT license, see [licenses/phosphor-icons.txt](licenses/phosphor-icons.txt). Product names and logos belong to their owners.

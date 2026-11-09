@@ -8,7 +8,7 @@ import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
 import { roomCard } from '../ui/roomcard'
 import { openReport } from '../lib/report'
-import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
+import { IconBranches, IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
 import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
 import { Composer } from './Composer'
@@ -694,6 +694,7 @@ const toolName = (name: string) => name.replace(/^mcp__lunchbox__|^lunchbox\./, 
 function actLabel(a: Act) {
   if (a.t === 'cmd') return { code: a.command, tail: a.exit === null ? 'stopped' : `exit ${a.exit}`, bad: a.exit !== 0 }
   if (a.t === 'edit') return { code: a.path, tail: a.change === 'add' || a.change === 'write' ? 'wrote' : a.change === 'delete' ? 'deleted' : 'edited', bad: false }
+  if (a.t === 'agent') return { code: a.task, tail: a.state, bad: a.state === 'failed' }
   return { code: `${toolName(a.name)}${a.detail ? ' ' + a.detail : ''}`, tail: a.ok === false ? 'failed' : '', bad: a.ok === false }
 }
 
@@ -706,7 +707,9 @@ function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   const searched = (a: Act) => (a.t === 'cmd' ? (postsOf(a.out).posts.length ? searchOf(a.command) : null) : a.t === 'tool' && /^(x|web)_search$/.test(a.name) ? searchOf(`${a.name} ${a.detail ?? ''}`) : null)
   const shown = (a: Act) => !!searched(a) || (a.t === 'tool' && /make_image$/.test(a.name))
   const found = acts.flatMap((a, i) => { const q = searched(a); return q ? [<Sources key={`s${i}`} search={q} out={a.t === 'cmd' ? a.out : undefined} />] : [] })
-  acts = acts.filter((a) => !shown(a))
+  const subs = acts.filter((a): a is Extract<Act, { t: 'agent' }> => a.t === 'agent')
+  if (subs.length) found.unshift(<Subagents key="subs" list={subs} />)
+  acts = acts.filter((a) => !shown(a) && a.t !== 'agent')
   if (!acts.length) return <>{found}</>
   const cmds = acts.filter((a) => a.t === 'cmd').length
   const files = new Set(acts.flatMap((a) => (a.t === 'edit' ? [a.path] : []))).size
@@ -730,6 +733,45 @@ function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
       )}
     </div>
     </>
+  )
+}
+
+// Subagents an agent started for parts of its work, one row each: what it was asked, which kind
+// and model, what it is doing now, and how long it took. Rows keep their place as they finish.
+type Sub = Extract<Act, { t: 'agent' }>
+const took = (ms: number) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`)
+
+function Subagents({ list }: { list: Sub[] }) {
+  const running = list.filter((s) => s.state === 'running').length
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!running) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [running])
+  const failed = list.filter((s) => s.state === 'failed').length
+  const longest = Math.max(...list.map((s) => s.ms ?? now - s.started))
+  return (
+    <div className={`subs${running ? ' live' : ''}`}>
+      <header>
+        <IconBranches />
+        {running ? <span className="shimmer">{running === list.length ? `Running ${list.length} subagent${list.length > 1 ? 's' : ''}` : `${running} of ${list.length} subagents running`}</span>
+          : <span><b>{list.length} subagent{list.length > 1 ? 's' : ''}</b> finished</span>}
+        <span className="meta">{failed > 0 && <span className="bad">{failed} failed · </span>}{took(longest)}</span>
+      </header>
+      {list.map((s) => (
+        <div key={s.id} className={`subrow ${s.state}`}>
+          <span className="subicon">{s.state === 'running' ? <Loader size={10} /> : s.state === 'failed' ? <IconX /> : <span className="subtick">✓</span>}</span>
+          <div className="subwhat">
+            <div className="subline"><span className="subtask">{s.task}</span>{(s.kind || s.model) && <small>{[s.kind, s.model].filter(Boolean).join(' · ')}</small>}</div>
+            <div className="subdoing">
+              {s.state === 'running' ? (s.last ? <code>{s.last}</code> : <span>Starting</span>) : s.note ? <span className="subnote">{s.note}</span> : null}
+              <small>{s.tools ? `${s.tools} tool${s.tools > 1 ? 's' : ''} · ` : ''}{took(s.ms ?? now - s.started)}</small>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 

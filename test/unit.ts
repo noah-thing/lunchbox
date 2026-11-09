@@ -388,3 +388,43 @@ test('plan limits: tallies read logs once and pick up only what was added', asyn
   assert.equal(used(tally, Date.now() - 3600e3).fresh, 140)
   delete process.env.CLAUDE_CONFIG_DIR
 })
+
+test('claude: subagents get their own rows and never leak into the answer', () => {
+  const parser = claudeLike()
+  const lines = [
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Splitting this up.' }, { type: 'tool_use', id: 't1', name: 'Task', input: { description: 'Read the auth code', prompt: 'Find where tokens are checked', subagent_type: 'Explore', model: 'haiku' } }, { type: 'tool_use', id: 't2', name: 'Agent', input: { prompt: 'Write the tests\nfor the parser' } }] } },
+    { type: 'assistant', parent_tool_use_id: 't1', message: { content: [{ type: 'text', text: 'SUBAGENT TEXT' }, { type: 'tool_use', id: 's1', name: 'Grep', input: { pattern: 'verifyToken' } }] } },
+    { type: 'user', parent_tool_use_id: 't1', message: { content: [{ type: 'tool_result', tool_use_id: 's1', content: 'src/auth.ts:12' }] } },
+    { type: 'stream_event', parent_tool_use_id: 't1', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'MORE SUBAGENT TEXT' } } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'Tokens are checked in src/auth.ts line 12.' }] }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', is_error: true, content: 'Stopped' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: ' Done.' }] } },
+  ]
+  const updates = lines.map((l) => parser.line(l))
+  assert.equal(parser.turn.text, 'Splitting this up. Done.', 'nothing a subagent says reaches the answer')
+  const rows = updates.flatMap((u) => u?.agents ?? [])
+  assert.deepEqual(rows.filter((r) => r.state === 'running' && r.tools === 0).map((r) => r.task), ['Read the auth code', 'Write the tests'], 'both rows appear as soon as they start')
+  const moving = rows.find((r) => r.id === 't1' && r.tools === 1)
+  assert.equal(moving?.last, 'Grep verifyToken', 'a row shows the tool its subagent is on')
+  const ended = parser.turn.acts.filter((a) => a.t === 'agent')
+  assert.deepEqual(ended.map((a) => a.t === 'agent' && [a.id, a.state, a.kind, a.model]), [['t1', 'done', 'Explore', 'haiku'], ['t2', 'failed', undefined, undefined]])
+  assert.equal(ended[0].t === 'agent' && ended[0].note, 'Tokens are checked in src/auth.ts line 12.')
+  assert.ok(!parser.turn.acts.some((a) => a.t === 'tool'), 'the subagent calls are not listed as plain tool calls')
+})
+
+test('prices: Fable 5.2 at its own rates, not 5.1', async () => {
+  const { claudePrice } = await import('../shared/prices')
+  assert.deepEqual(claudePrice('claude-fable-5-2'), { input: 8, read: 0.2, output: 40 })
+  assert.deepEqual(claudePrice('claude-fable-5-1'), { input: 10, read: 0.25, output: 50 })
+  assert.deepEqual(claudePrice('claude-mythos-5-2'), { input: 8, read: 0.2, output: 40 })
+})
+
+test('connectors wear their product logo, or a terminal or server', async () => {
+  const { logoOf } = await import('../shared/logos')
+  assert.equal(logoOf({ kind: 'openai', base: 'https://api.groq.com/openai/v1' }), 'groq')
+  assert.equal(logoOf({ kind: 'cli', command: '/usr/local/bin/aider --yes' }), 'aider')
+  assert.equal(logoOf({ kind: 'cli', command: 'cursor-agent' }), 'cursor')
+  assert.equal(logoOf({ kind: 'cli', command: 'my-tool' }), 'terminal')
+  assert.equal(logoOf({ kind: 'openai', base: 'http://10.0.0.2:9000/v1' }), 'server')
+  assert.equal(logoOf({ kind: 'anthropic', base: 'https://gateway.example.com' }), 'claude')
+})

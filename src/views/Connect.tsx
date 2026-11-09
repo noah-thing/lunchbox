@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Connector } from '../../shared/types'
-import { Loader } from '../ui/bits'
+import { Loader, Mark } from '../ui/bits'
+import { logoOf } from '../../shared/logos'
 import { IconClose } from '../ui/icons'
 import { desk, reload, useApp } from '../lib/desk'
 
@@ -101,7 +102,7 @@ export function ConnectorSheet({ edit, close, say }: { edit?: Connector; close: 
         <div className="presets">
           {PRESETS[c.kind].map((p) => (
             <button key={p.label} onClick={() => { const { label, keyUrl: url, ...rest } = p; put(rest); setKeyUrl(url) }}>
-              {p.label}{p.free && <small>free</small>}{p.command && found[p.command] && <i title="Installed on this computer" />}
+              <Mark seed={logoOf({ ...p, kind: c.kind })} size={12} />{p.label}{p.free && <small>free</small>}{p.command && found[p.command] && <i title="Installed on this computer" />}
             </button>
           ))}
         </div>

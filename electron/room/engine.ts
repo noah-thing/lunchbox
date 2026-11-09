@@ -582,6 +582,11 @@ export class Engine {
           if (n >= LOOP && !looped) { looped = a.command; running.stop() }
         }
       }
+      for (const s of u.agents ?? []) {
+        const at = lt.acts.findIndex((a) => a.t === 'agent' && a.id === s.id)
+        if (at >= 0) lt.acts[at] = s
+        else lt.acts.push(s)
+      }
       if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
       this.changed(room)
     })

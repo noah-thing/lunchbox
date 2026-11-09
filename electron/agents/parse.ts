@@ -15,7 +15,8 @@ export type Turn = {
   working?: string
 }
 
-export type Update = { delta?: string; acts?: Act[]; working?: string }
+// agents carries subagents as they change; each replaces the one with the same id.
+export type Update = { delta?: string; acts?: Act[]; working?: string; agents?: Extract<Act, { t: 'agent' }>[] }
 
 // Claude Code reports cache reads and writes per model, so the saving is priced per model at API
 // rates. A subscription pays nothing per token; this is what the same work would have cost.
@@ -101,12 +102,29 @@ export function toAct(name: string, input: Record<string, unknown>, raw: string,
 
 // Claude Code and Grok Build share this shape: system/init, stream_event deltas, assistant and
 // user messages carrying tool_use and tool_result, then a result line with usage.
+const SUBAGENT = /^(Task|Agent)$/
+
 export function claudeLike() {
   const turn = newTurn()
   const pending = new Map<string, { name: string; input: Record<string, unknown> }>()
+  const subs = new Map<string, Extract<Act, { t: 'agent' }>>()
   let streamed = false
 
+  // A subagent's own messages carry the id of the call that started it. They never reach the
+  // answer; they only move its row along.
+  function inside(o: any): Update | null {
+    const s = subs.get(o.parent_tool_use_id)
+    if (!s || o.type !== 'assistant') return null
+    for (const c of o.message?.content ?? []) {
+      if (c.type !== 'tool_use') continue
+      s.tools++
+      s.last = `${c.name} ${detail(c.input)}`.trim().slice(0, 140)
+    }
+    return { agents: [{ ...s }] }
+  }
+
   function line(o: any): Update | null {
+    if (o.parent_tool_use_id) return inside(o)
     switch (o.type) {
       case 'system':
         if (o.subtype === 'init' && o.session_id) turn.session = o.session_id
@@ -130,24 +148,41 @@ export function claudeLike() {
         for (const c of o.message?.content ?? []) {
           if (c.type === 'text' && !streamed && c.text) delta += c.text
           if (c.type === 'tool_use') pending.set(c.id, { name: c.name, input: c.input ?? {} })
+          if (c.type === 'tool_use' && SUBAGENT.test(c.name)) {
+            const i = c.input ?? {}
+            const task = String(i.description || String(i.prompt ?? '').split('\n')[0] || 'Subagent').slice(0, 140)
+            subs.set(c.id, { t: 'agent', id: c.id, task, kind: i.subagent_type || undefined, model: i.model || undefined, state: 'running', tools: 0, started: Date.now() })
+          }
         }
         streamed = false
-        const tool = [...pending.values()].pop()
+        const started = [...subs.values()].filter((s) => s.state === 'running' && s.tools === 0).map((s) => ({ ...s }))
+        const tool = [...pending.values()].filter((t) => !SUBAGENT.test(t.name)).pop()
         const working = tool ? `${tool.name} ${detail(tool.input)}`.trim() : undefined
         if (delta) turn.text += delta
-        return delta || working ? { delta: delta || undefined, working } : null
+        return delta || working || started.length ? { delta: delta || undefined, working, agents: started.length ? started : undefined } : null
       }
       case 'user': {
         const acts: Act[] = []
+        const ended: Extract<Act, { t: 'agent' }>[] = []
         for (const c of o.message?.content ?? []) {
           if (c.type !== 'tool_result') continue
           const call = pending.get(c.tool_use_id)
           if (!call) continue
           pending.delete(c.tool_use_id)
+          const s = subs.get(c.tool_use_id)
+          if (s) {
+            s.state = c.is_error ? 'failed' : 'done'
+            s.ms = Date.now() - s.started
+            s.last = undefined
+            s.note = toolText(c.content).replace(/\s+/g, ' ').trim().slice(0, 200) || undefined
+            ended.push({ ...s })
+            turn.acts.push({ ...s })
+            continue
+          }
           acts.push(toAct(call.name, call.input, toolText(c.content) || toolText(o.tool_use_result?.stdout), !!c.is_error))
         }
         turn.acts.push(...acts)
-        return acts.length ? { acts } : null
+        return acts.length || ended.length ? { acts: acts.length ? acts : undefined, agents: ended.length ? ended : undefined } : null
       }
       case 'result': {
         const u = o.usage ?? {}
