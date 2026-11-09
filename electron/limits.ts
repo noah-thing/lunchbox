@@ -172,16 +172,19 @@ const LENGTH: Record<string, number> = { '5h': 5 * HOUR, day: DAY, week: 7 * DAY
 // Fresh tokens are what plan limits are built on: new input, cache writes and output. Cache reads
 // cost a tenth of an input token or less and barely move a plan window, so they are left out.
 // A window's size is the fresh tokens used in it divided by the share the provider says is used.
-// Only measured past 5%, where whole-percent rounding stops mattering. Use of the same plan on
-// another computer makes the share climb with no tokens in this computer's logs, which can only
-// make a measurement read low, so the largest of the last two weeks is the one shown.
+// Providers round the share to whole percents, so a reading at 2% can be a quarter off while one
+// at 40% is within about one percent. The reading taken at the highest share in the last two weeks
+// is the one shown, which also carries last week's precise size into a new, barely used week.
 export function size(fresh: number, share: number) {
-  return share >= 0.05 && fresh > 0 ? Math.round(fresh / share) : undefined
+  return share >= 0.02 && fresh > 0 ? Math.round(fresh / share) : undefined
 }
 
-export function best(history: { tokens: number; at: number }[], now = Date.now()) {
+export type Reading = { tokens: number; at: number; share?: number }
+
+export function best(history: Reading[], now = Date.now()) {
   const recent = history.filter((h) => now - h.at < 14 * DAY)
-  return recent.length ? Math.max(...recent.map((h) => h.tokens)) : undefined
+  if (!recent.length) return undefined
+  return recent.reduce((a, b) => ((b.share ?? 0) > (a.share ?? 0) || ((b.share ?? 0) === (a.share ?? 0) && b.at > a.at) ? b : a)).tokens
 }
 
 // Grok rewrites a small usage file per session rather than appending, so it is summed directly.
@@ -254,7 +257,7 @@ export class Limits {
       for (const s of snapshots(tally)) {
         const tokens = size(usedSince(tally, s.start, s.at).fresh, s.used)
         const key = `${id}:${s.id}`
-        if (tokens && !(this.store.calib[key] ?? []).some((h) => h.at === s.at)) (this.store.calib[key] ??= []).push({ tokens, at: s.at })
+        if (tokens && !(this.store.calib[key] ?? []).some((h) => h.at === s.at)) (this.store.calib[key] ??= []).push({ tokens, at: s.at, share: s.used })
       }
     }
     for (const w of timed) {
@@ -263,7 +266,7 @@ export class Limits {
       const key = `${id}:${w.id}`
       const history = (this.store.calib[key] ?? []).filter((h) => Date.now() - h.at < 14 * DAY)
       const measured = size(fresh, share)
-      if (measured) history.push({ tokens: measured, at: Date.now() })
+      if (measured) history.push({ tokens: measured, at: Date.now(), share })
       this.store.calib[key] = history.slice(-200)
       w.total = best(history)
       w.unit = 'tokens'

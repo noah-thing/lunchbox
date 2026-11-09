@@ -345,11 +345,12 @@ test('savings: the ledger sums per day, per agent and per room', async () => {
 test('plan limits: window size is fresh tokens over the share used, the largest recent one shown', async () => {
   const { size, best } = await import('../electron/limits')
   assert.equal(size(2_000_000, 0.2), 10_000_000)
-  assert.equal(size(90_000, 0.03), undefined, 'below 5% the whole-percent rounding is too coarse')
+  assert.equal(size(90_000, 0.03), 3_000_000)
+  assert.equal(size(10_000, 0.01), undefined, 'at 1% rounding could be off by half')
   assert.equal(size(0, 0.4), undefined, 'no tokens on this computer, nothing to measure from')
   const now = Date.now()
-  // Use on another computer pushes the share up with no local tokens, so readings only err low.
-  assert.equal(best([{ tokens: 8e6, at: now - 3600e3 }, { tokens: 10e6, at: now - 2 * 86400e3 }, { tokens: 4e6, at: now }], now), 10e6)
+  // The reading at the highest share is the least affected by whole-percent rounding.
+  assert.equal(best([{ tokens: 8e6, at: now - 3600e3, share: 0.04 }, { tokens: 10e6, at: now - 2 * 86400e3, share: 0.62 }, { tokens: 12e6, at: now, share: 0.03 }], now), 10e6)
   assert.equal(best([{ tokens: 30e6, at: now - 20 * 86400e3 }], now), undefined, 'older than two weeks no longer counts')
 })
 

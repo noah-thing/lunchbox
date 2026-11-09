@@ -103,7 +103,7 @@ function Allowance({ a }: { a: AgentInfo }) {
   const windows = limits?.windows ?? []
   const left = budget > 0 ? Math.max(0, 1 - (used?.cost ?? 0) / budget) : out ? 0 : 1
   const via = a.via === 'cli' ? (limits?.plan ? `${limits.plan} plan` : 'Your plan') : a.via === 'local' ? 'This computer, free' : 'Your API key'
-  const line = why && !out ? why : `${via}${used ? ` · ${tokens(used.input + used.output + used.cached)} tokens today` : ' · nothing used today'}`
+  const line = why && !out ? why : `${via}${used ? ` · ${tokens(used.input + used.output + used.cached)} tokens today in Lunchbox` : ' · nothing used in Lunchbox today'}`
   return (
     <div className="setting allowance">
       <Mark seed={a.mark} size={20} />
@@ -133,11 +133,11 @@ function WindowRow({ w, stale, at }: { w: PlanWindow; stale?: boolean; at?: numb
   const count = (n: number) => (w.unit === 'requests' ? Math.round(n).toLocaleString() : tokens(n))
   const size = w.total
     ? `${count(w.total * left)} of ${count(w.total)}${w.unit === 'requests' ? ' requests' : ''}`
-    : 'size after 5% use'
+    : 'size after 2% use'
   const tip = w.unit === 'requests'
     ? `Google publishes this limit. Requests are counted from Gemini CLI's own log of today's replies.`
     : w.total
-      ? `Fresh tokens this window holds: new input, cache writes and output. Measured from this computer's logs against the share ${w.share !== undefined ? 'Grok Build has used of the pool' : 'the provider reports used'}, largest of the last two weeks. Cache reads are left out because they barely count toward plan limits.`
+      ? `Fresh tokens this window holds: new input, cache writes and output. Measured from this computer's logs against the share ${w.share !== undefined ? 'Grok Build has used of the pool' : 'the provider reports used'}, using the reading taken at the highest share in the last two weeks. Cache reads are left out because they barely count toward plan limits.`
       : `The provider reports only a percentage. Once a little of this window is used, Lunchbox works out its size from the tokens in this computer's logs.`
   return (
     <div className="window" title={stale && at ? `As of the last Codex run, ${clock(at)}` : undefined}>
