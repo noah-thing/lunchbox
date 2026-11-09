@@ -80,7 +80,21 @@ Every agent runs as the real tool, with its own login and plan. Lunchbox never r
 
 ## Quick start
 
-**1. Get Node and at least one agent.** You need [Node 24](https://nodejs.org). Any of these agents work, and Lunchbox finds the ones you have on first launch.
+**1. Install Lunchbox.** One line downloads the latest version for your computer, installs it and opens it.
+
+```sh
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/noah-thing/lunchbox-releases/main/install.sh | sh
+```
+
+```powershell
+# Windows, in PowerShell
+irm https://raw.githubusercontent.com/noah-thing/lunchbox-releases/main/install.ps1 | iex
+```
+
+Prefer a normal download? The dmg, the Windows installer, the deb and the AppImage are all under [Releases](https://github.com/noah-thing/lunchbox-releases/releases/latest). Lunchbox updates itself after that.
+
+**2. Have at least one agent.** Lunchbox finds the ones you have on first launch.
 
 | Agent | Install | Sign in |
 | --- | --- | --- |
@@ -89,21 +103,9 @@ Every agent runs as the real tool, with its own login and plan. Lunchbox never r
 | Gemini CLI | `npm install -g @google/gemini-cli` | `gemini` |
 | Grok Build | [x.ai/cli](https://x.ai/cli) | `grok login` |
 | Local models | [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai) or `llama-server` | none |
-| API keys | Anthropic, OpenAI, xAI, Google, OpenRouter | Agents page in the app |
-
-**2. Run Lunchbox.**
-
-```sh
-git clone https://github.com/noah-thing/lunchbox.git
-cd lunchbox
-npm install
-npm run dev
-```
+| API keys | Anthropic, OpenAI, xAI, Google, OpenRouter and more | Agents page in the app |
 
 **3. Say what you want done** and press Enter.
-
-> [!NOTE]
-> Lunchbox is in private development. Every tagged version builds a dmg for macOS, an installer for Windows, and an AppImage and deb for Linux. Until the first public release, run it from source as above.
 
 ## How it works
 
@@ -153,7 +155,12 @@ Each room is one `.jsonl` file you can open in any editor. Plan limits are read 
 
 ## Development
 
+You need [Node 24](https://nodejs.org).
+
 ```sh
+git clone https://github.com/noah-thing/lunchbox.git
+cd lunchbox
+npm install
 npm run dev         # Vite and Electron with hot reload
 npm test            # policy rules, parsers, caching, limits and a full room with stand-in agents
 npm run typecheck

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for taking the time. Lunchbox is in private development, so changes go through pull requests on this repository.
+Thanks for taking the time. Changes go through pull requests on this repository.
 
 ## Setup
 
