@@ -276,7 +276,7 @@ function Ev({ mark, grouped = false, className = '', id, children }: { mark: Rea
 function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
   const from = agentOf(e.from, agents).short
   const why = /^(is |hit )/.test(e.reason) ? `${from} ${e.reason}` : `${from} could not start: ${e.reason}`
-  const next = e.to ? `${agentOf(e.to, agents).short} took over with the same memory.` : 'Nobody else in the crew could take over.'
+  const next = e.to ? `${agentOf(e.to, agents).short} took over with the same memory.` : e.arena ? 'The others answered without it.' : 'Nobody else in the crew could take over.'
   return `${why}. ${next}${e.until && e.until > Date.now() ? ` Back at ${clock(e.until)}.` : ''}`
 }
 

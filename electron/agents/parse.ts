@@ -246,5 +246,20 @@ export function limitOf(text: string): { until: number } | null {
 export function reason(stderr: string) {
   const lines = stderr.split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/^at\s|node:internal|^\s*\^/.test(l))
   const hit = lines.find((l) => /not supported|no longer supported|migrate|sign ?in|log ?in|auth|api key|quota|limit|not found|permission|denied|error/i.test(l))
-  return (hit ?? lines.pop() ?? '').replace(/^(error|fatal):\s*/i, '').slice(0, 300)
+  return plain((hit ?? lines.pop() ?? '').replace(/^(error|fatal):\s*/i, '')).slice(0, 300)
+}
+
+// CLIs often pass the provider's JSON error straight through. Keep the sentence a person needs.
+export function plain(text: string) {
+  const start = text.indexOf('{')
+  let message = text
+  if (start >= 0) {
+    try {
+      const o = JSON.parse(text.slice(start))
+      message = o.error?.message ?? o.message ?? (typeof o.error === 'string' ? o.error : text)
+    } catch {}
+  }
+  const model = message.match(/['"`]([\w.:-]+)['"`] model is not supported when using Codex with a ChatGPT account/)
+  if (model) return `its model ${model[1]} is not available on a ChatGPT plan. Pick another model for Codex in Agents, or change model in ~/.codex/config.toml`
+  return message.replace(/\s+/g, ' ').trim()
 }

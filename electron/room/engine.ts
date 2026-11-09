@@ -5,6 +5,7 @@ import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pac
 import { asks, plan } from '../../shared/plan'
 import { classify, route, type Category } from '../../shared/route'
 import { detect, run } from '../agents'
+import { plain } from '../agents/parse'
 import type { Hands, Tool } from '../hands'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
@@ -462,8 +463,8 @@ export class Engine {
     if (!meta || (this.gens.get(room) ?? 0) !== ctx.gen) return null
     const blocked = this.why(who)
     if (blocked) {
-      const next = this.fallback(meta, who)
-      this.add(room, { kind: 'wall', from: who, to: next ?? '', reason: blocked, until: this.store.spent[who]?.until })
+      const next = ctx.arena ? null : this.fallback(meta, who)
+      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until })
       if (!next || ++ctx.hops.n > MAX_HOPS) return null
       return this.turn(room, next, task, access, ctx)
     }
@@ -531,13 +532,15 @@ export class Engine {
     if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
 
     if (!r.text && (r.limit || r.error)) {
+      if (r.error) r.error = plain(r.error)
       if (r.limit) this.store.spent[who] = { until: r.limit.until, reason: r.error ?? 'limit' }
       else this.store.health[who] = r.error!
       this.store.saveState()
       if (r.limit) this.hooks.emit('ledger', this.ledger())
       else this.refresh()
-      const next = this.fallback(meta, who)
-      this.add(room, { kind: 'wall', from: who, to: next ?? '', until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
+      // In side by side everyone is already answering, so a failed slot stays empty and says why.
+      const next = ctx.arena ? null : this.fallback(meta, who)
+      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
       if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
       return null
     }

@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react'
-import { describe, DAYS, EVERY, TEMPLATES, type Template } from '../../shared/flow'
+import { describe, DAYS, EVERY, GROUPS, TEMPLATES, type Group, type Template } from '../../shared/flow'
 import type { Access, Every, Flow, FlowStep } from '../../shared/types'
 import { Loader, Mark } from '../ui/bits'
 import { IconClose, IconFolder, IconPlay, IconPlus } from '../ui/icons'
@@ -13,6 +13,8 @@ export function Flows({ edit, template, go, say, workspace }: { edit?: string; t
   const running = useApp((s) => s.running)
   const agents = useApp((s) => s.agents)
   const editing = edit === 'new' || template ? 'new' : edit ? flows.find((f) => f.id === edit) : undefined
+  const [group, setGroup] = useState<Group | 'all'>('all')
+  const shown = TEMPLATES.filter((t) => group === 'all' || t.group === group)
 
   if (editing) {
     const t = TEMPLATES.find((x) => x.id === template)
@@ -84,9 +86,15 @@ export function Flows({ edit, template, go, say, workspace }: { edit?: string; t
         )}
 
         <section className="group rise" style={{ '--i': 2 } as CSSProperties}>
-          <h2>{flows.length ? 'Start from a template' : 'Start with one of these'}<span className="quiet">change anything before saving</span></h2>
+          <h2>
+            {flows.length ? 'Start from a template' : 'Start with one of these'}<span className="quiet">{TEMPLATES.length} ready to change and save</span>
+            <span className="seg">
+              <button className={group === 'all' ? 'on' : ''} onClick={() => setGroup('all')}>All</button>
+              {GROUPS.map((g) => <button key={g.id} className={group === g.id ? 'on' : ''} onClick={() => setGroup(g.id)}>{g.name}</button>)}
+            </span>
+          </h2>
           <div className="templates">
-            {TEMPLATES.map((t, i) => <TemplateCard key={t.id} t={t} i={i} open={() => go({ name: 'flows', template: t.id })} />)}
+            {shown.map((t, i) => <TemplateCard key={`${group}-${t.id}`} t={t} i={i} open={() => go({ name: 'flows', template: t.id })} />)}
           </div>
         </section>
       </div>
@@ -97,7 +105,7 @@ export function Flows({ edit, template, go, say, workspace }: { edit?: string; t
 function TemplateCard({ t, i, open }: { t: Template; i: number; open: () => void }) {
   const agents = useApp((s) => s.agents)
   return (
-    <button className="tcard" style={{ '--i': i } as CSSProperties} onClick={open}>
+    <button className="tcard" style={{ '--i': Math.min(i, 10) } as CSSProperties} onClick={open}>
       <span className="crewmarks">{t.crew.map((id) => <Mark key={id} seed={agentOf(id, agents).mark} size={14} />)}</span>
       <b>{t.name}</b>
       <span>{t.line}</span>

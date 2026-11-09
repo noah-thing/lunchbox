@@ -197,3 +197,31 @@ test('flows: steps run in order and the run is recorded', { skip: process.platfo
   assert.ok(!second.text.includes('first run'), '{{last}} carries the previous run')
   store.flush()
 })
+
+// Side by side: Codex is out, and its slot must not be handed to someone who is already answering.
+test('room: a failed side by side slot stays empty', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-arena-'))
+  const bin = join(root, 'bin')
+  const agent = join(process.cwd(), 'test', 'fake-agent.mjs')
+  require('node:fs').mkdirSync(bin)
+  for (const name of ['claude', 'codex', 'grok']) symlinkSync(agent, join(bin, name))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+  await engine.refresh()
+  const room = engine.create({ crew: ['codex', 'claude', 'grok'], workspace: root })
+  engine.send(room.id, 'testing', 'workspace', { arena: true })
+  await engine.idle(room.id)
+
+  const events = store.events(room.id)
+  const said = events.filter((e) => e.kind === 'say').map((e) => (e as { who: string }).who).sort()
+  assert.deepEqual(said, ['claude', 'grok'])
+  const wall = events.find((e) => e.kind === 'wall') as Extract<typeof events[number], { kind: 'wall' }>
+  assert.equal(wall.from, 'codex')
+  assert.equal(wall.to, '')
+  assert.ok(wall.arena)
+  store.flush()
+})

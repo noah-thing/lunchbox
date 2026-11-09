@@ -58,7 +58,7 @@ export type Event = { id: string; at: number } & (
   | { kind: 'say'; who: string; text: string; acts: Act[]; usage?: Usage; proof?: Proof[]; arena?: string; reply?: string; error?: string; ms?: number }
   | { kind: 'hands'; from: string; to: string; ask: string; answer: string; acts: Act[]; usage?: Usage; error?: string; ms?: number; via?: 'tool' }
   | { kind: 'image'; by: string; for: string; prompt: string; path: string; usage?: Usage }
-  | { kind: 'wall'; from: string; to: string; until?: number; reason: string }
+  | { kind: 'wall'; from: string; to: string; until?: number; reason: string; arena?: string }
   | { kind: 'decide'; text: string; options: { label: string; action: DecideAction }[] }
   | { kind: 'chose'; ref: string; label: string }
   | { kind: 'run'; who: string; command: string; cwd: string; verdict: Verdict; code: number | null; ms: number; out: string; how: string }
