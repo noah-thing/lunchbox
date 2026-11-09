@@ -15,6 +15,8 @@ const total = (r: Record<string, Usage> | undefined) => Object.values(r ?? {}).r
 const read = (u: { input: number; cached: number; kept?: number }) => u.input + u.cached + (u.kept ?? 0)
 const reused = (u: { cached: number; kept?: number }) => u.cached + (u.kept ?? 0)
 const ratio = (u: { input: number; cached: number; kept?: number }) => (read(u) ? reused(u) / read(u) : 0)
+// Money at list price. A week that has only written to the cache shows zero, never a negative saving.
+const cash = (n: number) => (n >= 0.01 ? `$${n.toFixed(2)}` : '$0.00')
 const pct = (n: number) => (n > 0 && n < 0.005 ? '<1%' : `${(n * 100).toFixed(n >= 0.995 || n === 0 ? 0 : 1)}%`)
 
 export function Savings({ go }: { go: (v: View) => void }) {
@@ -43,18 +45,19 @@ export function Savings({ go }: { go: (v: View) => void }) {
             <h1>Savings</h1>
             <p>What Lunchbox’s prompt caching saved you. Your agents still read the whole room, nothing is cut.</p>
           </div>
-          <span className="range">Last 7 days</span>
+          <span className="sv-range">Last 7 days</span>
         </header>
 
-        <div className="kpis rise" style={{ '--i': 1 } as CSSProperties}>
-          <Kpi label="Saved with prompt caching" value={money(week.saved ?? 0)} series={last7.map((d) => d.saved)}
-            info="Money taken off your bill at each provider's list price. Agents on a plan or running locally save tokens instead, shown next to this." />
+        <div className="sv-kpis rise" style={{ '--i': 1 } as CSSProperties}>
+          <Kpi label="Saved with prompt caching" value={cash(week.saved ?? 0)} series={last7.map((d) => Math.max(0, d.saved))}
+            note={(week.saved ?? 0) < 0.01 && read(week) > 0 ? 'Grows from the second turn in a room' : undefined}
+            info="At API list prices. The first turn in a room stores it in the cache, which costs a little extra; every turn after reads it back for about a tenth. On a plan this means more room before your limit." />
           <Kpi label="Tokens saved" value={tokens(reused(week))} series={last7.map(reused)}
             info="Tokens your agents read without paying full price: either the provider had them cached and charged about a tenth, or the agent already had them and Lunchbox skipped sending them." />
           <Kpi label="Savings rate" value={pct(ratio(week))} series={last7.map(ratio)} unit
             info="The share of everything your agents read that was saved by caching. Long rooms push this up." />
-          <Kpi label="You paid" value={money(week.cost)} series={last7.map((d) => d.cost)}
-            info={`With caching off, the same turns would have cost ${money(week.cost + (week.saved ?? 0))}.`} />
+          <Kpi label="Tokens read" value={tokens(read(week))} series={last7.map(read)}
+            info="Everything your agents read in the last 7 days, saved or not. Each turn rereads the room, so this grows fast in long rooms." />
         </div>
 
         <Card title="Tokens per day" info="Each bar is one day of everything your agents read: the part caching saved, and the part paid in full." className="rise" style={{ '--i': 2 } as CSSProperties}
@@ -66,12 +69,12 @@ export function Savings({ go }: { go: (v: View) => void }) {
           {crew.length ? (
             <Table head={['Agent', 'Tokens saved', 'Paid in full', 'Savings rate', 'Saved']}>
               {crew.map(({ a, id, u }) => (
-                <div className="trow" key={id}>
-                  <span className="who">{a ? <Mark seed={a.mark} size={16} /> : <i className="markgap" />}{a?.name ?? id}</span>
-                  <span className="n">{tokens(reused(u))}</span>
-                  <span className="n dim">{tokens(u.input)}</span>
-                  <span className="ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="n">{u.saved ? money(u.saved) : <em>{a?.via === 'local' ? 'free' : a?.via === 'cli' ? 'plan' : 'n/a'}</em>}</span>
+                <div className="sv-row" key={id}>
+                  <span className="sv-who">{a ? <Mark seed={a.mark} size={16} /> : <i className="sv-gap" />}{a?.name ?? id}</span>
+                  <span className="sv-num">{tokens(reused(u))}</span>
+                  <span className="sv-num sv-dim">{tokens(u.input)}</span>
+                  <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
+                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>{a?.via === 'local' ? 'free' : '—'}</em>}</span>
                 </div>
               ))}
             </Table>
@@ -82,12 +85,12 @@ export function Savings({ go }: { go: (v: View) => void }) {
           <Card title="By room" info="Rooms that saved the most. Long rooms save more, because every turn rereads everything before it." className="rise" style={{ '--i': 4 } as CSSProperties}>
             <Table head={['Room', 'Tokens saved', 'Paid in full', 'Savings rate', 'Saved']}>
               {top.map(({ room, id, u }) => (
-                <button className="trow link" key={id} onClick={() => go({ name: 'room', id })}>
-                  <span className="who">{room!.name}</span>
-                  <span className="n">{tokens(reused(u))}</span>
-                  <span className="n dim">{tokens(u.input)}</span>
-                  <span className="ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="n">{u.saved ? money(u.saved) : <em>plan</em>}</span>
+                <button className="sv-row sv-link" key={id} onClick={() => go({ name: 'room', id })}>
+                  <span className="sv-who">{room!.name}</span>
+                  <span className="sv-num">{tokens(reused(u))}</span>
+                  <span className="sv-num sv-dim">{tokens(u.input)}</span>
+                  <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
+                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>—</em>}</span>
                 </button>
               ))}
             </Table>
@@ -99,24 +102,24 @@ export function Savings({ go }: { go: (v: View) => void }) {
 }
 
 function Info({ text }: { text: string }) {
-  return <span className="info" tabIndex={0} aria-label={text}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 7.25v3.75" strokeLinecap="round" /><circle cx="8" cy="5.1" r=".2" strokeWidth="1.4" /></svg><span className="bubble" role="tooltip">{text}</span></span>
+  return <span className="sv-info" tabIndex={0} aria-label={text}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 7.25v3.75" strokeLinecap="round" /><circle cx="8" cy="5.1" r=".2" strokeWidth="1.4" /></svg><span className="sv-tip" role="tooltip">{text}</span></span>
 }
 
 function Card({ title, info, right, children, className = '', style }: { title: string; info: string; right?: ReactNode; children: ReactNode; className?: string; style?: CSSProperties }) {
   return (
-    <section className={`scard ${className}`} style={style}>
+    <section className={`sv-card ${className}`} style={style}>
       <header><h2>{title}</h2><Info text={info} /><span className="grow" />{right}</header>
       {children}
     </section>
   )
 }
 
-function Kpi({ label, value, series, info, unit = false }: { label: string; value: string; series: number[]; info: string; unit?: boolean }) {
+function Kpi({ label, value, series, info, note, unit = false }: { label: string; value: string; series: number[]; info: string; note?: string; unit?: boolean }) {
   return (
-    <div className="kpi">
+    <div className="sv-kpi">
       <header><small>{label}</small><Info text={info} /></header>
-      <div className="kpibody">
-        <b>{value}</b>
+      <div className="sv-kpibody">
+        <span className="sv-value"><b>{value}</b>{note && <small>{note}</small>}</span>
         <Spark values={series} max={unit ? 1 : undefined} />
       </div>
     </div>
@@ -128,11 +131,11 @@ function Spark({ values, max }: { values: number[]; max?: number }) {
   const id = useId()
   const W = 96, H = 34
   const top = max ?? Math.max(...values, 0)
-  if (values.length < 2) return <svg className="spark" width={W} height={H} />
+  if (values.length < 2) return <svg className="sv-spark" width={W} height={H} />
   const pts = values.map((v, i) => [(i / (values.length - 1)) * W, H - 2 - (top ? (v / top) * (H - 6) : 0)] as const)
   const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
   return (
-    <svg className="spark" width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+    <svg className="sv-spark" width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
       <defs><linearGradient id={id} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="currentColor" stopOpacity=".18" /><stop offset="1" stopColor="currentColor" stopOpacity="0" /></linearGradient></defs>
       <path d={`${line} L${W} ${H} L0 ${H} Z`} fill={`url(#${id})`} />
       <path d={line} fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" strokeLinecap="round" />
@@ -141,13 +144,13 @@ function Spark({ values, max }: { values: number[]; max?: number }) {
 }
 
 function Legend({ items }: { items: [string, string][] }) {
-  return <span className="legend">{items.map(([k, label]) => <span key={k}><i className={k} />{label}</span>)}</span>
+  return <span className="sv-legend">{items.map(([k, label]) => <span key={k}><i className={`sv-${k}`} />{label}</span>)}</span>
 }
 
 function Table({ head, children }: { head: string[]; children: ReactNode }) {
   return (
-    <div className="stable">
-      <div className="thead">{head.map((h) => <span key={h}>{h}</span>)}</div>
+    <div className="sv-table">
+      <div className="sv-thead">{head.map((h) => <span key={h}>{h}</span>)}</div>
       {children}
     </div>
   )
@@ -155,7 +158,7 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
 
 function Empty({ go }: { go: (v: View) => void }) {
   return (
-    <div className="sempty">
+    <div className="sv-empty">
       <span>No turns in the last 7 days.</span>
       <button className="btn small quiet" onClick={() => go({ name: 'new' })}>Start a room</button>
     </div>
@@ -168,25 +171,25 @@ function Chart({ days }: { days: Day[] }) {
   const step = nice(max / 2)
   const top = Math.max(step * 2, 1)
   return (
-    <div className="chart">
-      <div className="grid" aria-hidden="true">
+    <div className="sv-chart">
+      <div className="sv-grid" aria-hidden="true">
         {[2, 1, 0].map((k) => <div key={k}><span>{k ? tokens(step * k) : '0'}</span><i /></div>)}
       </div>
-      <div className="bars">
+      <div className="sv-bars">
         {days.map((d, i) => {
           const date = new Date(d.day + 'T12:00:00')
           const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
           const h = (n: number) => `${(n / top) * 100}%`
           return (
-            <div key={d.day} className="bar" style={{ '--i': i } as CSSProperties}>
-              <div className="stack" tabIndex={0}>
-                <i className="fresh" style={{ height: h(d.input) }} />
-                <i className="reuse" style={{ height: h(reused(d)) }} />
-                <span className="bubble" role="tooltip">
+            <div key={d.day} className="sv-bar" style={{ '--i': i } as CSSProperties}>
+              <div className="sv-stack" tabIndex={0}>
+                <i className="sv-fresh" style={{ height: h(d.input) }} />
+                <i className="sv-reuse" style={{ height: h(reused(d)) }} />
+                <span className="sv-tip" role="tooltip">
                   <b>{label}</b>
-                  <span><i className="reuse" />Saved by caching<em>{tokens(reused(d))}</em></span>
-                  <span><i className="fresh" />Paid in full<em>{tokens(d.input)}</em></span>
-                  {d.saved > 0 && <span className="saved">Saved<em>{money(d.saved)}</em></span>}
+                  <span><i className="sv-reuse" />Saved by caching<em>{tokens(reused(d))}</em></span>
+                  <span><i className="sv-fresh" />Paid in full<em>{tokens(d.input)}</em></span>
+                  {d.saved >= 0.01 && <span className="sv-saved">Saved<em>{money(d.saved)}</em></span>}
                 </span>
               </div>
               <small>{i === days.length - 1 ? 'Today' : i % 2 ? '' : label}</small>
