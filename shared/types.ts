@@ -129,7 +129,14 @@ export type Spent = { until: number; reason: string }
 
 // One limit window of a plan as its provider reports it. used is 0 to 1. tokens is Lunchbox's
 // measured estimate of how many tokens the whole window holds, once it has enough samples.
-export type PlanWindow = { id: string; label: string; used: number; resets?: number; tokens?: number; samples?: number }
+export type PlanWindow = {
+  id: string; label: string; used: number; resets?: number; start?: number
+  // How big the window is: requests where the provider publishes a count, otherwise fresh tokens
+  // measured from this computer's own logs.
+  total?: number; unit?: 'tokens' | 'requests'
+  // Grok's pool is shared with Grok's other products; this is Grok Build's part of what is used.
+  share?: number
+}
 export type PlanLimits = { agent: string; plan?: string; windows: PlanWindow[]; at: number; error?: string; reached?: boolean; stale?: boolean }
 
 export type Pack = {

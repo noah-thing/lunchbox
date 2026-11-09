@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { PlanLimits, PlanWindow, Usage } from '../shared/types'
 import type { Store } from './store'
-import { which } from './system'
+import { env, which } from './system'
+import { snapshots, tallied, update, used as usedSince, type Tally } from './tally'
 
 // Plan limits as each provider reports them for the login its CLI already has: how much of the
 // five hour window and the week is used, and when each resets. Tokens only go to the provider
@@ -12,6 +13,8 @@ import { which } from './system'
 // measured: Lunchbox counts the tokens its own turns use while the percentage climbs.
 
 const HOUR = 3600e3
+const codexHome = () => process.env.CODEX_HOME ?? join(homedir(), '.codex')
+const grokHome = () => process.env.GROK_HOME ?? join(homedir(), '.grok')
 const read = (p: string) => { try { return readFileSync(p, 'utf8') } catch { return '' } }
 const json = <T>(p: string): T | null => { try { return JSON.parse(read(p)) as T } catch { return null } }
 const sh = (file: string, args: string[]) => new Promise<string>((ok) => execFile(file, args, { timeout: 6000 }, (_e, out) => ok(String(out ?? '').trim())))
@@ -25,7 +28,7 @@ const span = (seconds: number) => (seconds >= 6 * 86400 ? 'Week' : seconds >= 86
 async function claude(): Promise<PlanLimits> {
   let raw = ''
   if (process.platform === 'darwin') raw = await sh('/usr/bin/security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'])
-  if (!raw) raw = read(join(homedir(), '.claude', '.credentials.json'))
+  if (!raw) raw = read(join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), '.credentials.json'))
   const auth = (() => { try { return JSON.parse(raw).claudeAiOauth } catch { return null } })()
   if (!auth?.accessToken) return { agent: 'claude', windows: [], at: Date.now(), error: 'Not signed in to a Claude plan' }
   const tier = String(auth.rateLimitTier ?? '')
@@ -48,9 +51,9 @@ async function claude(): Promise<PlanLimits> {
 }
 
 async function codex(): Promise<PlanLimits> {
-  const auth = json<{ tokens?: { access_token?: string; account_id?: string } }>(join(homedir(), '.codex', 'auth.json'))
+  const auth = json<{ tokens?: { access_token?: string; account_id?: string } }>(join(codexHome(), 'auth.json'))
   const token = auth?.tokens?.access_token
-  if (!token) return { agent: 'codex', windows: [], at: Date.now(), error: 'Not signed in with ChatGPT' }
+  if (!token) return { agent: 'codex', windows: [], at: Date.now(), error: 'Signed in with an API key, which is billed per token and has no plan window' }
   const windows = (r: { primary_window?: Raw; secondary_window?: Raw } | undefined): PlanWindow[] =>
     [r?.primary_window, r?.secondary_window].filter((w): w is Raw => !!w).map((w) => ({
       id: w.limit_window_seconds >= 6 * 86400 ? 'week' : '5h', label: span(w.limit_window_seconds), used: w.used_percent / 100, resets: w.reset_at * 1000,
@@ -67,7 +70,7 @@ async function codex(): Promise<PlanLimits> {
 // Codex writes its limits into every session log, so the last run is the fallback when the
 // usage endpoint cannot be reached.
 function fromRollouts(): PlanLimits {
-  const root = join(homedir(), '.codex', 'sessions')
+  const root = join(codexHome(), 'sessions')
   const files: { path: string; at: number }[] = []
   const walk = (dir: string, depth: number) => {
     for (const name of (() => { try { return readdirSync(dir) } catch { return [] } })()) {
@@ -92,80 +95,124 @@ function fromRollouts(): PlanLimits {
   return { agent: 'codex', windows: [], at: Date.now(), error: 'Could not reach OpenAI' }
 }
 
-// Gemini CLI's login renews with the client it ships, read from the installed package rather
-// than copied into Lunchbox. Accounts without a Code Assist plan have no quota to report.
+// Google publishes Gemini CLI's quota as requests a day: 1,000 with a personal Google login,
+// 250 on a free API key. Gemini CLI logs every model reply, so today's count is read from there.
+// The day turns over at midnight Pacific time.
 async function gemini(): Promise<PlanLimits> {
-  const creds = json<{ refresh_token?: string }>(join(homedir(), '.gemini', 'oauth_creds.json'))
-  if (!creds?.refresh_token) return { agent: 'gemini', windows: [], at: Date.now(), error: 'Signed in with an API key, which has no plan window' }
-  const client = await geminiClient()
-  if (!client) return { agent: 'gemini', windows: [], at: Date.now(), error: 'Gemini CLI does not report its limits' }
+  const settings = json<{ security?: { auth?: { selectedType?: string } }; selectedAuthType?: string }>(join(homedir(), '.gemini', 'settings.json'))
+  const mode = settings?.security?.auth?.selectedType ?? settings?.selectedAuthType ?? ''
+  const limit = mode === 'oauth-personal' ? 1000 : mode === 'gemini-api-key' ? 250 : 0
+  if (!limit) return { agent: 'gemini', windows: [], at: Date.now(), error: 'Signed in a way Google does not publish a limit for' }
+  const start = pacificMidnight()
+  const n = geminiRequests(start)
+  return {
+    agent: 'gemini', plan: mode === 'oauth-personal' ? 'Google account' : 'Free API key', at: Date.now(),
+    windows: [{ id: 'day', label: 'Day', used: Math.min(1, n / limit), resets: start + 86400e3, total: limit, unit: 'requests' }],
+  }
+}
+
+function pacificMidnight() {
+  const now = new Date()
+  const la = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }))
+  const midnight = new Date(la)
+  midnight.setHours(0, 0, 0, 0)
+  return now.getTime() - (la.getTime() - midnight.getTime())
+}
+
+function geminiRequests(since: number) {
+  const root = join(homedir(), '.gemini', 'tmp')
+  const seen = new Set<string>()
+  for (const project of (() => { try { return readdirSync(root) } catch { return [] } })()) {
+    const dir = join(root, project, 'chats')
+    for (const name of (() => { try { return readdirSync(dir) } catch { return [] } })()) {
+      const path = join(dir, name)
+      try { if (statSync(path).mtimeMs < since) continue } catch { continue }
+      for (const m of read(path).matchAll(/"id":"([0-9a-f]{16,})","timestamp":"([^"]+)","type":"gemini"/g)) {
+        if (Date.parse(m[2]) >= since) seen.add(m[1])
+      }
+    }
+  }
+  return seen.size
+}
+
+// Grok Build bills from one weekly credit pool shared with Grok's other products. Its login
+// renews itself whenever Grok runs; `grok models` is the cheapest run, it uses no credits.
+async function grok(): Promise<PlanLimits> {
+  const path = join(grokHome(), 'auth.json')
+  const entry = () => Object.values(json<Record<string, { key?: string; expires_at?: string }>>(path) ?? {})[0]
+  let auth = entry()
+  if (!auth?.key) return { agent: 'grok', windows: [], at: Date.now(), error: 'Not signed in to Grok' }
+  if (!auth.expires_at || Date.parse(auth.expires_at) < Date.now() + 60e3) {
+    const bin = await which('grok')
+    if (bin) await new Promise((ok) => execFile(bin, ['models'], { timeout: 20000, env: { ...process.env, ...envCache } }, () => ok(null)))
+    auth = entry()
+  }
   try {
-    const body = new URLSearchParams({ client_id: client.id, client_secret: client.secret, refresh_token: creds.refresh_token, grant_type: 'refresh_token' })
-    const res = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', body, signal: AbortSignal.timeout(8000) })
-    const token = (await res.json()).access_token
-    const auth = { authorization: `Bearer ${token}` }
-    const load = await get('https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist', auth, { metadata: { pluginType: 'GEMINI' } })
-    const project = load.cloudaicompanionProject
-    if (!project) return { agent: 'gemini', windows: [], at: Date.now(), error: 'This Google account has no Gemini Code Assist plan, so Google reports no limits' }
-    const q = await get('https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota', auth, { project })
-    const buckets: { remainingFraction?: number; resetTime?: string; modelId?: string }[] = q.buckets ?? []
-    const worst = buckets.filter((b) => typeof b.remainingFraction === 'number').sort((a, b) => a.remainingFraction! - b.remainingFraction!)[0]
+    const b = await get('https://cli-chat-proxy.grok.com/v1/billing?format=credits', { authorization: `Bearer ${auth?.key}`, 'x-grok-client-version': json<{ version?: string }>(join(grokHome(), 'version.json'))?.version ?? '1.0.0', 'user-agent': 'grok-shell' })
+    const c = b.config ?? {}
+    const build = (c.productUsage ?? []).find((p: { product?: string }) => p.product === 'GrokBuild')
+    const period = c.currentPeriod ?? {}
+    const label = String(period.type ?? '').includes('MONTH') ? 'Month' : 'Week'
     return {
-      agent: 'gemini', plan: load.currentTier?.name, at: Date.now(),
-      windows: worst ? [{ id: 'day', label: 'Day', used: 1 - worst.remainingFraction!, resets: worst.resetTime ? Date.parse(worst.resetTime) : undefined }] : [],
+      agent: 'grok', at: Date.now(),
+      windows: [{ id: label.toLowerCase(), label, used: (c.creditUsagePercent ?? 0) / 100, resets: period.end ? Date.parse(period.end) : undefined, share: build ? build.usagePercent / 100 : undefined, start: period.start ? Date.parse(period.start) : undefined }],
     }
-  } catch {
-    return { agent: 'gemini', windows: [], at: Date.now(), error: 'Could not reach Google' }
+  } catch (e) {
+    return { agent: 'grok', windows: [], at: Date.now(), error: (e as { status?: number }).status === 401 ? 'Sign in to Grok again with grok login' : 'Could not reach xAI' }
   }
 }
+let envCache: Record<string, string | undefined> = {}
+env().then((e) => { envCache = e })
 
-let geminiCache: { id: string; secret: string } | null | undefined
-async function geminiClient() {
-  if (geminiCache !== undefined) return geminiCache
-  geminiCache = null
-  const bin = await which('gemini')
-  if (!bin) return null
-  const real = await sh('/bin/sh', ['-c', `readlink -f "${bin}" 2>/dev/null || echo "${bin}"`])
-  for (let dir = dirname(real), i = 0; i < 4 && dir !== '/'; i++, dir = dirname(dir)) {
-    const bundle = join(dir, 'bundle')
-    if (!existsSync(bundle)) continue
-    for (const f of readdirSync(bundle).filter((n) => n.endsWith('.js'))) {
-      const src = read(join(bundle, f))
-      const id = src.match(/OAUTH_CLIENT_ID = "([^"]+)"/)?.[1]
-      const secret = src.match(/OAUTH_CLIENT_SECRET = "([^"]+)"/)?.[1]
-      if (id && secret) return (geminiCache = { id, secret })
+const READERS: Record<string, () => Promise<PlanLimits>> = { claude, codex, gemini, grok }
+
+const DAY = 86400e3
+const LENGTH: Record<string, number> = { '5h': 5 * HOUR, day: DAY, week: 7 * DAY, month: 30 * DAY }
+
+// Fresh tokens are what plan limits are built on: new input, cache writes and output. Cache reads
+// cost a tenth of an input token or less and barely move a plan window, so they are left out.
+// A window's size is the fresh tokens used in it divided by the share the provider says is used.
+// Only measured past 5%, where whole-percent rounding stops mattering. Use of the same plan on
+// another computer makes the share climb with no tokens in this computer's logs, which can only
+// make a measurement read low, so the largest of the last two weeks is the one shown.
+export function size(fresh: number, share: number) {
+  return share >= 0.05 && fresh > 0 ? Math.round(fresh / share) : undefined
+}
+
+export function best(history: { tokens: number; at: number }[], now = Date.now()) {
+  const recent = history.filter((h) => now - h.at < 14 * DAY)
+  return recent.length ? Math.max(...recent.map((h) => h.tokens)) : undefined
+}
+
+// Grok rewrites a small usage file per session rather than appending, so it is summed directly.
+function grokFresh(from: number) {
+  const root = join(grokHome(), 'sessions')
+  let total = 0
+  const walk = (dir: string, depth: number) => {
+    for (const name of (() => { try { return readdirSync(dir) } catch { return [] } })()) {
+      const p = join(dir, name)
+      if (depth < 2) { walk(p, depth + 1); continue }
+      if (name !== 'usage.json') continue
+      try { if (statSync(p).mtimeMs < from) continue } catch { continue }
+      for (const t of json<{ turns?: { endedAt?: string; inputTokens?: number; cachedReadTokens?: number; outputTokens?: number }[] }>(p)?.turns ?? []) {
+        if (t.endedAt && Date.parse(t.endedAt) >= from) total += Math.max(0, (t.inputTokens ?? 0) - (t.cachedReadTokens ?? 0)) + (t.outputTokens ?? 0)
+      }
     }
   }
-  return null
-}
-
-const READERS: Record<string, () => Promise<PlanLimits>> = { claude, codex, gemini }
-
-type Calib = { pct: number; since: number; samples: number[] }
-
-// How many tokens one percent of a window held, measured between whole-percent steps. Use of the
-// same plan outside Lunchbox in the same stretch makes a step come sooner, so the estimate errs low.
-export function step(c: Calib, pct: number) {
-  if (pct < c.pct - 0.5) return { pct, since: 0, samples: c.samples }
-  if (pct >= c.pct + 1) {
-    const samples = c.since > 0 ? [...c.samples, c.since / (pct - c.pct)].slice(-24) : c.samples
-    return { pct, since: 0, samples }
-  }
-  return c
-}
-
-export function estimate(samples: number[]) {
-  if (samples.length < 3) return undefined
-  const s = [...samples].sort((a, b) => a - b)
-  return Math.round(s[Math.floor(s.length / 2)] * 100)
+  walk(root, 0)
+  return total
 }
 
 export class Limits {
   private now: Record<string, PlanLimits> = {}
   private timer: NodeJS.Timeout | null = null
   private soon = new Map<string, NodeJS.Timeout>()
+  private tallies: Record<string, Tally> = {}
+  private busy = false
 
-  constructor(private store: Store, private emit: (l: Record<string, PlanLimits>) => void, private present: () => string[]) {}
+  constructor(private store: Store, private emit: (l: Record<string, PlanLimits>) => void, private present: () => string[]) {
+    for (const id of ['claude', 'codex']) this.tallies[id] = json<Tally>(join(store.dir, `tally-${id}.json`)) ?? { files: {} }
+  }
 
   start() {
     this.poll()
@@ -177,34 +224,55 @@ export class Limits {
   get() { return this.now }
 
   async poll(only?: string) {
-    if (this.store.settings.planLimits === false) return
-    const ids = (only ? [only] : this.present()).filter((id) => READERS[id])
-    await Promise.all(ids.map(async (id) => {
-      const l = await READERS[id]().catch(() => null)
-      if (!l) return
-      for (const w of l.windows) {
-        const key = `${id}:${w.id}`
-        const c = step(this.store.calib[key] ?? { pct: w.used * 100, since: 0, samples: [] }, w.used * 100)
-        this.store.calib[key] = c
-        w.tokens = estimate(c.samples)
-        w.samples = c.samples.length
-      }
-      this.now[id] = l
-      this.gate(id, l)
-    }))
-    this.store.saveState()
-    this.emit(this.now)
+    if (this.store.settings.planLimits === false || this.busy) return
+    this.busy = true
+    try {
+      const ids = (only ? [only] : this.present()).filter((id) => READERS[id])
+      await Promise.all(ids.map(async (id) => {
+        const l = await READERS[id]().catch(() => null)
+        if (!l) return
+        await this.measure(id, l)
+        this.now[id] = l
+        this.gate(id, l)
+      }))
+      this.store.saveState()
+      this.emit(this.now)
+    } finally {
+      this.busy = false
+    }
   }
 
-  // After an agent's turn: count its tokens toward every window it has, and look again shortly.
-  turned(agent: string, u: Usage) {
-    if (!READERS[agent]) return
-    const tokens = u.input + u.cached + u.output
-    for (const w of this.now[agent]?.windows ?? []) {
-      const key = `${agent}:${w.id}`
-      const c = this.store.calib[key] ?? { pct: w.used * 100, since: 0, samples: [] }
-      this.store.calib[key] = { ...c, since: c.since + tokens }
+  private async measure(id: string, l: PlanLimits) {
+    const timed = l.windows.filter((w) => w.unit !== 'requests')
+    if (!timed.length) return
+    const from = (w: PlanWindow) => w.start ?? (w.resets ? w.resets - (LENGTH[w.id] ?? 7 * DAY) : Date.now() - (LENGTH[w.id] ?? 7 * DAY))
+    if (tallied(id)) {
+      const tally = this.tallies[id]
+      await update(id, tally, Math.min(Date.now() - 14 * DAY, ...timed.map(from)))
+      writeFileSync(join(this.store.dir, `tally-${id}.json`), JSON.stringify(tally))
+      // Readings the CLI logged itself measure past windows too, so a fresh window starts known.
+      for (const s of snapshots(tally)) {
+        const tokens = size(usedSince(tally, s.start, s.at).fresh, s.used)
+        const key = `${id}:${s.id}`
+        if (tokens && !(this.store.calib[key] ?? []).some((h) => h.at === s.at)) (this.store.calib[key] ??= []).push({ tokens, at: s.at })
+      }
     }
+    for (const w of timed) {
+      const share = w.share ?? w.used
+      const fresh = id === 'grok' ? grokFresh(from(w)) : tallied(id) ? usedSince(this.tallies[id], from(w)).fresh : 0
+      const key = `${id}:${w.id}`
+      const history = (this.store.calib[key] ?? []).filter((h) => Date.now() - h.at < 14 * DAY)
+      const measured = size(fresh, share)
+      if (measured) history.push({ tokens: measured, at: Date.now() })
+      this.store.calib[key] = history.slice(-200)
+      w.total = best(history)
+      w.unit = 'tokens'
+    }
+  }
+
+  // After an agent's turn the provider's numbers have moved; look again shortly.
+  turned(agent: string, _u: Usage) {
+    if (!READERS[agent]) return
     clearTimeout(this.soon.get(agent))
     this.soon.set(agent, setTimeout(() => this.poll(agent), 4000))
   }

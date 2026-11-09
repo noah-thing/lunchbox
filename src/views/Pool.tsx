@@ -127,19 +127,25 @@ function Allowance({ a }: { a: AgentInfo }) {
   )
 }
 
-// One plan window: what is left, when it resets, and what the whole window holds once measured.
+// One plan window: what is left, how big the window is, and when it starts over.
 function WindowRow({ w, stale, at }: { w: PlanWindow; stale?: boolean; at?: number }) {
   const left = Math.max(0, 1 - w.used)
-  const tip = w.tokens
-    ? `About ${tokens(w.tokens)} tokens fit in this window, measured from ${w.samples} steps of your own turns. Use of the same plan elsewhere at the same time makes this read low.`
-    : `Lunchbox measures how many tokens this window holds as the percentage moves during your turns. ${w.samples ? `${w.samples} of 3 steps so far.` : 'No steps yet.'}`
+  const count = (n: number) => (w.unit === 'requests' ? Math.round(n).toLocaleString() : tokens(n))
+  const size = w.total
+    ? `${count(w.total * left)} of ${count(w.total)}${w.unit === 'requests' ? ' requests' : ''}`
+    : 'size after 5% use'
+  const tip = w.unit === 'requests'
+    ? `Google publishes this limit. Requests are counted from Gemini CLI's own log of today's replies.`
+    : w.total
+      ? `Fresh tokens this window holds: new input, cache writes and output. Measured from this computer's logs against the share ${w.share !== undefined ? 'Grok Build has used of the pool' : 'the provider reports used'}, largest of the last two weeks. Cache reads are left out because they barely count toward plan limits.`
+      : `The provider reports only a percentage. Once a little of this window is used, Lunchbox works out its size from the tokens in this computer's logs.`
   return (
     <div className="window" title={stale && at ? `As of the last Codex run, ${clock(at)}` : undefined}>
       <span className="wlabel">{w.label}</span>
       <Meter value={left} cells={14} tone={left < 0.15 ? 'warn' : undefined} />
       <span className="wleft">{Math.round(left * 100)}% left</span>
+      <span className="wtotal" title={tip}>{size}</span>
       <span className="wreset">{w.resets ? `resets ${when(w.resets)}` : ''}</span>
-      <span className="wtotal" title={tip}>{w.tokens ? `≈ ${tokens(w.tokens)}` : 'measuring'}</span>
     </div>
   )
 }

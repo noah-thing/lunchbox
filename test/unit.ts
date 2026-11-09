@@ -342,19 +342,33 @@ test('savings: the ledger sums per day, per agent and per room', async () => {
   assert.equal(t.rooms.r1.input, 1700)
 })
 
-test('plan limits: tokens per window are measured between whole percent steps', async () => {
-  const { step, estimate } = await import('../electron/limits')
-  let c = { pct: 20, since: 0, samples: [] as number[] }
-  c = { ...c, since: 30000 }
-  c = step(c, 20.4)
-  assert.equal(c.samples.length, 0, 'no sample until the percentage moves a whole step')
-  c = step(c, 22)
-  assert.deepEqual(c.samples, [15000], '30k tokens over two percent')
-  c = step({ ...c, since: 0 }, 23)
-  assert.equal(c.samples.length, 1, 'a step with none of our tokens in it is someone else using the plan')
-  c = step({ ...c, since: 14000 }, 24)
-  c = step({ ...c, since: 16000 }, 25)
-  assert.equal(estimate(c.samples), 1500000, 'median of 14k, 15k and 16k per percent')
-  assert.deepEqual(step({ ...c, since: 500 }, 2).since, 0, 'a reset starts over')
-  assert.equal(estimate([1, 2]), undefined, 'needs three steps before showing a total')
+test('plan limits: window size is fresh tokens over the share used, the largest recent one shown', async () => {
+  const { size, best } = await import('../electron/limits')
+  assert.equal(size(2_000_000, 0.2), 10_000_000)
+  assert.equal(size(90_000, 0.03), undefined, 'below 5% the whole-percent rounding is too coarse')
+  assert.equal(size(0, 0.4), undefined, 'no tokens on this computer, nothing to measure from')
+  const now = Date.now()
+  // Use on another computer pushes the share up with no local tokens, so readings only err low.
+  assert.equal(best([{ tokens: 8e6, at: now - 3600e3 }, { tokens: 10e6, at: now - 2 * 86400e3 }, { tokens: 4e6, at: now }], now), 10e6)
+  assert.equal(best([{ tokens: 30e6, at: now - 20 * 86400e3 }], now), undefined, 'older than two weeks no longer counts')
+})
+
+test('plan limits: tallies read logs once and pick up only what was added', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const home = mkdtempSync(join(tmpdir(), 'lb-tally-'))
+  process.env.CLAUDE_CONFIG_DIR = join(home, '.claude')
+  mkdirSync(join(home, '.claude', 'projects', 'p'), { recursive: true })
+  const file = join(home, '.claude', 'projects', 'p', 's.jsonl')
+  const line = (id: string, at: string, u: object) => JSON.stringify({ type: 'assistant', timestamp: at, requestId: 'r' + id, message: { id, usage: u } }) + '\n'
+  const t = new Date().toISOString()
+  writeFileSync(file, line('a', t, { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 5000, output_tokens: 20 }) + line('a', t, { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 5000, output_tokens: 20 }))
+  const { update, used } = await import('../electron/tally')
+  const tally = { files: {} }
+  await update('claude', tally, Date.now() - 3600e3)
+  assert.deepEqual(used(tally, Date.now() - 3600e3), { all: 5130, fresh: 130 }, 'a message written twice counts once')
+  appendFileSync(file, line('b', t, { input_tokens: 5, output_tokens: 5 }))
+  await update('claude', tally, Date.now() - 3600e3)
+  assert.equal(used(tally, Date.now() - 3600e3).fresh, 140)
+  delete process.env.CLAUDE_CONFIG_DIR
 })

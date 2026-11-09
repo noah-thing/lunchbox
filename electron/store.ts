@@ -38,7 +38,7 @@ export class Store {
   private flushTimer: NodeJS.Timeout | null = null
   settings: Settings
   spent: Record<string, Spent>
-  calib: Record<string, { pct: number; since: number; samples: number[] }>
+  calib: Record<string, { tokens: number; at: number }[]>
   health: Record<string, string>
   skills: Skill[]
   flows: Flow[]
@@ -51,9 +51,10 @@ export class Store {
     mkdirSync(join(dir, 'packs'), { recursive: true })
     for (const meta of readJson<RoomMeta[]>(join(dir, 'rooms.json'), [])) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
-    const state = readJson<{ calib?: Record<string, { pct: number; since: number; samples: number[] }>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
+    const state = readJson<{ calib?: Record<string, { tokens: number; at: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
-    this.calib = state.calib ?? {}
+    // Older builds stored a different shape here; only lists are kept.
+    this.calib = Object.fromEntries(Object.entries(state.calib ?? {}).filter(([, v]) => Array.isArray(v)))
     this.health = state.health ?? {}
     this.arena = state.arena ?? {}
     this.ratings = state.ratings ?? {}
