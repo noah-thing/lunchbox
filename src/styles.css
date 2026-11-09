@@ -712,3 +712,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .cclock i::after{content:"";position:absolute;inset:0;background:var(--ink);transform-origin:left;transform:scaleX(var(--k));transition:transform 1s linear}
 .cclock .mono{font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum";min-width:66px;text-align:right}
 .cclock.cold{opacity:.5}
+/* The review menu opens up and to the left, from the message's tool row. */
+.menuwrap.up .menu{left:auto;right:0;width:270px;transform-origin:bottom right}
+.menuhead{padding:7px 10px 5px;font-size:11.5px;color:var(--faint)}
+.msgtools .menuwrap{display:flex}
+/* The message j and k landed on: a quiet bar in the gutter. */
+.kfocus{position:relative}
+.kfocus::before{content:"";position:absolute;left:-14px;top:2px;bottom:2px;width:2px;border-radius:1px;background:var(--ink);opacity:.5}

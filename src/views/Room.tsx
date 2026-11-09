@@ -6,7 +6,8 @@ import { Loader, Mark, Meter, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
-import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
+import { roomCard } from '../ui/roomcard'
+import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
 import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
 import { Composer } from './Composer'
@@ -24,6 +25,7 @@ type Actions = {
   changed(ev: string): Promise<string[]>
   rewind(target: { event?: string; ref?: string }): void
   review(ev: string): void
+  ask(text: string): void
 }
 
 const remembered = (key: string, fallback: boolean) => {
@@ -79,6 +81,19 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel() }
+      // j and k move between messages when nothing is being typed.
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? '') || (e.target as HTMLElement)?.isContentEditable
+      if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'j' || e.key === 'k')) {
+        const list = [...document.querySelectorAll<HTMLElement>('.transcript .column > .ev, .transcript .column > .mine')]
+        if (!list.length) return
+        const box = document.querySelector('.transcript')!.getBoundingClientRect()
+        const cur = list.findIndex((el) => el.classList.contains('kfocus'))
+        const from = cur >= 0 ? cur : list.findIndex((el) => el.getBoundingClientRect().bottom > box.top + 40)
+        const next = list[Math.max(0, Math.min(list.length - 1, from + (e.key === 'j' ? 1 : -1)))]
+        list.forEach((el) => el.classList.remove('kfocus'))
+        next.classList.add('kfocus')
+        next.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
       // Esc refuses a pending command first; only with nothing waiting does it stop the turn.
       if (e.key === 'Escape' && data?.live.turns.length && !data.live.runs.some((r) => r.state === 'asking') && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
     }
@@ -104,6 +119,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     answer: (run, a) => desk.call('run:answer', run, a),
     kill: (run) => desk.call('run:kill', run),
     pin: (ev) => { desk.call('room:pin', id, ev); say('Pinned to shared memory') },
+    ask: (text) => desk.call('room:send', id, text, access, false),
     fork: async (ev) => { const copy = await desk.call('room:fork', id, ev); if (copy) open(copy.id) },
     checkpoint: (ev) => !!meta.checkpoints?.some((c) => c.event === ev),
     changed: async (ev) => (await desk.call('room:changed', id, ev).catch(() => [])) ?? [],
@@ -128,7 +144,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
           {meta.forkedFrom && <button className="tag" onClick={() => open(meta.forkedFrom!.room)}>fork</button>}
           <span className="spacer" />
           <button className="ghostbtn mono" onClick={pick} title={meta.workspace}><IconFolder />{short(meta.workspace)}</button>
-          <RoomMenu id={id} meta={meta} canReplay={events.length > 1} replay={() => setReplay(0)} open={open} say={say} />
+          <RoomMenu id={id} meta={meta} events={events} canReplay={events.length > 1} replay={() => setReplay(0)} open={open} say={say} />
           <button className={`iconbtn${panel ? ' on' : ''}`} onClick={togglePanel} aria-label="Room panel" aria-pressed={panel} title="Room panel"><IconPanel /></button>
         </header>
         {replay !== null && (
@@ -168,8 +184,9 @@ function Title({ name, rename }: { name: string; rename: (n: string) => void }) 
   )
 }
 
-function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta: RoomMeta; canReplay: boolean; replay: () => void; open: (r: string) => void; say: (t: string) => void }) {
+function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: string; meta: RoomMeta; events: Event[]; canReplay: boolean; replay: () => void; open: (r: string) => void; say: (t: string) => void }) {
   const [sure, setSure] = useState(false)
+  const agents = useApp((s) => s.agents)
   return (
     <Menu bare label="Room actions" button={<IconMore />} className="right">
       {(close) => (
@@ -196,6 +213,9 @@ function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta
           <div className="sep" />
           <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'html')) say('Replay saved. Open it in any browser and press Play.') }}>
             <span className="grow"><b>Export replay</b><span>One HTML file that plays the room back</span></span>
+          </button>
+          <button className="item" onClick={() => { close(); roomCard(meta, events, agents, say) }}>
+            <span className="grow"><b>Share as image</b><span>One card for X: the crew, the handoffs, what was proved</span></span>
           </button>
           <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'md')) say('Saved as Markdown') }}>
             <span className="grow"><b>Export as Markdown</b><span>The conversation as plain text</span></span>
@@ -735,8 +755,35 @@ function Tools({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; a
       <span className="spacer" />
       {text && <button onClick={() => navigator.clipboard.writeText(text)} title="Copy"><IconCopy /></button>}
       {text && <button onClick={() => actions.pin(e.id)} title="Pin to shared memory"><IconPin /></button>}
+      {text && <Review e={e} actions={actions} />}
       <button onClick={() => actions.fork(e.id)} title="Fork the room from here"><IconFork /></button>
     </div>
+  )
+}
+
+// A second opinion on one answer: another agent checks it before you build on it.
+function Review({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; actions: Actions }) {
+  const agents = useApp((s) => s.agents)
+  const author = e.kind === 'say' ? e.who : e.to
+  const others = agents.filter((a) => a.ready && a.id !== author)
+  if (!others.length) return null
+  const name = agentOf(author, agents).short
+  return (
+    <Menu bare label="Have another agent review this" button={<IconReview />} className="up">
+      {(close) => (
+        <>
+          <div className="menuhead">Review {name}'s answer with</div>
+          {others.map((a) => (
+            <button key={a.id} className="item" onClick={() => {
+              close()
+              actions.ask(`@${a.id} Review ${name}'s answer above before I use it. Check the facts, the code and any claim that something works. List only real problems, most serious first, or say plainly that it holds up.`)
+            }}>
+              <Mark seed={a.mark} size={14} /><span className="grow"><b>{a.short}</b><span>{a.good}</span></span>
+            </button>
+          ))}
+        </>
+      )}
+    </Menu>
   )
 }
 

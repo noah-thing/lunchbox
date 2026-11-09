@@ -11,6 +11,7 @@ export const CLAIMS: Claim[] = [
   { id: 'build', label: 'the build works', said: /\bbuild(s|ing)?\b[^.\n]{0,30}\b(pass(es|ed)?|succeed(s|ed)?|works|is clean|green|fine)\b|\bbuilds\s+(cleanly|fine)\b/i, ran: /\bbuild\b|\btsc\b|\bmake\b|cargo build|go build/i },
   { id: 'types', label: 'the types check', said: /\b(type ?check(s|ing)?|types?)\b[^.\n]{0,30}\b(pass(es)?|clean|no errors)\b/i, ran: /\btsc\b|typecheck|mypy|pyright|vue-tsc/i },
   { id: 'lint', label: 'lint is clean', said: /\blint(s|ing|er)?\b[^.\n]{0,30}\b(pass(es)?|clean|no (errors|warnings))\b/i, ran: /\blint\b|eslint|ruff|flake8|clippy|biome|golangci/i },
+  { id: 'pushed', label: 'it is pushed', said: /\b(i(?:'ve| have)?\s+)?pushed\b(?![^.\n]{0,20}\b(yet|later|soon)\b)|\bis (now )?(on|up on) (github|gitlab|the remote)\b/i, ran: /\bgit\s+push\b/i },
   { id: 'lighthouse', label: 'the Lighthouse score', said: /\blighthouse\b[^.\n]{0,40}\b(\d{2,3}|perfect|green|pass(es)?)\b/i, ran: /lighthouse|lhci/i },
 ]
 
