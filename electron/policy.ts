@@ -1,12 +1,11 @@
 import { homedir } from 'node:os'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import type { Access, Kind, Verdict } from '../shared/types'
 
 const RANK: Kind[] = ['read', 'write', 'network', 'outside', 'danger', 'blocked']
 
 // Never run, whatever the access level. These end machines, not projects.
 const BLOCKED = [
-  /\brm\s+(-[a-z]*\s+)*-[a-z]*r[a-z]*\s+(-[a-z]+\s+)*("|')?(\/|~|\$HOME)\/?\*?("|')?(\s|$)/i,
   /:\(\)\s*\{\s*:\|:&\s*\};:/,
   /\bmkfs(\.\w+)?\b/,
   /\bdd\b[^|;&]*\bof=\/dev\//,
@@ -16,7 +15,7 @@ const BLOCKED = [
 ]
 
 const DANGER: [RegExp, string][] = [
-  [/\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, 'deletes files without the bin'],
+  [/\brm\s+(-[a-z-]*\s+)*-[a-z-]*[rf]/i, 'deletes files without the bin'],
   [/\bsudo\b/, 'asks for administrator rights'],
   [/\bgit\s+push\b[^;&|]*(--force|\s-f\b|--force-with-lease)/, 'rewrites history on a remote'],
   [/\bgit\s+reset\s+--hard\b/, 'throws away uncommitted work'],
@@ -36,8 +35,63 @@ const DANGER: [RegExp, string][] = [
 const NETWORK = /\b(curl|wget|ssh|scp|rsync|nc|ftp|git\s+(push|pull|fetch|clone)|npm\s+(i|install|ci|publish|add|update)|npx\s|pnpm\s+(i|install|add)|yarn(\s+add|\s+install|\s*$)|bun\s+(add|install)|pip3?\s+install|uv\s+(add|pip)|brew\s+(install|upgrade)|gh\s|vercel\b|docker\s+(pull|push)|invoke-webrequest|iwr\s|invoke-restmethod|winget\s+install|choco\s+install|scoop\s+install)/i
 
 const READ = new Set(['ls', 'cat', 'pwd', 'head', 'tail', 'wc', 'grep', 'rg', 'which', 'echo', 'printf', 'du', 'df', 'file', 'stat', 'tree', 'date', 'whoami', 'uname', 'env', 'less', 'diff', 'cut', 'jq', 'true', 'type', 'basename', 'dirname', 'realpath', 'sw_vers', 'uptime', 'dir', 'where', 'findstr', 'ver', 'get-childitem', 'gci', 'get-content', 'gc', 'get-location'])
-const READ_GIT = /^git\s+(status|diff|log|show|branch|remote\s+-v|rev-parse|ls-files|blame|describe|tag\s*$)/
-const VERSION = /^\S+\s+(-v|--version|-V|version)\s*$/
+// Only the forms of branch and tag that list; with a name they create, move or delete.
+const READ_GIT = /^git\s+(status|diff|log|show|branch(\s+(-a|-r|-vv?|--all|--remotes|--list|--show-current|--verbose))*\s*$|remote\s+-v|rev-parse|ls-files|blame|describe|tag\s*$)/
+// Asking for a version only reads when the program is one known to answer it; ./anything -v can do anything.
+const VERSION = /^(node|npm|npx|pnpm|yarn|bun|deno|python3?|pip3?|uv|ruby|go|cargo|rustc|java|git|gh|docker|make|tsc|gcc|clang|php|perl|swift|dotnet|brew|claude|codex|gemini|grok|ollama)\s+(-v|--version|-V|version)\s*$/
+
+// Words as a shell splits them, quotes removed, so "$HOME"/x is one word. A backslash is part of
+// a path on Windows and an escape everywhere else.
+function words(s: string) {
+  const word = sep === '\\' ? /(?:"[^"]*"|'[^']*'|[^\s"'])+/g : /(?:"[^"]*"|'[^']*'|\\.|[^\s"'\\])+/g
+  return [...s.matchAll(word)].map((m) => m[0].replace(sep === '\\' ? /"([^"]*)"|'([^']*)'/g : /"([^"]*)"|'([^']*)'|\\(.)/g, (_m, a, b, c) => a ?? b ?? c ?? ''))
+}
+
+const expand = (t: string) => t.replace(/^~(?=[\\/]|$)/, () => homedir()).replace(/\$\{HOME\}|\$HOME(?!\w)/g, () => homedir())
+const base = (w: string) => w.split(/[\\/]/).pop()!.toLowerCase()
+
+// The disk, the home folder, or a folder the home folder sits in.
+function vital(word: string, cwd: string) {
+  let path = expand(word)
+  const glob = path.search(/[*?[{]/)
+  if (glob >= 0) {
+    // ~/* and ~/.* empty the folder before the star; ~/build* does not.
+    const cut = path.lastIndexOf('/', glob) + 1
+    if (!/^[.*{},]*$/.test(path.slice(cut))) return false
+    path = path.slice(0, cut) || '.'
+  }
+  const p = resolve(cwd, path)
+  const rel = relative(p, homedir())
+  return p === parse(p).root || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+// rm -r or find -delete aimed at one of those, wherever it stands among the operands and however
+// it is spelled: after --, behind a cd, as ${HOME}, in quotes or with long flags.
+function wipes(command: string, cwd: string) {
+  let at = cwd
+  for (const s of segments(command)) {
+    const w = words(s)
+    if (w[0] === 'cd' || w[0] === 'pushd') { at = resolve(at, expand(w[1] ?? '~')); continue }
+    const rm = w.findIndex((x) => base(x) === 'rm')
+    if (rm >= 0) {
+      const rest = w.slice(rm + 1)
+      const end = rest.indexOf('--')
+      const before = end < 0 ? rest : rest.slice(0, end)
+      const targets = [...before.filter((x) => !x.startsWith('-')), ...(end < 0 ? [] : rest.slice(end + 1))]
+      if (before.some((f) => f === '--recursive' || /^-[a-z]*r/i.test(f)) && targets.some((t) => vital(t, at))) return true
+    }
+    const find = w.findIndex((x) => base(x) === 'find')
+    if (find >= 0) {
+      const rest = w.slice(find + 1)
+      while (/^-[HLP]$/.test(rest[0] ?? '')) rest.shift()
+      const expr = rest.findIndex((x) => /^[-(!]/.test(x))
+      const paths = expr < 0 ? rest : rest.slice(0, expr)
+      const deletes = rest.some((x, i) => x === '-delete' || (/^-exec(dir)?$/.test(x) && base(rest[i + 1] ?? '') === 'rm'))
+      if (deletes && (paths.length ? paths : ['.']).some((t) => vital(t, at))) return true
+    }
+  }
+  return false
+}
 
 function segments(command: string) {
   // A single & starts a second command as surely as && does.
@@ -54,24 +108,29 @@ function isRead(segment: string) {
   const head = first.toLowerCase()
   if (head === 'find') return !rest.some((a) => /^-(delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$/.test(a))
   if (head === 'sed') return !rest.some((a) => /^(-i|--in-place)/.test(a)) && !/\bw\s*\S|\/w\b/.test(rest.join(' ')) && !/(^|;)\s*\d*\s*[ew]\b|'\d*[ew]/.test(rest.join(' '))
+  if (head === 'tree') return !rest.some((a) => /^(-o|--output)/.test(a))
   if (head === 'rg') return !rest.some((a) => /^--pre/.test(a))
   return READ.has(head)
 }
 
 // Paths the command names that resolve outside the workspace. Reading them is fine; writing is not.
 function outside(segment: string, cwd: string, root: string) {
-  const home = homedir()
-  return segment.split(/[\s>]+/).slice(1)
-    .map((t) => t.replace(/^\d*>>?/, '').replace(/^["']|["']$/g, '').replace(/^~(?=\/|$)/, home).replace(/^\$HOME/, home))
-    .filter((t) => t.startsWith('/') || t.startsWith('..') || t.startsWith(home) || /^[a-z]:[\\/]/i.test(t))
+  // Every word counts, the first one too: after >| or >& the path is a segment of its own. The
+  // part after = is looked at as well, for of=/path and --output=/path.
+  return words(segment.replace(/\d*>>?[|&]?|</g, ' '))
+    .flatMap((t) => [t, ...t.split('=').slice(1)])
+    .map(expand)
     .some((t) => {
+      // A variable or ~user can point anywhere, so it counts as outside.
+      if (/^[$~]/.test(t)) return true
+      if (!isAbsolute(t) && !/^[a-z]:[\\/]/i.test(t) && !/(^|[\\/])\.\.([\\/]|$)/.test(t)) return false
       const rel = relative(root, resolve(cwd, t))
       return rel.startsWith('..') || isAbsolute(rel)
     })
 }
 
 export function classify(command: string, cwd: string, root: string): { kind: Kind; reason: string } {
-  if (BLOCKED.some((r) => r.test(command))) return { kind: 'blocked', reason: 'would wipe a disk or your home folder' }
+  if (BLOCKED.some((r) => r.test(command)) || wipes(command, cwd)) return { kind: 'blocked', reason: 'would wipe a disk or your home folder' }
   for (const [r, reason] of DANGER) if (r.test(command)) return { kind: 'danger', reason }
   let kind: Kind = 'read'
   let reason = 'only reads'

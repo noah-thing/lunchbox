@@ -44,6 +44,9 @@ export type Act =
   | { t: 'cmd'; command: string; exit: number | null; out?: string }
   | { t: 'edit'; path: string; change: string }
   | { t: 'tool'; name: string; detail: string; ok?: boolean }
+  // A subagent the agent started for part of its work: what it was asked, which kind and model,
+  // how many tools it has used and the last one, and how it ended.
+  | { t: 'agent'; id: string; task: string; kind?: string; model?: string; state: 'running' | 'done' | 'failed'; tools: number; last?: string; started: number; ms?: number; note?: string }
 
 export type Proof = { claim: string; ok: boolean; text: string; command?: string }
 
@@ -65,6 +68,9 @@ export type Event = { id: string; at: number } & (
   | { kind: 'pick'; arena: string; who: string }
   | { kind: 'note'; text: string; tone?: 'bad' | 'warn'; undo?: string }
   | { kind: 'crew'; crew: string[] }
+  // A crewmate the main agent brought in for one piece of work, and the moment it stepped out.
+  | { kind: 'joined'; who: string; by: string; task: string }
+  | { kind: 'left'; who: string }
 )
 
 export type Block = { id: string; title: string; text: string; v: number; at: number; by?: string }

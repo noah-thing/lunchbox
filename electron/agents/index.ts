@@ -1,13 +1,12 @@
 import { createInterface } from 'node:readline'
-import { rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { existsSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
-import { env, launch, stop, version, which } from '../system'
+import { capture, env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
 import { chat, listModels, PROVIDERS } from './http'
+import { logoOf } from '../../shared/logos'
 import { localSetup } from '../local'
 
 export type Input = {
@@ -66,10 +65,14 @@ function claudeHands(i: Input, file: string): Pick<Spec, 'extra'> & { args: stri
   return { args: ['--mcp-config', path], extra: [{ path, text: JSON.stringify({ mcpServers: { lunchbox: { type: 'http', url: i.hands } } }) }] }
 }
 
+// Codex takes servers on the command line only, so the token travels in the environment, which
+// other accounts on the computer cannot read, and the URL on the command line carries none.
+const HANDS_ENV = 'LUNCHBOX_HANDS_TOKEN'
 const codexHands = (i: Input) =>
   i.hands
     ? [
-        '-c', `mcp_servers.lunchbox.url=${JSON.stringify(i.hands)}`,
+        '-c', `mcp_servers.lunchbox.url=${JSON.stringify(i.hands.replace(/\/[\w-]+$/, ''))}`,
+        '-c', `mcp_servers.lunchbox.bearer_token_env_var="${HANDS_ENV}"`,
         '-c', `mcp_servers.lunchbox.tool_timeout_sec=${HANDS_TIMEOUT}`,
         '-c', 'mcp_servers.lunchbox.default_tools_approval_mode="approve"',
       ]
@@ -87,7 +90,7 @@ export const CATALOG: Def[] = [
     id: 'claude', name: 'Claude Code', short: 'Claude', maker: 'Anthropic', via: 'cli', bin: 'claude', tools: true, mark: 'claude',
     good: 'Design, careful edits, long reasoning', alphabet: '.:-=+*#%@',
     spawn: (i, file) => {
-      const allowed = [...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
+      const allowed = ['Task', 'Agent', ...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
       const hands = claudeHands(i, file)
       return {
         extra: hands.extra,
@@ -118,6 +121,7 @@ export const CATALOG: Def[] = [
         args: i.session
           ? ['exec', 'resume', '--json', '--skip-git-repo-check', ...resumeSandbox, ...tail, i.session, '-']
           : ['exec', '--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...tail, '-'],
+        env: i.hands ? { [HANDS_ENV]: i.hands.split('/').pop()! } : undefined,
         stdin: prompt(i),
         parser: codex(),
       }
@@ -173,7 +177,7 @@ export function words(s: string) {
 }
 
 function fromConnector(c: Connector): Def {
-  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: c.kind === 'cli', mark: c.id, good: c.good || 'Added by you', alphabet: '.:+*#' }
+  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: c.kind === 'cli', mark: logoOf(c), good: c.good || 'Added by you', alphabet: '.:+*#' }
   if (c.kind !== 'cli') {
     PROVIDERS[`conn:${c.id}`] = { base: (c.base ?? '').replace(/\/+$/, ''), style: c.kind, prefer: c.model ? new RegExp(`^${c.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) : /./ }
     return { ...base, via: 'api', key: `conn:${c.id}`, provider: `conn:${c.id}` }
@@ -244,8 +248,38 @@ export async function detect(keys: Record<string, string>, models: Record<string
   )
 }
 
+// What Claude Code's --model takes: its short names follow the newest of each line, the full ids
+// pin a version. Anything else typed in the field is passed through as is.
+const CLAUDE_MODELS = ['fable', 'opus', 'sonnet', 'haiku', 'claude-fable-5-2', 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
+
+// Gemini CLI has no command that lists models; these are the ones it accepts by name, newest first.
+const GEMINI_MODELS = ['auto-gemini-3', 'gemini-3.1-pro-preview', 'gemini-3-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-3.1-flash-lite']
+
+// Codex keeps the models this account may pick in its own cache, in the order its picker shows them.
+function codexModels() {
+  try {
+    const file = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'models_cache.json')
+    const list: { slug?: string; visibility?: string; priority?: number }[] = JSON.parse(readFileSync(file, 'utf8')).models ?? []
+    return list.filter((m) => m.slug && m.visibility !== 'hide').sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)).map((m) => m.slug!)
+  } catch {
+    return []
+  }
+}
+
+// Grok prints its models with `grok models`: the default marked with *, the rest with -.
+async function grokModels() {
+  const path = paths.get('grok') ?? (await locate('grok'))
+  if (!path) return []
+  const out = await capture(path, ['models'], 8000, await env())
+  return [...out.matchAll(/^\s*[*-]\s+([\w.:/-]+)/gm)].map((m) => m[1])
+}
+
 export async function modelsFor(id: string, keys: Record<string, string>) {
   const d = def(id)
+  if (d?.id === 'claude') return CLAUDE_MODELS
+  if (d?.id === 'codex') return codexModels()
+  if (d?.id === 'grok') return grokModels()
+  if (d?.id === 'gemini') return GEMINI_MODELS
   if (!d || d.via === 'cli') return []
   const all = await listModels(providerOf(d), keys[d.key!] ?? '')
   return d.via === 'local' ? all.filter((m) => !/embed/i.test(m)) : all

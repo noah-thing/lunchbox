@@ -35,8 +35,8 @@ export async function execute(req: { id: string; command: string; cwd: string; r
     how = a === 'always' ? 'allowed always' : 'allowed once'
   }
   const t0 = Date.now()
-  const { file, args } = shellFor(req.command)
-  const child = launch(file, args, { cwd: req.cwd, env: await env({ CI: '1' }), stdio: ['ignore', 'pipe', 'pipe'] })
+  const { file, args, raw } = shellFor(req.command)
+  const child = launch(file, args, { windowsVerbatimArguments: raw, cwd: req.cwd, env: await env({ CI: '1' }), stdio: ['ignore', 'pipe', 'pipe'] })
   running.set(req.id, child)
   hooks.start()
   let out = ''

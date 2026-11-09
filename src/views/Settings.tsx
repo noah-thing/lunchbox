@@ -67,7 +67,8 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
   const env = useApp((s) => s.env)
   const [secure, setSecure] = useState(true)
   useEffect(() => { desk.call('keys:secure').then((v: boolean | null) => setSecure(v !== false)) }, [])
-  const usable = agents.filter((a) => !unavailable(a))
+  // In the order a new room fills its crew, so the Main shown here is the one a new room gets.
+  const usable = agents.filter((a) => !unavailable(a)).sort((a, b) => Number(b.tools) - Number(a.tools))
   const crew = settings.defaultCrew
 
   return (
@@ -121,9 +122,18 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <div className="grow"><b>Checkpoints</b><span>Save the folder before every message so any change can be rewound. Kept outside the project, in its own history.</span></div>
             <Toggle on={settings.snapshots !== false} set={(v) => reload.settings({ snapshots: v })} label="Checkpoints" />
           </div>
-          <div className="setting">
-            <div className="grow"><b>Who leads</b><span>Best for the job picks by kind of work, ratings and what is left today. Crew order always starts with the first agent.</span></div>
-            <div className="seg">{(['best', 'order'] as const).map((r) => <button key={r} className={(settings.route ?? 'best') === r ? 'on' : ''} onClick={() => reload.settings({ route: r })}>{r === 'best' ? 'Best for the job' : 'Crew order'}</button>)}</div>
+          <div className="setting col">
+            <div className="grow"><b>Main agent</b><span>Takes your messages in a new room and brings the others in when they are better placed. The rest stay on call and do not read along. Change it per room in the agent menu.</span></div>
+            <div className="chips">
+              {usable.map((a) => {
+                const main = (crew.find((id) => usable.some((u) => u.id === id)) ?? usable[0]?.id) === a.id
+                return (
+                  <button key={a.id} className={`chip${main ? ' on' : ''}`} onClick={() => reload.settings({ defaultCrew: [a.id, ...(crew.length ? crew : usable.slice(0, 3).map((u) => u.id)).filter((c) => c !== a.id)] })}>
+                    <Mark seed={a.mark} size={12} />{a.short}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
       </section>

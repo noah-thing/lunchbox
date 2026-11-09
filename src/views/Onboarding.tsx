@@ -123,10 +123,11 @@ function Agents({ onNext, setLabel, setBusy }: { onNext: () => void; setLabel: (
               <span className="spacer" />
               <code className={step ? 'todo' : ''}>{step || `${a.bin ?? a.via} ${a.version ?? ''}`}</code>
             </div>,
-            settled && step && a.id !== 'llamacpp' ? <div key={a.id + 'fix'} className="obfix"><LocalSetupBox a={a} say={() => rescan()} /></div> : null,
+            settled && step && a.id !== 'llamacpp' ? <div key={a.id + 'fix'} className="unfold obfix"><div><div className="obfixbox"><LocalSetupBox a={a} say={() => rescan()} /></div></div></div> : null,
           ]
         })}
         {settled && missing.length > 0 && (
+          <div className="unfold late"><div>
           <div className="obmissing">
             <small>Not on {machine()} yet</small>
             {missing.map((m) => <Missing key={m.id} a={m} />)}
@@ -135,6 +136,7 @@ function Agents({ onNext, setLabel, setBusy }: { onNext: () => void; setLabel: (
               <span className="quiet">API keys can be added any time in Agents.</span>
             </div>
           </div>
+          </div></div>
         )}
       </div>
       {!isDesktop && settled && <span className="obnote">Browser preview. Open the desktop app to find real agents.</span>}
@@ -169,8 +171,8 @@ function Folder({ folder, pick, onDone }: { folder: string; pick: () => void; on
   useEnter(onDone)
   return (
     <div className="obpage">
-      <h1 className="rise" style={r(0)}>Where should they work?</h1>
-      <p className="rise" style={r(1)}>Pick a project folder. While you chat you decide how much they may touch, from Plan to Full access.</p>
+      <h1 className="rise" style={r(0)}>Your work goes in the Lunchbox folder</h1>
+      <p className="rise" style={r(1)}>Each room gets a folder of its own in here, named after what you asked. To work in one of your projects, pick it from the folder menu under the message box.</p>
       <button className="folderpick rise" style={r(2)} onClick={pick}>
         <IconFolder />
         <code className="grow">{short(folder) || 'Choose a folder'}</code>

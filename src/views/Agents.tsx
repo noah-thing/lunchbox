@@ -162,7 +162,6 @@ function ModelField({ a }: { a: AgentInfo }) {
   const [models, setModels] = useState<string[]>(a.models ?? [])
   const [error, setError] = useState('')
   useEffect(() => {
-    if (a.via === 'cli') return
     desk.call('agents:models', a.id).then((r: string[] | { error: string }) => (Array.isArray(r) ? setModels(r) : setError(r?.error ?? '')))
   }, [a.id, a.via, a.found])
   const value = settings.models[a.id] ?? ''
@@ -172,7 +171,7 @@ function ModelField({ a }: { a: AgentInfo }) {
       <input list={`models-${a.id}`} placeholder={a.via === 'cli' ? 'The default from its own config' : a.model ?? 'Picked for you'} defaultValue={value}
         onBlur={(e) => { if (e.target.value.trim() !== value) reload.settings({ models: { ...settings.models, [a.id]: e.target.value.trim() } }) }} />
       <datalist id={`models-${a.id}`}>{models.slice(0, 200).map((m) => <option key={m} value={m} />)}</datalist>
-      <small>{error || (a.via === 'cli' ? 'Leave empty to use what you set up in the tool itself.' : `${models.length} available`)}</small>
+      <small>{error || (a.via === 'cli' ? `Leave empty to use what you set up in the tool itself.${models.length ? ` ${models.length} suggested.` : ''}` : `${models.length} available`)}</small>
     </label>
   )
 }

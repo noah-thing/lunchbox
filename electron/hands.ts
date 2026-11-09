@@ -53,7 +53,8 @@ export class Hands {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse) {
-    const token = req.url?.match(/^\/mcp\/([\w-]+)/)?.[1]
+    // The token is the last part of the URL, or a bearer header for a CLI that takes it that way.
+    const token = req.url?.match(/^\/mcp\/([\w-]+)/)?.[1] ?? req.headers.authorization?.match(/^Bearer\s+([\w-]+)$/i)?.[1]
     const tools = token ? this.grants.get(token) : undefined
     if (!tools) return this.send(res, 404, { error: 'This turn has ended' })
     if (req.method === 'DELETE') return this.send(res, 200)

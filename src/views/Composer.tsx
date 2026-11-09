@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Mark, Thumb } from '../ui/bits'
 import { Menu, ModePicker } from '../ui/Access'
+import { CrewMenu } from '../ui/ModelPicker'
 import { IconClip, IconClose, IconSplit, IconStop, IconUp } from '../ui/icons'
 import { agentOf, desk, machine, unavailable, useApp, type Access } from '../lib/desk'
 import { PLAYBOOKS, fillPlaybook } from '../../shared/skills'
@@ -139,25 +140,16 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
       <div className="cbar">
         <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span>{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</>}>
           {() => (
-            <>
-              {listed.map((a) => {
-                const on = crew.includes(a.id)
-                const why = unavailable(a)
-                return (
-                  <button key={a.id} className={`item${on ? ' checked' : ''}${why ? ' off' : ''}`} role="menuitemcheckbox" aria-checked={on} onClick={() => toggle(a.id)}>
-                    <Mark seed={a.mark} size={14} />
-                    <span className="grow"><b>{a.name}</b><span>{why ?? a.good}</span></span>
-                    <i className="check" />
-                  </button>
-                )
-              })}
-              {!listed.length && <div className="menunote">No agents found yet.</div>}
-              <div className="sep" />
-              {/* Everything else, free providers and custom agents, lives on the Agents page. */}
-              <button className="item" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'agents', add: true } }))}>
-                <span className="grow"><b>See all agents</b><span>Free models, OpenCode, Qoder, any API or command line tool</span></span>
-              </button>
-            </>
+            <CrewMenu listed={listed} crew={crew} toggle={toggle} promote={(id) => setCrew([id, ...crew.filter((w) => w !== id)])} footer={
+              <>
+                {!listed.length && <div className="menunote">No agents found yet.</div>}
+                <div className="sep" />
+                {/* Everything else, free providers and custom agents, lives on the Agents page. */}
+                <button className="item" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'agents', add: true } }))}>
+                  <span className="grow"><b>See all agents</b><span>Free models, OpenCode, Qoder, any API or command line tool</span></span>
+                </button>
+              </>
+            } />
           )}
         </Menu>
         {setArena && crew.length > 1 && !shell && (

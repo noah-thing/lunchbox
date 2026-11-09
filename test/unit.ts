@@ -73,6 +73,17 @@ test('limits are recognised with their reset times', () => {
   assert.equal(new Date(at.until).getHours(), 15)
 })
 
+test('limits: short waits are read in their own unit, not as minutes or an hour', () => {
+  const left = (text: string) => limitOf(text)!.until - Date.now()
+  assert.ok(left('Rate limit reached for gpt-5. Please try again in 349ms.') < 5000, 'milliseconds')
+  assert.ok(Math.abs(left('429 Rate limit reached. Please try again in 20s.') - 20e3) < 5000, 'seconds')
+  assert.ok(Math.abs(left('Rate limit reached. Please try again in 1.5s') - 1500) < 5000, 'a fraction of a second')
+  assert.ok(Math.abs(left('Rate limit reached. Try again in 6m0s.') - 6 * 60e3) < 5000, 'minutes')
+  assert.ok(Math.abs(left('quota exceeded, retry after 30 seconds') - 30e3) < 5000, 'seconds spelled out')
+  assert.ok(Math.abs(left('429 Too Many Requests') - 60e3) < 5000, 'a rate limit with no time clears in a minute')
+  assert.ok(Math.abs(left('You have hit your usage limit.') - 3600e3) < 5000, 'a used up plan still waits an hour')
+})
+
 test('stderr is reduced to the line that matters', () => {
   const err = 'Error: This client is no longer supported. Please migrate.\n    at throwIneligible (file:///x.js:1:1)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)'
   assert.equal(reason(err), 'This client is no longer supported. Please migrate.')
@@ -105,6 +116,13 @@ test('asks: only crew handles at line start count', () => {
   const r = asks('Checking.\n@grok: what is trending?\nEmail me@site.com\n@nobody: hi', ['grok', 'codex'])
   assert.deepEqual(r.asks, [{ to: 'grok', ask: 'what is trending?' }])
   assert.equal(r.text, 'Checking.\nEmail me@site.com\n@nobody: hi')
+})
+
+test('asks: a comma is talk and a code block is code, neither hands off', () => {
+  const text = '@codex, thanks, that fixed it.\n```\n@grok: not an ask\n```\n@grok: what is trending?'
+  const r = asks(text, ['grok', 'codex'])
+  assert.deepEqual(r.asks, [{ to: 'grok', ask: 'what is trending?' }])
+  assert.equal(r.text, '@codex, thanks, that fixed it.\n```\n@grok: not an ask\n```')
 })
 
 test('context: a resumed agent only gets what changed', () => {
@@ -387,4 +405,63 @@ test('plan limits: tallies read logs once and pick up only what was added', asyn
   await update('claude', tally, Date.now() - 3600e3)
   assert.equal(used(tally, Date.now() - 3600e3).fresh, 140)
   delete process.env.CLAUDE_CONFIG_DIR
+})
+
+test('claude: subagents get their own rows and never leak into the answer', () => {
+  const parser = claudeLike()
+  const lines = [
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Splitting this up.' }, { type: 'tool_use', id: 't1', name: 'Task', input: { description: 'Read the auth code', prompt: 'Find where tokens are checked', subagent_type: 'Explore', model: 'haiku' } }, { type: 'tool_use', id: 't2', name: 'Agent', input: { prompt: 'Write the tests\nfor the parser' } }] } },
+    { type: 'assistant', parent_tool_use_id: 't1', message: { content: [{ type: 'text', text: 'SUBAGENT TEXT' }, { type: 'tool_use', id: 's1', name: 'Grep', input: { pattern: 'verifyToken' } }] } },
+    { type: 'user', parent_tool_use_id: 't1', message: { content: [{ type: 'tool_result', tool_use_id: 's1', content: 'src/auth.ts:12' }] } },
+    { type: 'stream_event', parent_tool_use_id: 't1', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'MORE SUBAGENT TEXT' } } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'Tokens are checked in src/auth.ts line 12.' }] }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', is_error: true, content: 'Stopped' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: ' Done.' }] } },
+  ]
+  const updates = lines.map((l) => parser.line(l))
+  assert.equal(parser.turn.text, 'Splitting this up. Done.', 'nothing a subagent says reaches the answer')
+  const rows = updates.flatMap((u) => u?.agents ?? [])
+  assert.deepEqual(rows.filter((r) => r.state === 'running' && r.tools === 0).map((r) => r.task), ['Read the auth code', 'Write the tests'], 'both rows appear as soon as they start')
+  const moving = rows.find((r) => r.id === 't1' && r.tools === 1)
+  assert.equal(moving?.last, 'Grep verifyToken', 'a row shows the tool its subagent is on')
+  const ended = parser.turn.acts.filter((a) => a.t === 'agent')
+  assert.deepEqual(ended.map((a) => a.t === 'agent' && [a.id, a.state, a.kind, a.model]), [['t1', 'done', 'Explore', 'haiku'], ['t2', 'failed', undefined, undefined]])
+  assert.equal(ended[0].t === 'agent' && ended[0].note, 'Tokens are checked in src/auth.ts line 12.')
+  assert.ok(!parser.turn.acts.some((a) => a.t === 'tool'), 'the subagent calls are not listed as plain tool calls')
+})
+
+test('prices: Fable 5.2 at its own rates, not 5.1', async () => {
+  const { claudePrice } = await import('../shared/prices')
+  assert.deepEqual(claudePrice('claude-fable-5-2'), { input: 8, read: 0.2, output: 40 })
+  assert.deepEqual(claudePrice('claude-fable-5-1'), { input: 10, read: 0.25, output: 50 })
+  assert.deepEqual(claudePrice('claude-mythos-5-2'), { input: 8, read: 0.2, output: 40 })
+})
+
+test('connectors wear their product logo, or a terminal or server', async () => {
+  const { logoOf } = await import('../shared/logos')
+  assert.equal(logoOf({ kind: 'openai', base: 'https://api.groq.com/openai/v1' }), 'groq')
+  assert.equal(logoOf({ kind: 'cli', command: '/usr/local/bin/aider --yes' }), 'aider')
+  assert.equal(logoOf({ kind: 'cli', command: 'cursor-agent' }), 'cursor')
+  assert.equal(logoOf({ kind: 'cli', command: 'my-tool' }), 'terminal')
+  assert.equal(logoOf({ kind: 'openai', base: 'http://10.0.0.2:9000/v1' }), 'server')
+  assert.equal(logoOf({ kind: 'anthropic', base: 'https://gateway.example.com' }), 'claude')
+})
+
+test('briefing: brief always kept, newest memory first, no transcript, only changes when resumed', async () => {
+  const { briefing } = await import('../electron/room/context')
+  const block = (id: string, text: string, v = 1) => ({ id, title: id, text, v, at: 0 })
+  const meta = { id: 'r', name: 'r', created: 0, updated: 0, crew: ['claude', 'codex'], workspace: '/w', sessions: {}, seen: { codex: { brief: 1, old: 1 } }, heard: {}, saved: { full: 0, sent: 0 },
+    blocks: [block('brief', 'Build the page'), block('old', 'x'.repeat(3990)), block('a', 'y'.repeat(3990)), block('b', 'z'.repeat(3990)), block('c', 'w'.repeat(3990)), block('newest', 'fresh finding', 2)] }
+  const events = [{ id: '1', at: 0, kind: 'you' as const, text: 'Make the hero darker' }, { id: '2', at: 0, kind: 'say' as const, who: 'claude', text: 'SECRET TRANSCRIPT LINE', acts: [] }]
+  const p = briefing(meta, events, 'codex', 'Do the task')
+  assert.match(p.text, /## brief\nBuild the page/)
+  assert.match(p.text, /fresh finding/, 'the newest block survives the cap')
+  assert.doesNotMatch(p.text, /## old\n/, 'the oldest block is the one dropped')
+  assert.doesNotMatch(p.text, /SECRET TRANSCRIPT LINE/)
+  assert.match(p.text, /Make the hero darker/)
+  const again = briefing(meta, events, 'codex', 'Do the task', true)
+  assert.doesNotMatch(again.text, /## brief\n/, 'a resumed session is not sent what it already has')
+  assert.match(again.text, /fresh finding/)
+  const follow = briefing(meta, events, 'codex', 'Reply', false, ['Claude: here is the draft'])
+  assert.match(follow.text, /The last few lines of the room:\n\nClaude: here is the draft/)
 })

@@ -8,6 +8,7 @@ export type Host = {
   nested: boolean
   canWrite: boolean
   consult(to: string, ask: string): Promise<string>
+  bring(to: string, job: string, context?: string): Promise<string>
   image(prompt: string, file?: string, size?: string): Promise<string>
   memory(): Block[]
   remember(title: string, text: string): void
@@ -38,7 +39,33 @@ export function kit(h: Host): Tool[] {
         agent: { type: 'string', enum: mates.map((a) => a.id), description: 'Who to ask' },
         question: { type: 'string', description: 'The question, complete enough to answer without the rest of your turn' },
       },
-      run: (a) => h.consult(str(a.agent, 'agent'), str(a.question, 'question')),
+      // The list above is only advice to the model; anyone outside the crew is refused here.
+      run: async (a) => {
+        const to = str(a.agent, 'agent')
+        if (!mates.some((m) => m.id === to)) throw new Error(`${to} is not in this room's crew. Ask one of: ${mates.map((m) => m.id).join(', ')}`)
+        return h.consult(to, str(a.question, 'question'))
+      },
+    })
+  }
+
+  if (!h.nested && mates.length) {
+    tools.push({
+      name: 'bring_in',
+      description: [
+        'Bring a crewmate into the room for one piece of work, such as building a page, writing tests or reviewing a change, and wait until it is done. It works in the room as itself and steps out when finished; you get its report.',
+        'It does not see this conversation, only the brief, the shared memory and the files changed so far. Put everything else it needs in task and context. For a quick question use ask_crewmate instead.',
+      ].join('\n'),
+      input: {
+        agent: { type: 'string', enum: mates.map((a) => a.id), description: 'Who to bring in' },
+        task: { type: 'string', description: 'What to do, complete enough to start on' },
+        context: { type: 'string', description: 'Decisions, constraints or findings it needs that are not in the shared memory' },
+      },
+      required: ['agent', 'task'],
+      run: async (a) => {
+        const to = str(a.agent, 'agent')
+        if (!mates.some((m) => m.id === to)) throw new Error(`${to} is not in this room's crew. Bring in one of: ${mates.map((m) => m.id).join(', ')}`)
+        return h.bring(to, str(a.task, 'task'), typeof a.context === 'string' && a.context.trim() ? a.context.trim() : undefined)
+      },
     })
   }
 

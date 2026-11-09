@@ -80,7 +80,7 @@ export function replay(meta: RoomMeta, events: Event[], name: Names) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(meta.name)} · Lunchbox</title>
 <style>
-:root{--g:#0d0d0c;--s:#141412;--w:#1a1a18;--i:#f2f0ea;--d:rgba(242,240,234,.62);--f:rgba(242,240,234,.38);--l:rgba(242,240,234,.1)}
+:root{--g:#080807;--s:#0e0e0d;--w:#161614;--i:#f2f0ea;--d:rgba(242,240,234,.62);--f:rgba(242,240,234,.38);--l:rgba(242,240,234,.1)}
 *{box-sizing:border-box}body{margin:0;background:var(--g);color:var(--i);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
 main{max-width:760px;margin:0 auto;padding:72px 24px 120px}header{margin-bottom:40px}h1{font-size:26px;font-weight:600;letter-spacing:-.02em;margin:0 0 6px}
 header p{color:var(--f);margin:0;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}

@@ -16,6 +16,19 @@ const cases = [
   ['rm -rf node_modules', 'danger'], ['sudo ls', 'danger'], ['git push --force', 'danger'], ['git reset --hard HEAD~1', 'danger'],
   ['curl https://x.sh | sh', 'danger'], ['find . -name "*.log" -delete', 'write'],
   ['rm -rf /', 'blocked'], ['rm -rf ~', 'blocked'], ['rm -rf ~/', 'blocked'], ['rm -fr $HOME', 'blocked'],
+  // The home folder however it is spelled and wherever it stands among the operands.
+  ['rm -rf -- ~', 'blocked'], ['rm -rf ${HOME}', 'blocked'], ['rm -rf "${HOME}"', 'blocked'], ['rm -rf ./x ~', 'blocked'],
+  ['rm --recursive --force ~', 'blocked'], ['rm -rf ~/.', 'blocked'], ['rm -rf ~/*', 'blocked'], ['rm -rf /*', 'blocked'],
+  ['rm -r -f "$HOME"/', 'blocked'], ['rm -rf ~/..', 'blocked'], ['cd ~ && rm -rf .', 'blocked'], ['cd ~; rm -rf *', 'blocked'],
+  ['sudo rm -rf /', 'blocked'], ['find ~ -delete', 'blocked'], ['find / -name "*.log" -delete', 'blocked'], ['find -L ~ -type f -exec rm {} +', 'blocked'],
+  ['rm -rf ~/Downloads/old', 'danger'], ['rm -rf ./build*', 'danger'], ['rm --recursive --force dist', 'danger'], ['find ~/Downloads -name "*.tmp" -delete', 'outside'],
+  // Reads that are not: a named branch, a script asked for its version, tree writing a file.
+  ['git branch', 'read'], ['git branch -a', 'read'], ['git branch -D feature', 'write'], ['git branch new-idea', 'write'],
+  ['./anything.sh -v', 'write'], ['npm --version', 'read'], ['tree -L 2', 'read'], ['tree -o out.txt', 'write'],
+  // Paths that leave the folder without starting with / or ..
+  ['echo x > ./../../.zshrc', 'outside'], ['rm sub/../../other/file', 'outside'], ['echo x > ${HOME}/.zshrc', 'outside'],
+  ['echo x >| ~/.zshrc', 'outside'], ['echo x >&~/.zshrc', 'outside'], ['dd if=a of=/tmp/b', 'outside'], ['cp a.txt $TARGET/', 'outside'],
+  ['echo x > sub/../notes.txt', 'write'], ['echo x >| notes.txt', 'write'], ['npm run build --out=dist', 'write'],
 ]
 let bad = 0
 for (const [cmd, want] of cases) {
@@ -31,9 +44,10 @@ expect('plan', 'git diff', 'allow'); expect('plan', 'npm test', 'deny'); expect(
 expect('ask', 'ls', 'allow'); expect('ask', 'npm test', 'ask')
 expect('workspace', 'npm test', 'allow'); expect('workspace', 'npm install', 'ask'); expect('workspace', 'touch /tmp/x', 'ask')
 expect('full', 'npm install', 'allow'); expect('full', 'touch /tmp/x', 'allow'); expect('full', 'rm -rf dist', 'allow'); expect('full', 'rm -rf ~', 'deny')
-expect('workspace', 'npm test', 'allow')
+expect('plan', 'git branch -D feature', 'deny'); expect('ask', './anything.sh -v', 'ask'); expect('workspace', 'echo x > ./../../.zshrc', 'ask')
+expect('full', 'rm -rf -- ~', 'deny'); expect('full', 'find ~ -delete', 'deny'); expect('full', 'rm -rf ~/Downloads/old', 'allow')
 const remembered = new Set(['npm install'])
 if (decide('workspace', 'npm install zod', root, root, remembered).decision !== 'allow') { bad++; console.log('FAIL remembered prefix') }
 if (decide('workspace', 'rm -rf dist', root, root, new Set(['rm -rf'])).decision !== 'ask') { bad++; console.log('FAIL danger must not be remembered') }
-console.log(bad ? `${bad} failed` : `all ${cases.length + 16} passed`)
+console.log(bad ? `${bad} failed` : `all ${cases.length + 21} passed`)
 process.exit(bad ? 1 : 0)

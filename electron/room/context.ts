@@ -9,7 +9,8 @@ const ACCESS: Record<Access, string> = {
 }
 
 const TOOL_LINES: Record<string, string> = {
-  ask_crewmate: 'ask_crewmate asks a crewmate and gives you the answer without ending your turn.',
+  ask_crewmate: 'ask_crewmate asks a crewmate a question and gives you the answer without ending your turn.',
+  bring_in: 'bring_in has a crewmate do one piece of work in the room, such as a page, a test suite or a review, and hands you its report when it is done.',
   search_x: 'search_x reads live posts on X.',
   search_web: 'search_web finds current information with sources.',
   make_image: 'make_image creates an image and saves it in the folder.',
@@ -24,7 +25,7 @@ const connected = (tools: string[]) => {
   return groups.size ? `Connected tools from: ${[...groups].join(', ')}. Use them when they fit better than guessing.` : ''
 }
 
-export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = [], habits: string[] = []) {
+export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = [], habits: string[] = [], main = meta.crew[0]) {
   const rules = habitRules(habits)
   const mates = crew
     .filter((a) => a.id !== me.id)
@@ -38,6 +39,7 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
     borrowed.length ? `The lunchbox tools lend you your crewmates' abilities mid-turn. ${borrowed.join(' ')} Prefer them to an @handle line when you need the answer to keep working.` : '',
     [
       'How the room works:',
+      mates.length && main === me.id ? '- You are the main agent. The person talks to you; the rest of the crew is on call and does not read along. Do the work yourself unless a crewmate is clearly better placed, then involve only that one, with a task complete enough to start on: they see the brief, the shared memory and the files changed, not this conversation.' : '',
       mates.length ? '- To get something from a crewmate, put a line on its own: "@handle: what you need". Their answer comes back to you before you finish. Ask only when they are clearly better placed, at most two at a time.' : '',
       me.tools && access !== 'plan' ? '- The folder is yours to organise. Create subfolders for separate pieces of work, and give a new project its own folder inside it rather than scattering files.' : '',
       '- When the work has several steps, keep a short checklist with "- [ ] step" lines, and tick them with "- [x] step" as they get done.',
@@ -50,7 +52,7 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
 }
 
 function acts(list: Act[]) {
-  const parts = list.slice(-8).map((a) => (a.t === 'cmd' ? `ran \`${a.command}\` (exit ${a.exit ?? '?'})` : a.t === 'edit' ? `edited ${a.path}` : `${a.name} ${a.detail}`.trim()))
+  const parts = list.slice(-8).map((a) => (a.t === 'cmd' ? `ran \`${a.command}\` (exit ${a.exit ?? '?'})` : a.t === 'edit' ? `edited ${a.path}` : a.t === 'agent' ? `subagent "${a.task}" (${a.state})` : `${a.name} ${a.detail}`.trim()))
   return parts.length ? `\n  [${parts.join('; ')}]` : ''
 }
 
@@ -62,6 +64,7 @@ export function line(e: Event, name: (id: string) => string): string | null {
     case 'wall': return `[${name(e.from)} stopped (${e.reason}); ${e.to ? `${name(e.to)} took over` : 'nobody could take over'}]`
     case 'run': return `[${e.who === 'you' ? 'Person' : name(e.who)} ran \`${e.command}\`, ${e.code === null ? e.how : `exit ${e.code}`}]${e.out ? `\n${e.out.slice(-800)}` : ''}`
     case 'image': return `[${name(e.by)} made an image for ${name(e.for)}, saved as ${e.path}: ${e.prompt.slice(0, 200)}]`
+    case 'joined': return `[${name(e.by)} brought in ${name(e.who)} for: ${e.task}]`
     case 'chose': return `[Person chose: ${e.label}]`
     case 'pick': return `[Person picked ${name(e.who)}'s answer]`
     default: return null
@@ -115,4 +118,43 @@ export function prompt(meta: RoomMeta, events: Event[], me: string, task: string
     full,
     seen: Object.fromEntries(meta.blocks.map((b) => [b.id, b.v])),
   }
+}
+
+// What a crewmate gets when it joins for one task instead of the conversation: the brief, the
+// shared memory, the files changed so far, the person's latest message and the task. Stable parts
+// first and the task last, so repeated joins share a cached prefix. Memory is bounded by
+// MAX_PACKET: the brief always, then the newest blocks first. A resumed session gets only the
+// blocks that changed since it last saw them.
+const MAX_PACKET = 16000
+export function briefing(meta: RoomMeta, events: Event[], me: string, task: string, resumed = false, recent: string[] = []) {
+  const seen = meta.seen[me] ?? {}
+  const answers = meta.blocks.filter((b) => b.id.startsWith('answer-'))
+  const old = new Set(answers.slice(0, -4).map((b) => b.id))
+  const blocks = meta.blocks
+    .filter((b) => !old.has(b.id) && (!resumed || b.v > (seen[b.id] ?? 0)))
+    .map((b) => (b.id === 'decisions' ? { ...b, text: b.text.split('\n').slice(-20).join('\n') } : b))
+  const part = (b: { title: string; text: string }) => `## ${b.title}\n${b.text.slice(0, 4000)}\n\n`
+  const kept = new Set<string>()
+  let size = 0
+  for (const b of [...blocks.filter((b) => b.id === 'brief'), ...blocks.filter((b) => b.id !== 'brief').reverse()]) {
+    const n = part(b).length
+    if (size + n > MAX_PACKET && b.id !== 'brief') continue
+    kept.add(b.id)
+    size += n
+  }
+  const given = blocks.filter((b) => kept.has(b.id))
+  const memory = given.map(part).join('').trim()
+  const tracked = meta.blocks.some((b) => b.id === 'files')
+  const files = tracked ? [] : [...new Set(events.flatMap((e) => (e.kind === 'say' || e.kind === 'hands' ? e.acts.flatMap((a) => (a.t === 'edit' ? [a.path] : [])) : [])))].slice(-40)
+  const asked = [...events].reverse().find((e) => e.kind === 'you')
+  const latest = asked?.kind === 'you' ? `${asked.text}${asked.files?.length ? `\n[attached: ${asked.files.join(', ')}]` : ''}` : ''
+  const tail = [
+    `You are joining this room for one task. You have not seen the whole conversation; this briefing is what you need.`,
+    memory ? `What the room knows${resumed ? ', changed since you last looked' : ''}:\n\n${memory}` : '',
+    files.length ? `Files changed in this room so far:\n${files.map((f) => `- ${f}`).join('\n')}` : '',
+    recent.length ? `The last few lines of the room:\n\n${recent.join('\n\n')}` : latest ? `The person's latest message:\n${latest}` : '',
+    task,
+  ].filter(Boolean).join('\n\n---\n\n')
+  const full = meta.blocks.reduce((n, b) => n + Math.min(b.text.length, 6000), 0)
+  return { text: tail, history: [] as string[], tail, sent: memory.length, full, seen: Object.fromEntries(given.map((b) => [b.id, b.v])) }
 }

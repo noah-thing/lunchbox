@@ -35,7 +35,7 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
     const el = canvas.current!
     const ctx = el.getContext('2d')!
     const dpr = Math.min(2, devicePixelRatio || 1)
-    let w = 0, cw = 7.2, raf = 0, last = 0, frame = 0, clock = 0, prev = performance.now()
+    let w = 0, cw = 7.2, raf = 0, last = 0, clock = 0, prev = performance.now()
     let ink = '#f0eee8'
     let shownWord = props.current.word, wordAt = performance.now() / 1000 + 0.3, wordK = 0
     let shownLabel = props.current.label, labelAt = 0
@@ -56,7 +56,6 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
       clock += Math.min(0.1, (now - prev) / 1000) * (p.busy ? 2.6 : 1)
       prev = now
       const t = clock
-      if (frame++ % 30 === 0) ink = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || ink
       if (p.word && p.word !== shownWord) { shownWord = p.word; wordAt = sec }
       wordK += ((p.word ? 1 : 0) - wordK) * 0.06
       if (p.label !== shownLabel) { shownLabel = p.label; labelAt = sec }
@@ -142,6 +141,11 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
     }
     const wake = () => { if (!raf && visible && !document.hidden && !still()) { prev = performance.now(); raf = requestAnimationFrame(loop) } }
 
+    // The ink follows the theme the moment it flips, not on a later frame.
+    const colour = () => { ink = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || ink }
+    colour()
+    const theme = new MutationObserver(() => { colour(); draw(performance.now()) })
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-look'] })
     size()
     const ro = new ResizeObserver(() => { size(); draw(performance.now()) })
     ro.observe(el)
@@ -150,7 +154,7 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
     document.addEventListener('visibilitychange', wake)
     if (still()) { wordK = props.current.word ? 1 : 0; wordAt = -10; draw(performance.now()) }
     else wake()
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); seen.disconnect(); document.removeEventListener('visibilitychange', wake) }
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); seen.disconnect(); theme.disconnect(); document.removeEventListener('visibilitychange', wake) }
   }, [rows])
 
   return <canvas ref={canvas} className={`band ${className}`} style={{ height: rows * LH }} aria-hidden="true" />

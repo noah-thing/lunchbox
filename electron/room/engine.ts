@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
 import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
-import { classify, route, type Category } from '../../shared/route'
+import { classify } from '../../shared/route'
 import { detect, run } from '../agents'
 import { plain } from '../agents/parse'
 import type { Hands, Tool } from '../hands'
@@ -14,7 +14,7 @@ import { clearMemory, writeMemory } from './project'
 import { execute, kill, type Ran } from '../shell'
 import type { Snapshots } from '../snap'
 import type { Store } from '../store'
-import { prompt, protocol } from './context'
+import { briefing, line, prompt, protocol } from './context'
 import { check, suggest } from './proof'
 
 type Hooks = {
@@ -31,8 +31,12 @@ type Task =
   | { kind: 'answer'; from: string; ask: string; via?: 'tool'; quiet?: boolean; label?: string; size?: string }
   | { kind: 'continue' }
   | { kind: 'retry'; tools: string[] }
+  | { kind: 'job'; from: string; job: string; context?: string }
 
-type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string> }
+// tried holds who already failed on this message, so a failure everyone shares is not handed round in circles.
+// main is who follows the conversation for this message: the room's main agent, or its stand-in.
+// Everyone else who takes part gets a briefing instead of the log.
+type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string>; tried?: Set<string>; main?: string }
 type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
 // Failures of one command in one turn before the loop guard stops it.
@@ -83,11 +87,11 @@ export class Engine {
   // The next crewmate who can take the work, in crew order, preferring one with the same hands.
   // The next one in the crew who can take the work. When the whole crew is out, anyone else that
   // is set up and ready takes it, so a wall never ends the task. The asker never answers itself.
-  private fallback(meta: RoomMeta, from: string, asker?: string) {
+  private fallback(meta: RoomMeta, from: string, asker?: string, tried?: Set<string>) {
     const needTools = this.agent(from)?.tools
     const order = [...meta.crew.slice(meta.crew.indexOf(from) + 1), ...meta.crew.slice(0, Math.max(0, meta.crew.indexOf(from)))]
     const outside = this.agents.filter((a) => !meta.crew.includes(a.id) && a.ready).map((a) => a.id)
-    const ok = [...order, ...outside].filter((id) => id !== from && id !== asker && !this.why(id))
+    const ok = [...order, ...outside].filter((id) => id !== from && id !== asker && !tried?.has(id) && !this.why(id))
     return ok.find((id) => !needTools || this.agent(id)?.tools) ?? ok[0] ?? null
   }
 
@@ -359,7 +363,9 @@ export class Engine {
     if (joining.length) this.setCrew(room, [...meta.crew, ...joining])
     const first = !this.store.events(room).some((e) => e.kind === 'you')
     const cat = classify(text)
-    const lead = mentioned[0] ?? this.lead(meta, cat)
+    // The main agent, first in the crew, takes every message the person does not address to someone.
+    const main = this.main(meta)
+    const lead = mentioned[0] ?? main
     const said = this.add(room, { kind: 'you', text, to: mentioned.length ? mentioned : undefined, arena: arena || undefined, cat, lead: arena ? undefined : lead, files: files?.length ? files : undefined, from })
     if (first) {
       this.block(room, 'brief', 'Brief', text, 'you')
@@ -367,7 +373,7 @@ export class Engine {
     }
     return this.enqueue(room, async (gen) => {
       await this.checkpoint(room, said.id, access)
-      const ctx: Ctx = { gen, hops: { n: 0 } }
+      const ctx: Ctx = { gen, hops: { n: 0 }, main }
       if (arena) {
         const id = uid()
         const crew = meta.crew.filter((c) => !this.why(c))
@@ -385,14 +391,11 @@ export class Engine {
     })
   }
 
-  private lead(meta: RoomMeta, cat: Category) {
-    const free = meta.crew.filter((c) => !this.why(c))
-    if (this.store.settings.route === 'order' || free.length < 2) return free[0] ?? meta.crew[0]
-    const today = this.store.totals().today
-    return route(this.store.ratings, cat, free.map((id) => {
-      const budget = this.store.settings.budgets[id]
-      return { id, paid: this.agent(id)?.via === 'api', budgetLeft: budget > 0 ? 1 - (today[id]?.cost ?? 0) / budget : undefined }
-    })) ?? free[0]
+  // The first crewmate that is still set up; a removed connector does not keep the role.
+  private main(meta: RoomMeta): string
+  private main(meta: RoomMeta | undefined): string | undefined
+  private main(meta: RoomMeta | undefined) {
+    return meta && (meta.crew.find((id) => this.agent(id)) ?? meta.crew[0])
   }
 
   pick(room: string, arena: string, who: string) {
@@ -430,9 +433,9 @@ export class Engine {
       })
     } else if (a.type === 'ask') {
       this.add(room, { kind: 'you', text: a.text, to: [a.who] })
-      this.enqueue(room, async (gen) => { await this.conversation(room, a.who, { kind: 'reply' }, access, { gen, hops: { n: 0 } }); this.settle(room) })
+      this.enqueue(room, async (gen) => { await this.conversation(room, a.who, { kind: 'reply' }, access, { gen, hops: { n: 0 }, main: this.main(this.store.room(room)) }); this.settle(room) })
     } else if (a.type === 'retry') {
-      this.enqueue(room, async (gen) => { await this.conversation(room, a.who, { kind: 'retry', tools: a.tools }, access, { gen, hops: { n: 0 }, allow: a.tools }); this.settle(room) })
+      this.enqueue(room, async (gen) => { await this.conversation(room, a.who, { kind: 'retry', tools: a.tools }, access, { gen, hops: { n: 0 }, allow: a.tools, main: this.main(this.store.room(room)) }); this.settle(room) })
     }
     this.changed(room)
   }
@@ -472,6 +475,7 @@ export class Engine {
       case 'answer': return `${this.name(t.from)} asks you: ${t.ask}\n\nAnswer ${this.name(t.from)} directly and completely. Your answer goes straight back to them, so do not ask anyone else.`
       case 'continue': return 'Your crewmates answered above. Carry on with the work and reply to the person.'
       case 'retry': return `You now have permission for: ${t.tools.join(', ')}. Carry on where you stopped.`
+      case 'job': return `${this.name(t.from)} brought you in for this: ${t.job}${t.context ? `\n\nWhat ${this.name(t.from)} passed you:\n${t.context}` : ''}\n\nDo it, then end with a few lines on what you did and anything ${this.name(t.from)} needs to know. Your reply goes back to ${this.name(t.from)}, so do not ask anyone else.`
     }
   }
 
@@ -483,6 +487,7 @@ export class Engine {
       nested: (ctx.depth ?? 0) > 0,
       canWrite: access === 'workspace' || access === 'full',
       consult: (to, ask) => this.consult(room, me.id, to, ask, access, ctx),
+      bring: (to, job, context) => this.bring(room, me.id, to, job, context, access, ctx),
       image: (prompt, file, size) => this.image(room, me.id, prompt, access, ctx, file, size),
       memory: () => this.store.room(room)?.blocks ?? [],
       remember: (title, text) => this.block(room, `note-${uid()}`, title, text, me.id),
@@ -493,6 +498,17 @@ export class Engine {
     if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
     const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool', quiet, label, size }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
     if (!r?.text) throw new Error(`${this.name(to)} could not answer right now.`)
+    return r.text
+  }
+
+  // A crewmate joins for one piece of work: a line says so, it works in the room as itself, and it
+  // steps out when done. Its report goes back to the agent that brought it in.
+  private async bring(room: string, from: string, to: string, job: string, context: string | undefined, access: Access, ctx: Ctx) {
+    if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
+    this.add(room, { kind: 'joined', who: to, by: from, task: job.slice(0, 200) })
+    const r = await this.turn(room, to, { kind: 'job', from, job, context }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1 })
+    this.add(room, { kind: 'left', who: r?.who ?? to })
+    if (!r?.text) throw new Error(`${this.name(to)} could not take this on right now.`)
     return r.text
   }
 
@@ -527,7 +543,8 @@ export class Engine {
     if (!meta || (this.gens.get(room) ?? 0) !== ctx.gen) return null
     const blocked = this.why(who)
     if (blocked) {
-      const next = ctx.arena ? null : this.fallback(meta, who)
+      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
+      if (next && ctx.main === who) ctx.main = next
       this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until })
       if (!next || ++ctx.hops.n > MAX_HOPS) return null
       return this.turn(room, next, task, access, ctx)
@@ -540,10 +557,19 @@ export class Engine {
     // Only the CLIs Lunchbox knows how to resume get a delta; a connector always gets the whole room.
     const resumed = !!session && ['claude', 'codex', 'grok'].includes(who)
     const events = this.store.events(room)
+    // The log is live and grows while the agent works; only what it was sent counts as heard.
+    const upto = events.length
     // Crewmates who are out right now are named in the request, not the protocol, so the cached
     // protocol stays the same when someone hits a limit and comes back.
     const out = meta.crew.filter((id) => id !== who && this.why(id)).map(this.name)
-    const p = prompt(meta, events, who, this.task(task) + (out.length ? `\n(Out right now, so do not ask them: ${out.join(', ')}.)` : ''), this.name, resumed)
+    const ask = this.task(task) + (out.length ? `\n(Out right now, so do not ask them: ${out.join(', ')}.)` : '')
+    // Only the agent following the conversation reads it. Anyone joining for a task, a question
+    // or because the person named them gets a briefing, which costs a fraction of the log.
+    const briefed = !ctx.arena && !!ctx.main && who !== ctx.main
+    // Someone the person named, or who is carrying on after crewmates answered, also gets the last
+    // few lines of the room, so a follow-up makes sense; a job or a question does not need them.
+    const recent = briefed && (task.kind === 'reply' || task.kind === 'continue') ? events.slice(-12).map((e) => line(e, this.name)).filter((l): l is string => !!l).slice(-8) : []
+    const p = briefed ? briefing(meta, events, who, ask, resumed, recent) : prompt(meta, events, who, ask, this.name, resumed)
 
     const live = this.live(room)
     const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now(), image: task.kind === 'answer' && task.quiet ? true : undefined, label: task.kind === 'answer' ? task.label : undefined, size: task.kind === 'answer' ? task.size : undefined }
@@ -560,7 +586,7 @@ export class Engine {
     const http = me.via !== 'cli'
     const fails = new Map<string, number>()
     let looped = ''
-    const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits)
+    const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits, ctx.main ?? this.main(meta))
     const running = run(who, {
       prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || this.protos.get(`${room}:${who}`) !== system, cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
@@ -581,6 +607,11 @@ export class Engine {
           fails.set(a.command, n)
           if (n >= LOOP && !looped) { looped = a.command; running.stop() }
         }
+      }
+      for (const s of u.agents ?? []) {
+        const at = lt.acts.findIndex((a) => a.t === 'agent' && a.id === s.id)
+        if (at >= 0) lt.acts[at] = s
+        else lt.acts.push(s)
       }
       if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
       this.changed(room)
@@ -646,7 +677,9 @@ export class Engine {
       if (r.limit) this.hooks.emit('ledger', this.ledger())
       else this.refresh()
       // In side by side everyone is already answering, so a failed slot stays empty and says why.
-      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' ? task.from : undefined)
+      ctx.tried = (ctx.tried ?? new Set()).add(who)
+      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
+      if (next && ctx.main === who) ctx.main = next
       this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
       if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
       if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
@@ -659,7 +692,7 @@ export class Engine {
     }
 
     const handles = crew.filter((a) => a.id !== who).map((a) => a.id)
-    const parsed = task.kind === 'answer' || ctx.arena ? { asks: [], text: r.text } : asks(r.text, handles)
+    const parsed = task.kind === 'answer' || task.kind === 'job' || ctx.arena ? { asks: [], text: r.text } : asks(r.text, handles)
     let event: Event
     if (task.kind === 'answer') {
       const hands = { kind: 'hands' as const, from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via }
@@ -688,8 +721,10 @@ export class Engine {
     }
     // Only a turn that happened counts as delivered: memory and savings move on success.
     this.store.update(room, (m) => {
-      m.heard[who] = events.length
-      m.seen[who] = p.seen
+      // A briefing is not the log: heard stays put, so an agent that later follows the room gets
+      // what it missed, and seen only counts the memory it was actually sent.
+      if (!briefed) m.heard[who] = upto
+      m.seen[who] = briefed ? { ...m.seen[who], ...p.seen } : p.seen
       m.saved.full += p.full
       m.saved.sent += p.sent
     })

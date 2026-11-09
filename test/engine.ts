@@ -67,7 +67,7 @@ test('room: handover, handoff, resume and proof', { skip: process.platform === '
 })
 
 // Claude borrows Grok's X search through the room's MCP server, mid-turn, and finishes with it.
-test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, async () => {
+test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'lunchbox-hands-'))
   const bin = join(root, 'bin')
   const agent = join(process.cwd(), 'test', 'fake-agent.mjs')
@@ -80,6 +80,8 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   const { Hands } = await import('../electron/hands')
   const hands = new Hands()
   await hands.start()
+  // A failing assertion must not leave the server open and the run hanging.
+  t.after(() => { hands.stop(); delete process.env.FAKE_LOG })
   const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
   const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] }, hands)
   await engine.refresh()
@@ -98,14 +100,30 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   assert.match(borrowed.ask, /^Search X for: agent limits/)
   const said = events[2] as Extract<typeof events[number], { kind: 'say' }>
   assert.match(said.text, /Grok found: 212 posts/)
-  assert.match(said.text, /Tools: ask_crewmate, search_x, search_web, make_image, room_memory, remember/)
+  assert.match(said.text, /Tools: ask_crewmate, bring_in, search_x, search_web, make_image, room_memory, remember/)
   assert.ok(said.acts.some((a) => a.t === 'tool' && a.name === 'mcp__lunchbox__search_x'))
 
   engine.send(room.id, 'What is trending on X today?', 'workspace')
   await engine.idle(room.id)
-  hands.stop()
   const routed = store.events(room.id).filter((e) => e.kind === 'you').at(-1) as Extract<typeof events[number], { kind: 'you' }>
-  assert.equal(routed.lead, 'grok', 'live news goes to the agent built for it')
+  assert.equal(routed.lead, 'claude', 'the main agent takes every message nobody is named in')
+
+  // The main agent brings Grok in for one task; Grok gets a briefing, not the conversation.
+  const log = join(root, 'calls.jsonl')
+  process.env.FAKE_LOG = log
+  const before = store.events(room.id).length
+  engine.send(room.id, 'Bring: get the launch post drafted', 'workspace')
+  await engine.idle(room.id)
+  const after = store.events(room.id).slice(before)
+  assert.deepEqual(after.map((e) => e.kind), ['you', 'joined', 'say', 'left', 'say'])
+  const joined = after[1] as Extract<typeof events[number], { kind: 'joined' }>
+  assert.deepEqual([joined.by, joined.who, joined.task], ['claude', 'grok', 'Draft the launch post'])
+  assert.match((after[4] as Extract<typeof events[number], { kind: 'say' }>).text, /Grok reported: Done: drafted the launch post/)
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const grok = calls.find((c) => c.name === 'grok')
+  assert.match(grok.input, /You are joining this room for one task/)
+  assert.match(grok.input, /Keep it under 50 words/)
+  assert.doesNotMatch(grok.input, /The conversation so far|Since your last turn/, 'a joiner never gets the transcript')
   store.flush()
 })
 
@@ -224,5 +242,38 @@ test('room: a failed side by side slot stays empty', { skip: process.platform ==
   assert.equal(wall.from, 'codex')
   assert.equal(wall.to, '')
   assert.ok(wall.arena)
+  store.flush()
+})
+
+// A message sent while the agent is still working reaches it on its next, resumed turn.
+test('room: a message sent mid-turn is not lost', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-heard-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  const log = (process.env.FAKE_LOG = join(root, 'calls.jsonl'))
+  process.env.FAKE_DELAY = '20'
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { resetPath } = await import('../electron/system')
+  resetPath()
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+  await engine.refresh()
+
+  const room = engine.create({ crew: ['claude'], workspace: root })
+  engine.send(room.id, 'Fix the login bug', 'workspace')
+  while (!existsSync(log)) await new Promise((r) => setTimeout(r, 10))
+  engine.send(room.id, 'Also update the README', 'workspace')
+  await engine.idle(room.id)
+  delete process.env.FAKE_DELAY
+
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  assert.equal(calls.length, 2)
+  assert.ok(!calls[0].input.includes('Also update the README'), 'the first turn started before the second message')
+  assert.ok(calls[1].args.includes('--resume'), 'the second turn resumes')
+  assert.ok(calls[1].input.includes('Also update the README'), 'and is given the message sent while it worked')
   store.flush()
 })
