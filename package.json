@@ -90,7 +90,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Lunchbox-Setup-${version}.${ext}"
     },
     "linux": {
       "icon": "build/icon-1024.png",
@@ -109,6 +110,7 @@
         "repo": "lunchbox-releases",
         "releaseType": "release"
       }
-    ]
+    ],
+    "artifactName": "Lunchbox-${version}-${os}-${arch}.${ext}"
   }
 }
