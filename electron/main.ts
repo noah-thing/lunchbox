@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
 import type { Access, Settings } from '../shared/types'
 import { modelsFor } from './agents'
 import { importPack, loadPacks } from './packs'
+import { Hands } from './hands'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
 import { Store, type Cipher } from './store'
@@ -12,6 +13,7 @@ import { Store, type Cipher } from './store'
 app.setName('Lunchbox')
 
 const mac = process.platform === 'darwin'
+const IMAGE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }
 let win: BrowserWindow | null = null
 const emit = (channel: string, value: unknown) => win?.webContents.send(channel, value)
 
@@ -127,14 +129,21 @@ function wire() {
     return r.canceled ? null : r.filePaths[0]
   })
   h('reveal', (path: string) => (existsSync(path) ? shell.openPath(path) : 'missing'))
+  h('file:image', (path: string) => {
+    const type = IMAGE_TYPES[extname(path).toLowerCase()]
+    if (!type || !existsSync(path) || statSync(path).size > 12e6) return null
+    return `data:${type};base64,${readFileSync(path).toString('base64')}`
+  })
   h('theme', (dark: boolean) => {
     if (!mac && win) win.setTitleBarOverlay({ color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 44 })
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   store = new Store(join(app.getPath('userData'), 'data'), cipher)
-  engine = new Engine(store, { emit, notify, packs })
+  const hands = new Hands()
+  await hands.start().catch(() => {})
+  engine = new Engine(store, { emit, notify, packs }, hands)
   wire()
   const icon = join(__dirname, '../build/icon-1024.png')
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)

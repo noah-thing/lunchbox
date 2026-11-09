@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill } from '../../shared/types'
+import { existsSync } from 'node:fs'
+import { relative } from 'node:path'
+import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
 import { detect, run } from '../agents'
+import type { Hands } from '../hands'
+import { openaiImage, target } from '../images'
+import { kit, type Host } from './kit'
 import { execute, type Ran } from '../shell'
 import type { Store } from '../store'
 import { prompt, protocol } from './context'
@@ -15,13 +20,17 @@ type Hooks = {
 
 type Task =
   | { kind: 'reply' }
-  | { kind: 'answer'; from: string; ask: string }
+  | { kind: 'answer'; from: string; ask: string; via?: 'tool' }
   | { kind: 'continue' }
   | { kind: 'retry'; tools: string[] }
 
-type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[] }
+type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string> }
+type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
 const MAX_HOPS = 8
+const IMAGE_MODEL = 'gpt-6-astra'
+// Grok Build only loads MCP servers from config files, which the room does not touch.
+const BORROWS = new Set(['claude', 'codex', 'gemini'])
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
 type Draft<E = Event> = E extends Event ? Omit<E, 'id' | 'at'> : never
 
@@ -35,7 +44,7 @@ export class Engine {
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
 
-  constructor(private store: Store, private hooks: Hooks) {}
+  constructor(private store: Store, private hooks: Hooks, private hands?: Hands) {}
 
   async refresh() {
     this.agents = await detect(this.store.keys(), this.store.settings.models, this.store.health)
@@ -313,7 +322,52 @@ export class Engine {
     }
   }
 
-  private async turn(room: string, who: string, task: Task, access: Access, ctx: Ctx): Promise<{ who: string; asks: { to: string; ask: string }[] } | null> {
+  private host(room: string, me: AgentInfo, crew: AgentInfo[], access: Access, ctx: Ctx): Host {
+    return {
+      me,
+      crew,
+      ready: this.agents.filter((a) => !this.why(a.id)),
+      nested: (ctx.depth ?? 0) > 0,
+      canWrite: access === 'workspace' || access === 'full',
+      consult: (to, ask) => this.consult(room, me.id, to, ask, access, ctx),
+      image: (prompt, file, size) => this.image(room, me.id, prompt, access, ctx, file, size),
+      memory: () => this.store.room(room)?.blocks ?? [],
+      remember: (title, text) => this.block(room, `note-${uid()}`, title, text, me.id),
+    }
+  }
+
+  private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>) {
+    if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
+    const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool' }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
+    if (!r?.text) throw new Error(`${this.name(to)} could not answer right now.`)
+    return r.text
+  }
+
+  private async image(room: string, from: string, prompt: string, access: Access, ctx: Ctx, file?: string, size?: string) {
+    const meta = this.store.room(room)
+    if (!meta) throw new Error('The room is gone')
+    const path = target(meta.workspace, prompt, file)
+    const key = this.store.keys().openai
+    let by = 'codex'
+    let usage: Usage | undefined
+    if (key && !this.why('openai-api')) {
+      by = 'openai-api'
+      const live = this.live(room)
+      live.doing = `Making an image for ${this.name(from)}`
+      this.changed(room)
+      usage = await openaiImage(key, prompt, path, size)
+      this.store.record(by, room, usage)
+      this.hooks.emit('ledger', this.ledger())
+    } else {
+      const ask = `Generate this image with your image tool and save it as ${path}${size ? ` at ${size}` : ''}. Reply with the path only.\n\nImage: ${prompt}`
+      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }).catch((e: Error) => e.message)
+      if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
+    }
+    this.add(room, { kind: 'image', by, for: from, prompt, path, usage })
+    return `Saved ${relative(meta.workspace, path)}`
+  }
+
+  private async turn(room: string, who: string, task: Task, access: Access, ctx: Ctx): Promise<Said | null> {
     const meta = this.store.room(room)
     if (!meta || (this.gens.get(room) ?? 0) !== ctx.gen) return null
     const blocked = this.why(who)
@@ -345,9 +399,11 @@ export class Engine {
     if (task.kind === 'answer') live.cable = { from: task.from, to: who, at: Date.now() }
     this.changed(room)
 
+    const tools = this.hands && me.via === 'cli' && BORROWS.has(who) ? kit(this.host(room, me, crew, access, ctx)) : []
+    const grant = tools.length ? this.hands!.grant(tools) : null
     const running = run(who, {
-      prompt: p.text, system: protocol(meta, me, crew, access, pack), cwd: meta.workspace, access,
-      model: this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow,
+      prompt: p.text, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name)), cwd: meta.workspace, access,
+      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
       if (u.acts) lt.acts.push(...u.acts)
@@ -358,6 +414,7 @@ export class Engine {
     this.procs.set(room, procs)
     procs.add(running)
     const r = await running.done
+    grant?.revoke()
     procs.delete(running)
     live.turns = live.turns.filter((t) => t !== lt)
     if (live.active === who) live.active = live.turns[live.turns.length - 1]?.who ?? null
@@ -399,7 +456,7 @@ export class Engine {
     const parsed = task.kind === 'answer' || ctx.arena ? { asks: [], text: r.text } : asks(r.text, handles)
     let event: Event
     if (task.kind === 'answer') {
-      event = this.add(room, { kind: 'hands', from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms })
+      event = this.add(room, { kind: 'hands', from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via })
       this.block(room, `answer-${event.id}`, `${me.short} for ${this.name(task.from)}: ${task.ask.slice(0, 60)}`, r.text, who)
     } else {
       const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms }
@@ -434,7 +491,7 @@ export class Engine {
         options: [{ label: 'Allow and carry on', action: { type: 'retry', who, tools: r.denied } }, { label: 'Keep it read only', action: { type: 'accept' } }],
       })
     }
-    return { who, asks: parsed.asks }
+    return { who, text: r.text, asks: parsed.asks }
   }
 
   shell(room: string, who: string, command: string, access: Access): Promise<Ran> {

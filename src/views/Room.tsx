@@ -268,12 +268,25 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
         </Ev>
       )
     }
+    case 'image': {
+      const by = agentOf(e.by, agents)
+      return (
+        <Ev id={e.id} mark={<Mark seed={by.mark} size={16} />} className="hands">
+          <div className="handhead"><b className="name">{by.short}</b><span>made an image for</span><Mark seed={agentOf(e.for, agents).mark} size={12} /><span>{agentOf(e.for, agents).short}</span><span className="when">{clock(e.at)}</span></div>
+          <Picture path={e.path} prompt={e.prompt} />
+        </Ev>
+      )
+    }
     case 'hands': {
       const from = agentOf(e.from, agents)
       const to = agentOf(e.to, agents)
       return (
         <Ev id={e.id} mark={<Mark seed={to.mark} size={16} />} className="hands">
-          <div className="handhead"><b className="name">{to.short}</b><span>answered</span><Mark seed={from.mark} size={12} /><span>{from.short}</span><span className="when">{clock(e.at)}</span></div>
+          <div className="handhead">
+            <b className="name">{to.short}</b><span>{e.via === 'tool' ? 'lent a hand to' : 'answered'}</span><Mark seed={from.mark} size={12} /><span>{from.short}</span>
+            {e.via === 'tool' && <span className="tag" title={`${from.short} called ${to.short} through the room's tools and kept working with the answer`}>mid-turn</span>}
+            <span className="when">{clock(e.at)}</span>
+          </div>
           <div className="exchange">
             <p className="asked">{e.ask}</p>
             <div className="got">{e.answer ? <Rich text={e.answer} /> : <span className="err">{e.error ?? 'No answer'}</span>}</div>
@@ -353,10 +366,30 @@ function LiveRow({ t, agents, doing, grouped }: { t: LiveTurn; agents: AgentInfo
   )
 }
 
+function Picture({ path, prompt }: { path: string; prompt: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const [missing, setMissing] = useState(false)
+  useEffect(() => {
+    let alive = true
+    desk.call('file:image', path).then((url: string | null) => { if (!alive) return; if (url) setSrc(url); else setMissing(true) })
+    return () => { alive = false }
+  }, [path])
+  return (
+    <figure className="picture">
+      <button className={`frame${src ? ' loaded' : ''}`} onClick={() => desk.call('reveal', path)} title="Open">
+        {src ? <img src={src} alt={prompt} /> : missing ? <span className="err soft">The file is no longer there</span> : <Loader size={12} />}
+      </button>
+      <figcaption><span>{prompt}</span><code>{short(path)}</code></figcaption>
+    </figure>
+  )
+}
+
+const toolName = (name: string) => name.replace(/^mcp__lunchbox__|^lunchbox\./, '').replace(/_/g, ' ')
+
 function actLabel(a: Act) {
   if (a.t === 'cmd') return { code: a.command, tail: a.exit === null ? 'stopped' : `exit ${a.exit}`, bad: a.exit !== 0 }
   if (a.t === 'edit') return { code: a.path, tail: a.change === 'add' || a.change === 'write' ? 'wrote' : a.change === 'delete' ? 'deleted' : 'edited', bad: false }
-  return { code: `${a.name}${a.detail ? ' ' + a.detail : ''}`, tail: a.ok === false ? 'failed' : '', bad: a.ok === false }
+  return { code: `${toolName(a.name)}${a.detail ? ' ' + a.detail : ''}`, tail: a.ok === false ? 'failed' : '', bad: a.ok === false }
 }
 
 // What an agent did while it worked: one quiet summary line, the full list a click away.

@@ -27,6 +27,25 @@ if (name === 'codex') {
   process.exit(1)
 }
 
+const mcp = args.includes('--mcp-config') ? JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers.lunchbox.url : null
+if (mcp && input.includes('Borrow:')) {
+  let id = 0
+  const rpc = async (method, params) => {
+    const res = await fetch(mcp, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) })
+    return res.json()
+  }
+  await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name, version: '1' } })
+  const tools = (await rpc('tools/list', {})).result.tools.map((t) => t.name)
+  say({ type: 'system', subtype: 'init', session_id: `${name}-session`, model: 'fake' })
+  say({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'm1', name: 'mcp__lunchbox__search_x', input: { query: 'agent limits' } }] } })
+  const found = (await rpc('tools/call', { name: 'search_x', arguments: { query: 'agent limits' } })).result.content[0].text
+  say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'm1', content: found }] } })
+  const text = `Grok found: ${found}\nTools: ${tools.join(', ')}`
+  say({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  say({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: `${name}-session`, total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } })
+  process.exit(0)
+}
+
 let reply
 if (input.includes('asks you:')) reply = '212 posts this week. Most complain about limits.'
 else if (input.includes('crewmates answered above')) reply = 'Limits are the top complaint.\n- [x] Research\nAll tests pass.'

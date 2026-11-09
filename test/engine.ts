@@ -64,3 +64,40 @@ test('room: handover, handoff, resume and proof', { skip: process.platform === '
   assert.ok(engine.skill(room.id)?.steps.includes('Research'))
   store.flush()
 })
+
+// Claude borrows Grok's X search through the room's MCP server, mid-turn, and finishes with it.
+test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-hands-'))
+  const bin = join(root, 'bin')
+  const agent = join(process.cwd(), 'test', 'fake-agent.mjs')
+  require('node:fs').mkdirSync(bin)
+  for (const name of ['claude', 'codex', 'grok']) symlinkSync(agent, join(bin, name))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { Hands } = await import('../electron/hands')
+  const hands = new Hands()
+  await hands.start()
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] }, hands)
+  await engine.refresh()
+
+  const room = engine.create({ crew: ['claude', 'grok'], workspace: root })
+  engine.send(room.id, 'Borrow: what do people on X say about agent limits?', 'workspace')
+  await engine.idle(room.id)
+  hands.stop()
+
+  const events = store.events(room.id)
+  assert.deepEqual(events.map((e) => e.kind), ['you', 'hands', 'say'])
+  const borrowed = events[1] as Extract<typeof events[number], { kind: 'hands' }>
+  assert.equal(borrowed.via, 'tool')
+  assert.equal(borrowed.from, 'claude')
+  assert.equal(borrowed.to, 'grok')
+  assert.match(borrowed.ask, /^Search X for: agent limits/)
+  const said = events[2] as Extract<typeof events[number], { kind: 'say' }>
+  assert.match(said.text, /Grok found: 212 posts/)
+  assert.match(said.text, /Tools: ask_crewmate, search_x, search_web, make_image, room_memory, remember/)
+  assert.ok(said.acts.some((a) => a.t === 'tool' && a.name === 'mcp__lunchbox__search_x'))
+  store.flush()
+})

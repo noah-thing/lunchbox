@@ -1,0 +1,95 @@
+import type { AgentInfo, Block } from '../../shared/types'
+import type { Tool } from '../hands'
+
+export type Host = {
+  me: AgentInfo
+  crew: AgentInfo[]
+  ready: AgentInfo[]
+  nested: boolean
+  canWrite: boolean
+  consult(to: string, ask: string): Promise<string>
+  image(prompt: string, file?: string, size?: string): Promise<string>
+  memory(): Block[]
+  remember(title: string, text: string): void
+}
+
+const SEARCHERS = { x: ['grok'], web: ['gemini', 'grok'] }
+const str = (v: unknown, name: string) => {
+  if (typeof v !== 'string' || !v.trim()) throw new Error(`${name} is required`)
+  return v.trim()
+}
+
+// The abilities one agent can borrow from the others during its own turn. An agent answering a
+// question gets the read-only part, so a question cannot start a chain of further questions.
+export function kit(h: Host): Tool[] {
+  const tools: Tool[] = []
+  const mates = h.crew.filter((a) => a.id !== h.me.id)
+  const other = (ids: string[]) => ids.map((id) => h.ready.find((a) => a.id === id)).find((a) => a && a.id !== h.me.id)
+
+  if (!h.nested && mates.length) {
+    tools.push({
+      name: 'ask_crewmate',
+      description: [
+        'Ask another agent in this room and wait for its answer. Use it when a crewmate is clearly better placed than you, then carry on with what they say.',
+        'Crew:',
+        ...mates.map((a) => `- ${a.id}: ${a.short} (${a.maker}). ${a.good}.${a.tools ? '' : ' Text only.'}`),
+      ].join('\n'),
+      input: {
+        agent: { type: 'string', enum: mates.map((a) => a.id), description: 'Who to ask' },
+        question: { type: 'string', description: 'The question, complete enough to answer without the rest of your turn' },
+      },
+      run: (a) => h.consult(str(a.agent, 'agent'), str(a.question, 'question')),
+    })
+  }
+
+  const x = other(SEARCHERS.x)
+  if (!h.nested && x) {
+    tools.push({
+      name: 'search_x',
+      description: `Live search of posts on X, done by ${x.short}. Returns what people are saying right now, with handles, dates and links.`,
+      input: { query: { type: 'string', description: 'What to look for' } },
+      run: (a) => h.consult(x.id, `Search X for: ${str(a.query, 'query')}\n\nReport what people are saying right now: the main points, then the most telling posts with @handle, date and link. Keep it short and only report what you found.`),
+    })
+  }
+
+  const web = other(SEARCHERS.web)
+  if (!h.nested && web) {
+    tools.push({
+      name: 'search_web',
+      description: `Current web search, done by ${web.short}. Returns a short answer with source links.`,
+      input: { query: { type: 'string', description: 'What to find out' } },
+      run: (a) => h.consult(web.id, `Search the web for: ${str(a.query, 'query')}\n\nAnswer briefly from current sources and list the links you used.`),
+    })
+  }
+
+  if (!h.nested && h.canWrite && (h.ready.some((a) => a.id === 'openai-api') || other(['codex']))) {
+    tools.push({
+      name: 'make_image',
+      description: 'Generate an image and save it in the room\'s folder. Returns the saved path. Describe subject, style, composition and any text exactly.',
+      input: {
+        prompt: { type: 'string', description: 'A full description of the image' },
+        file: { type: 'string', description: 'Optional path inside the folder, for example public/hero.png' },
+        size: { type: 'string', enum: ['1024x1024', '1536x1024', '1024x1536'], description: 'Optional, square by default' },
+      },
+      required: ['prompt'],
+      run: (a) => h.image(str(a.prompt, 'prompt'), typeof a.file === 'string' ? a.file : undefined, typeof a.size === 'string' ? a.size : undefined),
+    })
+  }
+
+  tools.push({
+    name: 'room_memory',
+    description: 'Read the room\'s shared memory in full: the brief, decisions, answers between agents, changed files and anything pinned.',
+    input: {},
+    run: async () => h.memory().map((b) => `## ${b.title}\n${b.text}`).join('\n\n') || 'The shared memory is empty.',
+  })
+
+  if (!h.nested) {
+    tools.push({
+      name: 'remember',
+      description: 'Save a fact, decision or finding to the room\'s shared memory so every agent has it from now on.',
+      input: { title: { type: 'string', description: 'A few words' }, text: { type: 'string', description: 'What to keep' } },
+      run: async (a) => { h.remember(str(a.title, 'title'), str(a.text, 'text')); return 'Saved to shared memory.' },
+    })
+  }
+  return tools
+}

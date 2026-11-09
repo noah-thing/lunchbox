@@ -44,7 +44,8 @@ export type DecideAction =
 export type Event = { id: string; at: number } & (
   | { kind: 'you'; text: string; to?: string[]; arena?: boolean }
   | { kind: 'say'; who: string; text: string; acts: Act[]; usage?: Usage; proof?: Proof[]; arena?: string; reply?: string; error?: string; ms?: number }
-  | { kind: 'hands'; from: string; to: string; ask: string; answer: string; acts: Act[]; usage?: Usage; error?: string; ms?: number }
+  | { kind: 'hands'; from: string; to: string; ask: string; answer: string; acts: Act[]; usage?: Usage; error?: string; ms?: number; via?: 'tool' }
+  | { kind: 'image'; by: string; for: string; prompt: string; path: string; usage?: Usage }
   | { kind: 'wall'; from: string; to: string; until?: number; reason: string }
   | { kind: 'decide'; text: string; options: { label: string; action: DecideAction }[] }
   | { kind: 'chose'; ref: string; label: string }
@@ -136,6 +137,7 @@ export type Settings = {
   disabled: string[]
   notify: boolean
   defaultCrew: string[]
+  imageModel?: string
 }
 
 export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number> }

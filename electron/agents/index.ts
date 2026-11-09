@@ -15,6 +15,7 @@ export type Input = {
   model?: string
   session?: string
   allow?: string[]
+  hands?: string
 }
 
 export type Result = {
@@ -30,34 +31,68 @@ export type Result = {
 
 export type Running = { done: Promise<Result>; stop(): void }
 
-type Spec = { args: string[]; stdin?: string; file?: string; parser: { turn: Turn; line: (o: any) => Update | null } }
+type Spec = {
+  args: string[]
+  stdin?: string
+  file?: string
+  env?: Record<string, string>
+  extra?: { path: string; text: string }[]
+  parser: { turn: Turn; line: (o: any) => Update | null }
+}
 
 type Def = Omit<AgentInfo, 'found' | 'ready' | 'version' | 'note' | 'models' | 'model'> & { spawn?: (i: Input, file: string) => Spec; key?: string }
 
 const prompt = (i: Input) => `${i.system}\n\n${i.prompt}`
 
+// Calls to a crewmate can take minutes, far past the CLIs' default tool timeouts.
+const HANDS_TIMEOUT = 15 * 60
+
+const claudeHands = (i: Input) =>
+  i.hands ? ['--mcp-config', JSON.stringify({ mcpServers: { lunchbox: { type: 'http', url: i.hands } } })] : []
+
+const codexHands = (i: Input) =>
+  i.hands
+    ? [
+        '-c', `mcp_servers.lunchbox.url=${JSON.stringify(i.hands)}`,
+        '-c', `mcp_servers.lunchbox.tool_timeout_sec=${HANDS_TIMEOUT}`,
+        '-c', 'mcp_servers.lunchbox.default_tools_approval_mode="approve"',
+      ]
+    : []
+
+function geminiHands(i: Input, file: string): Pick<Spec, 'env' | 'extra'> {
+  if (!i.hands) return {}
+  const path = file.replace(/\.txt$/, '.gemini.json')
+  const settings = { mcpServers: { lunchbox: { httpUrl: i.hands, timeout: HANDS_TIMEOUT * 1000, trust: true } } }
+  return { env: { GEMINI_CLI_SYSTEM_SETTINGS_PATH: path }, extra: [{ path, text: JSON.stringify(settings) }] }
+}
+
 export const CATALOG: Def[] = [
   {
     id: 'claude', name: 'Claude Code', short: 'Claude', maker: 'Anthropic', via: 'cli', bin: 'claude', tools: true, mark: 'claude',
     good: 'Design, careful edits, long reasoning', alphabet: '.:-=+*#%@',
-    spawn: (i) => ({
-      args: [
-        '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
-        ...{ plan: ['--permission-mode', 'plan'], ask: ['--permission-mode', 'default'], workspace: ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash'], full: ['--dangerously-skip-permissions'] }[i.access],
-        ...(i.allow?.length ? ['--allowedTools', ...i.allow] : []),
-        ...(i.model ? ['--model', i.model] : []),
-        ...(i.session ? ['--resume', i.session] : []),
-      ],
-      stdin: prompt(i),
-      parser: claudeLike(),
-    }),
+    spawn: (i) => {
+      const allowed = [...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
+      return {
+        args: [
+          '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+          ...{ plan: ['--permission-mode', 'plan'], ask: ['--permission-mode', 'default'], workspace: ['--permission-mode', 'acceptEdits'], full: ['--dangerously-skip-permissions'] }[i.access],
+          ...(allowed.length && i.access !== 'full' ? ['--allowedTools', allowed.join(',')] : []),
+          ...claudeHands(i),
+          ...(i.model ? ['--model', i.model] : []),
+          ...(i.session ? ['--resume', i.session] : []),
+        ],
+        env: i.hands ? { MCP_TOOL_TIMEOUT: String(HANDS_TIMEOUT * 1000) } : undefined,
+        stdin: prompt(i),
+        parser: claudeLike(),
+      }
+    },
   },
   {
     id: 'codex', name: 'Codex', short: 'Codex', maker: 'OpenAI', via: 'cli', bin: 'codex', tools: true, mark: 'codex',
     good: 'Building, running and fixing tests', alphabet: '.-01',
     spawn: (i) => {
       const sandbox = { plan: ['-s', 'read-only'], ask: ['-s', 'read-only'], workspace: ['-s', 'workspace-write'], full: ['--dangerously-bypass-approvals-and-sandbox'] }[i.access]
-      const common = ['--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...(i.model ? ['-m', i.model] : [])]
+      const common = ['--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...codexHands(i), ...(i.model ? ['-m', i.model] : [])]
       return { args: i.session ? ['exec', 'resume', ...common, i.session, '-'] : ['exec', ...common, '-'], stdin: prompt(i), parser: codex() }
     },
   },
@@ -78,12 +113,13 @@ export const CATALOG: Def[] = [
   {
     id: 'gemini', name: 'Gemini CLI', short: 'Gemini', maker: 'Google', via: 'cli', bin: 'gemini', tools: true, mark: 'gemini',
     good: 'Long files, review, second opinions', alphabet: '.,oO0@',
-    spawn: (i) => ({
+    spawn: (i, file) => ({
       args: [
         '-o', 'stream-json', '--skip-trust', '-p', 'Respond to the request above.',
         '--approval-mode', { plan: 'plan', ask: 'default', workspace: 'auto_edit', full: 'yolo' }[i.access],
         ...(i.model ? ['-m', i.model] : []),
       ],
+      ...geminiHands(i, file),
       stdin: prompt(i),
       parser: gemini(),
     }),
@@ -154,7 +190,8 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     const file = join(tmpdir(), `lunchbox-${process.pid}-${t0}.txt`)
     const spec = d.spawn!(input, file)
     if (spec.file) writeFileSync(file, spec.file)
-    child = launch(path, spec.args, { cwd: input.cwd, env: await env(), stdio: ['pipe', 'pipe', 'pipe'] })
+    for (const x of spec.extra ?? []) writeFileSync(x.path, x.text, { mode: 0o600 })
+    child = launch(path, spec.args, { cwd: input.cwd, env: { ...(await env()), ...spec.env }, stdio: ['pipe', 'pipe', 'pipe'] })
     let stderr = ''
     child.stderr?.on('data', (b: Buffer) => { if (stderr.length < 65536) stderr += b.toString() })
     child.stdin?.on('error', () => {})
@@ -172,6 +209,7 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
       child!.on('error', (e) => { stderr += String(e); ok(-1) })
     })
     if (spec.file) rmSync(file, { force: true })
+    for (const x of spec.extra ?? []) rmSync(x.path, { force: true })
     const turn = spec.parser.turn
     const text = (turn.final || turn.text).trim()
     let error = turn.error

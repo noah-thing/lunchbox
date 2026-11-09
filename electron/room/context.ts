@@ -7,15 +7,25 @@ const ACCESS: Record<Access, string> = {
   full: 'Full access. Still avoid anything destructive or irreversible without saying so first.',
 }
 
-export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack) {
+const TOOL_LINES: Record<string, string> = {
+  ask_crewmate: 'ask_crewmate asks a crewmate and gives you the answer without ending your turn.',
+  search_x: 'search_x reads live posts on X.',
+  search_web: 'search_web finds current information with sources.',
+  make_image: 'make_image creates an image and saves it in the folder.',
+  remember: 'remember saves a finding to the shared memory.',
+}
+
+export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = []) {
   const mates = crew
     .filter((a) => a.id !== me.id)
     .map((a) => `- @${a.id}  ${a.short} (${a.maker}): ${a.good}${a.tools ? '' : '. Text only, no files or commands'}`)
+  const borrowed = tools.map((t) => TOOL_LINES[t]).filter(Boolean)
   return [
     `You are ${me.short}, one of several AI agents working with one person in a shared room in Lunchbox.`,
     `Room: ${meta.name}. Folder: ${meta.workspace}. Access: ${ACCESS[access]}`,
     me.tools ? '' : 'You cannot read files or run commands yourself. When that is needed, ask a crewmate who can.',
     mates.length ? `Your crew:\n${mates.join('\n')}` : 'You are working alone in this room.',
+    borrowed.length ? `The lunchbox tools lend you your crewmates' abilities mid-turn. ${borrowed.join(' ')} Prefer them to an @handle line when you need the answer to keep working.` : '',
     [
       'How the room works:',
       mates.length ? '- To get something from a crewmate, put a line on its own: "@handle: what you need". Their answer comes back to you before you finish. Ask only when they are clearly better placed, at most two at a time.' : '',
@@ -39,6 +49,7 @@ export function line(e: Event, name: (id: string) => string): string | null {
     case 'hands': return `${name(e.to)}, answering ${name(e.from)} ("${e.ask}"): ${e.answer}${acts(e.acts)}`
     case 'wall': return `[${name(e.from)} stopped (${e.reason}); ${e.to ? `${name(e.to)} took over` : 'nobody could take over'}]`
     case 'run': return `[${e.who === 'you' ? 'Person' : name(e.who)} ran \`${e.command}\`, ${e.code === null ? e.how : `exit ${e.code}`}]${e.out ? `\n${e.out.slice(-800)}` : ''}`
+    case 'image': return `[${name(e.by)} made an image for ${name(e.for)}, saved as ${e.path}: ${e.prompt.slice(0, 200)}]`
     case 'chose': return `[Person chose: ${e.label}]`
     case 'pick': return `[Person picked ${name(e.who)}'s answer]`
     default: return null
