@@ -133,12 +133,12 @@ function WindowRow({ w, stale, at }: { w: PlanWindow; stale?: boolean; at?: numb
   const count = (n: number) => (w.unit === 'requests' ? Math.round(n).toLocaleString() : tokens(n))
   const size = w.total
     ? `${count(w.total * left)} of ${count(w.total)}${w.unit === 'requests' ? ' requests' : ''}`
-    : 'size after 2% use'
+    : 'not used yet'
   const tip = w.unit === 'requests'
     ? `Google publishes this limit. Requests are counted from Gemini CLI's own log of today's replies.`
     : w.total
-      ? `Fresh tokens this window holds: new input, cache writes and output. Measured from this computer's logs against the share ${w.share !== undefined ? 'Grok Build has used of the pool' : 'the provider reports used'}, using the reading taken at the highest share in the last two weeks. Cache reads are left out because they barely count toward plan limits.`
-      : `The provider reports only a percentage. Once a little of this window is used, Lunchbox works out its size from the tokens in this computer's logs.`
+      ? `Fresh tokens this window holds: new input, cache writes and output. Measured from this computer's logs against the share ${w.share !== undefined ? 'Grok Build has used of the pool' : 'the provider reports used'}, using the reading taken at the highest share, the most precise one, from the last two months. Cache reads are left out because they barely count toward plan limits.`
+      : `This plan has not been used on this computer yet. Its size is worked out from the tokens the first turns use.`
   return (
     <div className="window" title={stale && at ? `As of the last Codex run, ${clock(at)}` : undefined}>
       <span className="wlabel">{w.label}</span>

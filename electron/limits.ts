@@ -172,17 +172,17 @@ const LENGTH: Record<string, number> = { '5h': 5 * HOUR, day: DAY, week: 7 * DAY
 // Fresh tokens are what plan limits are built on: new input, cache writes and output. Cache reads
 // cost a tenth of an input token or less and barely move a plan window, so they are left out.
 // A window's size is the fresh tokens used in it divided by the share the provider says is used.
-// Providers round the share to whole percents, so a reading at 2% can be a quarter off while one
-// at 40% is within about one percent. The reading taken at the highest share in the last two weeks
+// Providers round the share to whole percents, so a reading at 1% can be off by half while one at
+// 40% is within about one percent. The reading taken at the highest share in the last two months
 // is the one shown, which also carries last week's precise size into a new, barely used week.
 export function size(fresh: number, share: number) {
-  return share >= 0.02 && fresh > 0 ? Math.round(fresh / share) : undefined
+  return share > 0 && fresh > 0 ? Math.round(fresh / share) : undefined
 }
 
 export type Reading = { tokens: number; at: number; share?: number }
 
 export function best(history: Reading[], now = Date.now()) {
-  const recent = history.filter((h) => now - h.at < 14 * DAY)
+  const recent = history.filter((h) => now - h.at < 60 * DAY)
   if (!recent.length) return undefined
   return recent.reduce((a, b) => ((b.share ?? 0) > (a.share ?? 0) || ((b.share ?? 0) === (a.share ?? 0) && b.at > a.at) ? b : a)).tokens
 }
@@ -251,7 +251,7 @@ export class Limits {
     const from = (w: PlanWindow) => w.start ?? (w.resets ? w.resets - (LENGTH[w.id] ?? 7 * DAY) : Date.now() - (LENGTH[w.id] ?? 7 * DAY))
     if (tallied(id)) {
       const tally = this.tallies[id]
-      await update(id, tally, Math.min(Date.now() - 14 * DAY, ...timed.map(from)))
+      await update(id, tally, Math.min(Date.now() - 30 * DAY, ...timed.map(from)))
       writeFileSync(join(this.store.dir, `tally-${id}.json`), JSON.stringify(tally))
       // Readings the CLI logged itself measure past windows too, so a fresh window starts known.
       for (const s of snapshots(tally)) {
@@ -264,7 +264,7 @@ export class Limits {
       const share = w.share ?? w.used
       const fresh = id === 'grok' ? grokFresh(from(w)) : tallied(id) ? usedSince(this.tallies[id], from(w)).fresh : 0
       const key = `${id}:${w.id}`
-      const history = (this.store.calib[key] ?? []).filter((h) => Date.now() - h.at < 14 * DAY)
+      const history = (this.store.calib[key] ?? []).filter((h) => Date.now() - h.at < 60 * DAY)
       const measured = size(fresh, share)
       if (measured) history.push({ tokens: measured, at: Date.now(), share })
       this.store.calib[key] = history.slice(-200)
