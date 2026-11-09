@@ -1,0 +1,159 @@
+import type { Usage } from '../../shared/types'
+
+type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp }
+
+export const PROVIDERS: Record<string, Provider> = {
+  anthropic: { base: 'https://api.anthropic.com/v1', style: 'anthropic', prefer: /sonnet/ },
+  openai: { base: 'https://api.openai.com/v1', style: 'openai', prefer: /^gpt-[\d.]+$/ },
+  xai: { base: 'https://api.x.ai/v1', style: 'openai', prefer: /^grok-\d/ },
+  openrouter: { base: 'https://openrouter.ai/api/v1', style: 'openai', prefer: /^openrouter\/auto$/ },
+  google: { base: 'https://generativelanguage.googleapis.com/v1beta', style: 'google', prefer: /flash/ },
+  ollama: { base: 'http://127.0.0.1:11434/api', style: 'ollama', prefer: /./ },
+}
+
+function headers(style: Provider['style'], key: string): Record<string, string> {
+  if (style === 'anthropic') return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+  if (style === 'openai') return { authorization: `Bearer ${key}`, 'content-type': 'application/json' }
+  return { 'content-type': 'application/json' }
+}
+
+async function failure(res: Response) {
+  const body = await res.text().catch(() => '')
+  let message = body.slice(0, 300)
+  try {
+    const j = JSON.parse(body)
+    message = j.error?.message ?? j.error ?? j.message ?? message
+  } catch {}
+  return new Error(`${res.status} ${typeof message === 'string' ? message : JSON.stringify(message)}`.trim())
+}
+
+export async function listModels(name: string, key: string): Promise<string[]> {
+  const p = PROVIDERS[name]
+  const signal = AbortSignal.timeout(name === 'ollama' ? 1500 : 8000)
+  if (p.style === 'ollama') {
+    const res = await fetch(`${p.base}/tags`, { signal })
+    if (!res.ok) throw await failure(res)
+    return ((await res.json()).models ?? []).map((m: { name: string }) => m.name)
+  }
+  if (p.style === 'google') {
+    const res = await fetch(`${p.base}/models?key=${encodeURIComponent(key)}&pageSize=200`, { signal })
+    if (!res.ok) throw await failure(res)
+    return ((await res.json()).models ?? [])
+      .filter((m: { supportedGenerationMethods?: string[] }) => m.supportedGenerationMethods?.includes('generateContent'))
+      .map((m: { name: string }) => m.name.replace(/^models\//, ''))
+  }
+  const res = await fetch(`${p.base}/models`, { headers: headers(p.style, key), signal })
+  if (!res.ok) throw await failure(res)
+  return ((await res.json()).data ?? []).map((m: { id: string }) => m.id).sort().reverse()
+}
+
+async function pick(name: string, key: string, model: string) {
+  if (model) return model
+  const all = await listModels(name, key)
+  const m = all.find((id) => PROVIDERS[name].prefer.test(id)) ?? all[0]
+  if (!m) throw new Error('No model available. Choose one in Agents.')
+  return m
+}
+
+// Server-sent events and Ollama's newline-delimited JSON both arrive as lines.
+async function* lines(res: Response) {
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let nl: number
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (line) yield line
+    }
+  }
+  if (buf.trim()) yield buf.trim()
+}
+
+const data = (line: string) => {
+  const raw = line.startsWith('data:') ? line.slice(5).trim() : line
+  if (!raw || raw === '[DONE]' || line.startsWith('event:')) return null
+  try { return JSON.parse(raw) } catch { return null }
+}
+
+export async function chat(name: string, key: string, model: string, system: string, prompt: string, signal: AbortSignal, onDelta: (d: string) => void) {
+  const p = PROVIDERS[name]
+  const id = await pick(name, key, model)
+  const usage: Usage = { input: 0, output: 0, cached: 0, cost: 0 }
+  let text = ''
+  const push = (d?: string) => { if (d) { text += d; onDelta(d) } }
+  let res: Response
+
+  if (p.style === 'anthropic') {
+    // The room protocol rarely changes between turns, so it is marked for caching; repeat turns
+    // then pay for it at the cached rate.
+    res = await fetch(`${p.base}/messages`, {
+      method: 'POST', signal, headers: headers(p.style, key),
+      body: JSON.stringify({
+        model: id, max_tokens: 8192, stream: true,
+        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+    if (!res.ok) throw await failure(res)
+    for await (const line of lines(res)) {
+      const o = data(line)
+      if (!o) continue
+      if (o.type === 'content_block_delta') push(o.delta?.text)
+      if (o.type === 'message_start') {
+        const u = o.message?.usage ?? {}
+        usage.input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+        usage.cached = u.cache_read_input_tokens ?? 0
+      }
+      if (o.type === 'message_delta') usage.output = o.usage?.output_tokens ?? usage.output
+      if (o.type === 'error') throw new Error(o.error?.message ?? 'Anthropic stream error')
+    }
+  } else if (p.style === 'openai') {
+    res = await fetch(`${p.base}/chat/completions`, {
+      method: 'POST', signal, headers: headers(p.style, key),
+      body: JSON.stringify({ model: id, stream: true, stream_options: { include_usage: true }, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
+    })
+    if (!res.ok) throw await failure(res)
+    for await (const line of lines(res)) {
+      const o = data(line)
+      if (!o) continue
+      if (o.error) throw new Error(o.error.message ?? 'Stream error')
+      push(o.choices?.[0]?.delta?.content)
+      if (o.usage) {
+        const cached = o.usage.prompt_tokens_details?.cached_tokens ?? 0
+        Object.assign(usage, { input: (o.usage.prompt_tokens ?? 0) - cached, output: o.usage.completion_tokens ?? 0, cached, cost: o.usage.cost ?? 0 })
+      }
+    }
+  } else if (p.style === 'google') {
+    res = await fetch(`${p.base}/models/${id}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`, {
+      method: 'POST', signal, headers: headers(p.style, key),
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+    })
+    if (!res.ok) throw await failure(res)
+    for await (const line of lines(res)) {
+      const o = data(line)
+      if (!o) continue
+      for (const part of o.candidates?.[0]?.content?.parts ?? []) push(part.text)
+      const u = o.usageMetadata
+      if (u) Object.assign(usage, { input: (u.promptTokenCount ?? 0) - (u.cachedContentTokenCount ?? 0), output: u.candidatesTokenCount ?? 0, cached: u.cachedContentTokenCount ?? 0 })
+    }
+  } else {
+    res = await fetch(`${p.base}/chat`, {
+      method: 'POST', signal, headers: headers(p.style, key),
+      body: JSON.stringify({ model: id, stream: true, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
+    })
+    if (!res.ok) throw await failure(res)
+    for await (const line of lines(res)) {
+      const o = data(line)
+      if (!o) continue
+      if (o.error) throw new Error(o.error)
+      push(o.message?.content)
+      if (o.done) Object.assign(usage, { input: o.prompt_eval_count ?? 0, output: o.eval_count ?? 0 })
+    }
+  }
+  return { text: text.trim(), usage }
+}

@@ -1,0 +1,80 @@
+/*
+  The Neyra look, switchable in Settings. Same app, same controls, ASCII and marks; Neyra's
+  finish: flat panes split by hairlines instead of a floating sheet, 3 px corners, a lit cell
+  beside the open room, suggestions as full-width rows, a worded Send button and the
+  composer at the foot of the pane.
+*/
+[data-look=neyra]:not([data-theme=light]){
+  --ground:#0d0d0c;--sheet:#0d0d0c;--well:#151513;--ink:#f2f0ea;
+  --dim:rgba(242,240,234,.62);--faint:rgba(242,240,234,.36);--line:rgba(242,240,234,.11);--line2:rgba(242,240,234,.17);--cell:rgba(242,240,234,.13);--hover:rgba(242,240,234,.05);
+}
+[data-look=neyra][data-theme=light]{
+  --ground:#fbfaf7;--sheet:#fbfaf7;--well:#f4f3ef;--ink:#0d0d0c;
+  --dim:rgba(13,13,12,.6);--faint:rgba(13,13,12,.36);--line:rgba(13,13,12,.1);--line2:rgba(13,13,12,.17);--cell:rgba(13,13,12,.11);--hover:rgba(13,13,12,.04);
+}
+[data-look=neyra] body{font-size:13.5px;line-height:1.4;letter-spacing:-.005em}
+
+/* Frame */
+[data-look=neyra] .app{grid-template-columns:208px minmax(0,1fr)}
+[data-look=neyra] .sidebar{padding:0 10px 12px;border-right:1px solid var(--line)}
+[data-look=neyra] .sbitem,[data-look=neyra] .sbroom{position:relative;height:30px;border-radius:3px;font-size:13.5px}
+[data-look=neyra] .sbitem.on,[data-look=neyra] .sbroom.on{font-weight:500}
+[data-look=neyra] .sbroom{padding:0 8px 0 24px}
+[data-look=neyra] .sbroom.on{background:none}
+[data-look=neyra] .sbroom.on::before{content:"";position:absolute;left:10px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:1.2px;background:var(--ink)}
+[data-look=neyra] .sblabel{padding:18px 8px 4px 8px;font:11.5px var(--sans);color:var(--faint)}
+[data-look=neyra] .sbversion{padding:10px 8px 0;font-size:11.5px;color:var(--faint)}
+[data-look=neyra] .sheet{margin:0;border-radius:0;box-shadow:none;background:var(--ground)}
+[data-look=neyra] .app.arriving .sheet{animation:none}
+
+/* Corners: 3 px for controls, 4 px for containers */
+[data-look=neyra] :is(.btn,.btn.big,.btn.small,.iconbtn,.ghostbtn,.pill,.item,.seg,.seg button,.plist button,.toast,.files code,.handhead code,.folderpick,.ideas button,.send,.check){border-radius:3px}
+[data-look=neyra] :is(.composer,.menu,.palette,.term,.decide,.agents,.settings,.mine p){border-radius:4px}
+[data-look=neyra] .btn{height:32px;padding:0 13px}
+[data-look=neyra] .btn.big{height:36px;padding:0 16px}
+[data-look=neyra] .btn.small{height:26px;padding:0 9px}
+[data-look=neyra] .btn.quiet{box-shadow:inset 0 0 0 1px var(--line)}
+@media (hover:hover){[data-look=neyra] .btn.quiet:hover:not(:disabled){background:none;box-shadow:inset 0 0 0 1px var(--faint)}}
+
+/* Composer: a hairline box, no glow, a worded Send */
+[data-look=neyra] .composer,[data-look=neyra][data-theme=light] .composer{background:none;box-shadow:inset 0 0 0 1px var(--line)}
+[data-look=neyra] .composer:focus-within{box-shadow:inset 0 0 0 1px var(--faint)}
+[data-look=neyra] .composer textarea{padding:16px 20px 6px;font-size:15px}
+[data-look=neyra] .cbar{padding:10px 12px 12px}
+[data-look=neyra] .send{width:auto;height:30px;padding:0 14px;font-weight:500}
+[data-look=neyra] .send svg{display:none}
+[data-look=neyra] .send span{display:inline}
+[data-look=neyra] .send:disabled{opacity:.3}
+[data-look=neyra] .menu{box-shadow:0 0 0 1px var(--line2),0 12px 32px rgba(0,0,0,.35)}
+
+/* Room */
+[data-look=neyra] .roomhead{height:56px;padding:0 12px 0 28px}
+[data-look=neyra] .roomhead h1{font-size:15px}
+[data-look=neyra] .pill .stack>span{background:var(--ground)}
+[data-look=neyra] .transcript{padding:32px 28px 24px}
+[data-look=neyra] .dock{padding:0 28px 20px}
+[data-look=neyra] .room.withdetails{grid-template-columns:minmax(0,1fr) minmax(320px,38%)}
+[data-look=neyra] .panel section{padding:20px 24px 16px}
+[data-look=neyra] .panelhead{height:56px;padding:0 24px}
+[data-look=neyra] .mine p{background:none;box-shadow:inset 0 0 0 1px var(--line)}
+[data-look=neyra] .decide{background:none;box-shadow:inset 0 0 0 1px var(--line2)}
+[data-look=neyra] .out{background:none}
+
+/* New room: question and suggestions in the middle of the pane, composer at its foot */
+[data-look=neyra] .newroom{justify-content:stretch;padding:0 28px 20px}
+[data-look=neyra] .newbody{flex:1;max-width:880px;gap:12px}
+[data-look=neyra] .newbody .band{margin:auto 0 24px}
+[data-look=neyra] .newbody h1{font-size:30px;letter-spacing:-.025em}
+[data-look=neyra] .newsub{display:block;margin-top:-4px;color:var(--dim);font-size:14px}
+[data-look=neyra] .ideas{order:8;flex-direction:column;gap:8px;margin-top:12px}
+[data-look=neyra] .ideas button{height:44px;padding:0 16px;font-size:14px;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+@media (hover:hover){[data-look=neyra] .ideas button:hover{background:none;box-shadow:inset 0 0 0 1px var(--faint)}}
+[data-look=neyra] .newbody .composer{order:9;margin-top:auto}
+
+/* Pages: left aligned, like a document */
+[data-look=neyra] .page{align-items:flex-start;padding:28px 28px 40px;gap:20px}
+[data-look=neyra] .page>*{max-width:720px}
+[data-look=neyra] .page>.btn{align-self:flex-start}
+[data-look=neyra] .pagehead h1{font-size:24px;letter-spacing:-.025em}
+[data-look=neyra] .pagehead p{margin-top:5px}
+[data-look=neyra] .palette{box-shadow:0 0 0 1px var(--line2),0 20px 50px rgba(0,0,0,.4)}

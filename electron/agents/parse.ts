@@ -1,0 +1,236 @@
+import type { Act, Usage } from '../../shared/types'
+
+// Each CLI prints one JSON object per line. A parser folds those lines into a Turn and reports
+// what changed so the room can show text and activity while the agent is still working.
+
+export type Turn = {
+  text: string
+  final: string
+  acts: Act[]
+  usage: Usage
+  session?: string
+  error?: string
+  denied: string[]
+  working?: string
+}
+
+export type Update = { delta?: string; acts?: Act[]; working?: string }
+
+export const newTurn = (): Turn => ({ text: '', final: '', acts: [], usage: { input: 0, output: 0, cached: 0, cost: 0 }, denied: [] })
+
+const SHELL_TOOLS = new Set(['Bash', 'run_terminal_command', 'run_shell_command', 'shell', 'exec_command'])
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'search_replace', 'write_file', 'replace', 'edit_file', 'create_file'])
+
+const clip = (s: string, n = 4000) => (s.length > n ? '…' + s.slice(-n) : s)
+
+function detail(input: Record<string, unknown> = {}) {
+  const v = input.command ?? input.file_path ?? input.path ?? input.target_file ?? input.pattern ?? input.query ?? input.url ?? input.prompt ?? input.description
+  return typeof v === 'string' ? v.split('\n')[0].slice(0, 160) : ''
+}
+
+function toolText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) return content.map((c) => (typeof c === 'string' ? c : c?.text ?? '')).join('\n')
+  return ''
+}
+
+export function toAct(name: string, input: Record<string, unknown>, raw: string, failed: boolean): Act {
+  let output = raw
+  let exit: number | undefined
+  if (raw.startsWith('{')) {
+    try {
+      const j = JSON.parse(raw)
+      if (typeof j.exit_code === 'number') exit = j.exit_code
+      if (typeof j.output_for_prompt === 'string') output = j.output_for_prompt.replace(/^exit: -?\d+\n/, '')
+    } catch {}
+  }
+  if (SHELL_TOOLS.has(name)) {
+    const code = output.match(/exit(?:ed with)? code:?\s*(-?\d+)/i)
+    return { t: 'cmd', command: String(input.command ?? ''), exit: exit ?? (code ? Number(code[1]) : failed ? 1 : 0), out: clip(output, 1500) }
+  }
+  if (EDIT_TOOLS.has(name)) return { t: 'edit', path: String(input.file_path ?? input.path ?? input.target_file ?? ''), change: name === 'Write' || name === 'write_file' || name === 'create_file' ? 'write' : 'edit' }
+  return { t: 'tool', name, detail: detail(input), ok: !failed }
+}
+
+// Claude Code and Grok Build share this shape: system/init, stream_event deltas, assistant and
+// user messages carrying tool_use and tool_result, then a result line with usage.
+export function claudeLike() {
+  const turn = newTurn()
+  const pending = new Map<string, { name: string; input: Record<string, unknown> }>()
+  let streamed = false
+
+  function line(o: any): Update | null {
+    switch (o.type) {
+      case 'system':
+        if (o.subtype === 'init' && o.session_id) turn.session = o.session_id
+        return null
+      case 'stream_event': {
+        const d = o.event?.delta
+        if (o.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
+          streamed = true
+          turn.text += d.text
+          return { delta: d.text }
+        }
+        return null
+      }
+      case 'assistant': {
+        let delta = ''
+        for (const c of o.message?.content ?? []) {
+          if (c.type === 'text' && !streamed && c.text) delta += c.text
+          if (c.type === 'tool_use') pending.set(c.id, { name: c.name, input: c.input ?? {} })
+        }
+        streamed = false
+        const tool = [...pending.values()].pop()
+        const working = tool ? `${tool.name} ${detail(tool.input)}`.trim() : undefined
+        if (delta) turn.text += delta
+        return delta || working ? { delta: delta || undefined, working } : null
+      }
+      case 'user': {
+        const acts: Act[] = []
+        for (const c of o.message?.content ?? []) {
+          if (c.type !== 'tool_result') continue
+          const call = pending.get(c.tool_use_id)
+          if (!call) continue
+          pending.delete(c.tool_use_id)
+          acts.push(toAct(call.name, call.input, toolText(c.content) || toolText(o.tool_use_result?.stdout), !!c.is_error))
+        }
+        turn.acts.push(...acts)
+        return acts.length ? { acts } : null
+      }
+      case 'result': {
+        const u = o.usage ?? {}
+        turn.usage = {
+          input: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
+          output: u.output_tokens ?? 0,
+          cached: u.cache_read_input_tokens ?? 0,
+          cost: o.total_cost_usd ?? Object.values(o.modelUsage ?? {}).reduce((n: number, m: any) => n + (m.costUSD ?? 0), 0),
+        }
+        if (typeof o.result === 'string') turn.final = o.result
+        if (o.session_id) turn.session = o.session_id
+        if (o.is_error) turn.error = typeof o.result === 'string' && o.result ? o.result : o.subtype || 'The agent stopped with an error'
+        for (const d of o.permission_denials ?? []) turn.denied.push(d.tool_name + (d.tool_input?.command ? `(${String(d.tool_input.command).split(' ').slice(0, 2).join(' ')}:*)` : ''))
+        return null
+      }
+    }
+    return null
+  }
+  return { turn, line }
+}
+
+const unwrap = (cmd: string) => cmd.match(/^\S*(?:zsh|bash|sh)\s+-l?c\s+'([\s\S]*)'$/)?.[1]?.replace(/'\\''/g, "'") ?? cmd
+
+// Codex prints thread and item lifecycle events. Warnings arrive as items of type "error", which
+// do not end the turn; only turn.failed and top level errors do.
+export function codex() {
+  const turn = newTurn()
+  function line(o: any): Update | null {
+    switch (o.type) {
+      case 'thread.started':
+        turn.session = o.thread_id
+        return null
+      case 'item.started':
+        if (o.item?.type === 'command_execution') return { working: unwrap(o.item.command) }
+        return null
+      case 'item.completed': {
+        const it = o.item ?? {}
+        if (it.type === 'agent_message' && it.text) {
+          const delta = (turn.text ? '\n\n' : '') + it.text
+          turn.text += delta
+          turn.final = it.text
+          return { delta }
+        }
+        const acts: Act[] = []
+        if (it.type === 'command_execution') acts.push({ t: 'cmd', command: unwrap(it.command ?? ''), exit: it.exit_code ?? null, out: clip(it.aggregated_output ?? '', 1500) })
+        if (it.type === 'file_change') for (const c of it.changes ?? []) acts.push({ t: 'edit', path: c.path, change: c.kind ?? 'edit' })
+        if (it.type === 'web_search' || it.type === 'mcp_tool_call') acts.push({ t: 'tool', name: it.type === 'web_search' ? 'web_search' : `${it.server}.${it.tool}`, detail: it.query ?? '', ok: it.status !== 'failed' })
+        if (acts.length) {
+          turn.acts.push(...acts)
+          return { acts }
+        }
+        return null
+      }
+      case 'turn.completed': {
+        const u = o.usage ?? {}
+        turn.usage = { input: (u.input_tokens ?? 0) - (u.cached_input_tokens ?? 0), output: (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0), cached: u.cached_input_tokens ?? 0, cost: 0 }
+        return null
+      }
+      case 'turn.failed':
+        turn.error = o.error?.message ?? 'Codex stopped'
+        return null
+      case 'error':
+        turn.error = o.message ?? 'Codex stopped'
+        return null
+    }
+    return null
+  }
+  return { turn, line }
+}
+
+// Gemini CLI headless stream-json: init, message deltas, tool_use / tool_result pairs, result.
+export function gemini() {
+  const turn = newTurn()
+  const pending = new Map<string, { name: string; input: Record<string, unknown> }>()
+  function line(o: any): Update | null {
+    switch (o.type) {
+      case 'init':
+        return null
+      case 'message':
+        if (o.role === 'assistant' && o.content) {
+          turn.text += o.content
+          return { delta: o.content }
+        }
+        return null
+      case 'tool_use':
+        pending.set(o.tool_id, { name: o.tool_name, input: o.parameters ?? {} })
+        return { working: `${o.tool_name} ${detail(o.parameters)}`.trim() }
+      case 'tool_result': {
+        const call = pending.get(o.tool_id)
+        if (!call) return null
+        pending.delete(o.tool_id)
+        const act = toAct(call.name, call.input, toolText(o.output ?? o.error?.message ?? ''), o.status !== 'success')
+        turn.acts.push(act)
+        return { acts: [act] }
+      }
+      case 'error':
+        if (o.severity !== 'warning') turn.error = o.message
+        return null
+      case 'result': {
+        const s = o.stats ?? {}
+        turn.usage = { input: s.input_tokens ?? s.input ?? 0, output: s.output_tokens ?? 0, cached: s.cached ?? s.cached_tokens ?? 0, cost: 0 }
+        if (o.status && o.status !== 'success') turn.error ??= o.error?.message ?? 'Gemini stopped'
+        return null
+      }
+    }
+    return null
+  }
+  return { turn, line }
+}
+
+// Limits read differently in every CLI. Anything that says the plan or quota is used up counts,
+// and a reset time is kept when one is given.
+export function limitOf(text: string): { until: number } | null {
+  if (!/usage limit|rate.?limit|limit reached|hit your limit|quota|too many requests|\b429\b|credit balance|out of credits|resets? (at|in)/i.test(text)) return null
+  const epoch = text.match(/\|(\d{10})\b/)
+  if (epoch) return { until: Number(epoch[1]) * 1000 }
+  const inMin = text.match(/(?:in|after)\s+(\d+)\s*(h|hours?|m|min|minutes?)/i)
+  if (inMin) return { until: Date.now() + Number(inMin[1]) * (inMin[2].startsWith('h') ? 3600e3 : 60e3) }
+  const at = text.match(/resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
+  if (at) {
+    const d = new Date()
+    let h = Number(at[1])
+    const half = at[3]?.toLowerCase()
+    if (half === 'pm' && h < 12) h += 12
+    if (half === 'am' && h === 12) h = 0
+    d.setHours(h, Number(at[2] ?? 0), 0, 0)
+    if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1)
+    return { until: d.getTime() }
+  }
+  return { until: Date.now() + 3600e3 }
+}
+
+// Turn a wall of stderr into the one line a person needs.
+export function reason(stderr: string) {
+  const lines = stderr.split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/^at\s|node:internal|^\s*\^/.test(l))
+  const hit = lines.find((l) => /not supported|no longer supported|migrate|sign ?in|log ?in|auth|api key|quota|limit|not found|permission|denied|error/i.test(l))
+  return (hit ?? lines.pop() ?? '').replace(/^(error|fatal):\s*/i, '').slice(0, 300)
+}

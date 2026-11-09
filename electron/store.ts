@@ -1,0 +1,181 @@
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import type { Event, Ledger, RoomMeta, Settings, Skill, Spent, Usage } from '../shared/types'
+
+export type Cipher = { seal(text: string): string; open(sealed: string): string }
+
+const DEFAULTS: Settings = { models: {}, budgets: {}, disabled: [], notify: true, defaultCrew: [] }
+const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0 })
+
+function readJson<T>(file: string, fallback: T): T {
+  try { return JSON.parse(readFileSync(file, 'utf8')) as T } catch { return fallback }
+}
+
+function writeJson(file: string, value: unknown) {
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(value, null, 1))
+  renameSync(tmp, file)
+}
+
+export function addUsage(a: Usage, b: Partial<Usage>) {
+  a.input += b.input ?? 0
+  a.output += b.output ?? 0
+  a.cached += b.cached ?? 0
+  a.cost += b.cost ?? 0
+  return a
+}
+
+export class Store {
+  private rooms = new Map<string, RoomMeta>()
+  private logs = new Map<string, Event[]>()
+  private dirty = new Set<string>()
+  private flushTimer: NodeJS.Timeout | null = null
+  settings: Settings
+  spent: Record<string, Spent>
+  health: Record<string, string>
+  skills: Skill[]
+  private ledger: { at: number; agent: string; room: string; usage: Usage }[] = []
+  private arena: Record<string, number>
+
+  constructor(readonly dir: string, private cipher: Cipher) {
+    mkdirSync(join(dir, 'rooms'), { recursive: true })
+    mkdirSync(join(dir, 'packs'), { recursive: true })
+    for (const meta of readJson<RoomMeta[]>(join(dir, 'rooms.json'), [])) this.rooms.set(meta.id, meta)
+    this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
+    const state = readJson<{ spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number> }>(join(dir, 'state.json'), {})
+    this.spent = state.spent ?? {}
+    this.health = state.health ?? {}
+    this.arena = state.arena ?? {}
+    this.skills = readJson<Skill[]>(join(dir, 'skills.json'), [])
+    const since = Date.now() - 8 * 86400e3
+    try {
+      for (const line of readFileSync(join(dir, 'ledger.jsonl'), 'utf8').split('\n')) {
+        if (!line) continue
+        const row = JSON.parse(line)
+        if (row.at >= since) this.ledger.push(row)
+      }
+    } catch {}
+  }
+
+  list() {
+    return [...this.rooms.values()].sort((a, b) => b.updated - a.updated)
+  }
+
+  room(id: string) {
+    return this.rooms.get(id)
+  }
+
+  events(id: string) {
+    let log = this.logs.get(id)
+    if (log) return log
+    log = []
+    try {
+      for (const line of readFileSync(join(this.dir, 'rooms', `${id}.jsonl`), 'utf8').split('\n')) {
+        if (!line) continue
+        try { log.push(JSON.parse(line)) } catch {}
+      }
+    } catch {}
+    this.logs.set(id, log)
+    return log
+  }
+
+  create(meta: RoomMeta, events: Event[] = []) {
+    this.rooms.set(meta.id, meta)
+    this.logs.set(meta.id, [...events])
+    if (events.length) writeFileSync(join(this.dir, 'rooms', `${meta.id}.jsonl`), events.map((e) => JSON.stringify(e)).join('\n') + '\n')
+    this.touch(meta.id)
+  }
+
+  append(id: string, event: Event) {
+    this.events(id).push(event)
+    appendFileSync(join(this.dir, 'rooms', `${id}.jsonl`), JSON.stringify(event) + '\n')
+    const meta = this.rooms.get(id)
+    if (meta) meta.updated = event.at
+    this.touch(id)
+  }
+
+  update(id: string, change: (meta: RoomMeta) => void) {
+    const meta = this.rooms.get(id)
+    if (!meta) return
+    change(meta)
+    this.touch(id)
+  }
+
+  remove(id: string) {
+    this.rooms.delete(id)
+    this.logs.delete(id)
+    rmSync(join(this.dir, 'rooms', `${id}.jsonl`), { force: true })
+    this.touch(id)
+  }
+
+  private touch(id: string) {
+    this.dirty.add(id)
+    this.flushTimer ??= setTimeout(() => this.flush(), 250)
+  }
+
+  flush() {
+    if (this.flushTimer) clearTimeout(this.flushTimer)
+    this.flushTimer = null
+    if (!this.dirty.size) return
+    this.dirty.clear()
+    writeJson(join(this.dir, 'rooms.json'), [...this.rooms.values()])
+  }
+
+  saveSettings(patch: Partial<Settings>) {
+    Object.assign(this.settings, patch)
+    writeJson(join(this.dir, 'settings.json'), this.settings)
+  }
+
+  saveState() {
+    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena })
+  }
+
+  saveSkills() {
+    writeJson(join(this.dir, 'skills.json'), this.skills)
+  }
+
+  keys(): Record<string, string> {
+    const sealed = readJson<Record<string, string>>(join(this.dir, 'keys.json'), {})
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(sealed)) {
+      try { out[k] = this.cipher.open(v) } catch {}
+    }
+    return out
+  }
+
+  setKey(provider: string, key: string) {
+    const sealed = readJson<Record<string, string>>(join(this.dir, 'keys.json'), {})
+    if (key) sealed[provider] = this.cipher.seal(key)
+    else delete sealed[provider]
+    writeJson(join(this.dir, 'keys.json'), sealed)
+  }
+
+  record(agent: string, room: string, usage: Usage) {
+    const row = { at: Date.now(), agent, room, usage }
+    this.ledger.push(row)
+    appendFileSync(join(this.dir, 'ledger.jsonl'), JSON.stringify(row) + '\n')
+  }
+
+  win(agent: string) {
+    this.arena[agent] = (this.arena[agent] ?? 0) + 1
+    this.saveState()
+  }
+
+  totals(): Ledger {
+    const day = new Date()
+    day.setHours(0, 0, 0, 0)
+    const week = Date.now() - 7 * 86400e3
+    const out: Ledger = { today: {}, week: {}, arena: { ...this.arena } }
+    for (const row of this.ledger) {
+      if (row.at >= week) addUsage((out.week[row.agent] ??= zero()), row.usage)
+      if (row.at >= day.getTime()) addUsage((out.today[row.agent] ??= zero()), row.usage)
+    }
+    return out
+  }
+
+  packFiles() {
+    const dir = join(this.dir, 'packs')
+    if (!existsSync(dir)) return []
+    return readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => join(dir, f))
+  }
+}

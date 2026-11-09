@@ -1,0 +1,104 @@
+{
+  "name": "lunchbox",
+  "productName": "Lunchbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Every AI you use, working as one.",
+  "author": {
+    "name": "Noah",
+    "email": "261804785+noah-thing@users.noreply.github.com"
+  },
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "out/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "web": "vite --port 4410",
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p electron",
+    "test": "node scripts/test.mjs",
+    "live": "node scripts/live.mjs",
+    "tour": "node test/tour.mjs",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux"
+  },
+  "devDependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@types/node": "^26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.65.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  },
+  "build": {
+    "appId": "app.lunchbox.desktop",
+    "productName": "Lunchbox",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**",
+      "build/icon-1024.png",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon-1024.png",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "icon": "build/icon-1024.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "icon": "build/icon-1024.png",
+      "category": "Development",
+      "maintainer": "Noah <261804785+noah-thing@users.noreply.github.com>",
+      "synopsis": "Every AI you use, working as one",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
+  }
+}

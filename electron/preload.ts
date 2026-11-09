@@ -1,0 +1,13 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+const EVENTS = new Set(['agents', 'rooms', 'room:event', 'room:live', 'room:meta', 'ledger', 'skills', 'open-room'])
+
+contextBridge.exposeInMainWorld('lb', {
+  call: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args),
+  on: (channel: string, fn: (value: unknown) => void) => {
+    if (!EVENTS.has(channel)) return () => {}
+    const listener = (_e: unknown, value: unknown) => fn(value)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
+})
