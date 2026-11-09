@@ -58,7 +58,8 @@ export function App() {
   const [look, setLookState] = useState<Look>(() => (new URLSearchParams(location.search).get('look') as Look | null) ?? saved('look', 'lunchbox'))
   const [ready, setReady] = useState<boolean>(saved('ready', false))
   const [arriving, setArriving] = useState(false)
-  const [view, setView] = useState<View>(() => saved<View>('view', { name: 'new' }))
+  // Every launch starts at home, whatever page was open last time.
+  const [view, setView] = useState<View>({ name: 'new' })
   const [palette, setPalette] = useState(false)
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
   const [access, setAccessState] = useState<Access>(saved('access', 'workspace'))
@@ -82,7 +83,6 @@ export function App() {
     desk.call('theme', theme === 'dark')
   }, [theme])
   useLayoutEffect(() => { document.documentElement.dataset.look = look; keep('look', look) }, [look])
-  useEffect(() => { if (view.name !== 'new') keep('view', view.name === 'room' ? { name: 'room', id: view.id } : { name: view.name }) }, [view])
   const searchButton = useRef<HTMLButtonElement>(null)
   const listed = useRef(new Set<string>())
   const first = useRef(true)

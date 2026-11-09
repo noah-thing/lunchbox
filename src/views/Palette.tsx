@@ -97,7 +97,7 @@ export function Palette({ commands, close, openHit, anchor }: { commands: Comman
               if (e.key === 'Enter' && ordered[sel]) pick(ordered[sel])
               if (e.key === 'Escape' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) { e.preventDefault(); dismiss() }
             }} />
-          <kbd>esc</kbd>
+          <button className="pclose" onClick={dismiss} title="Close" aria-label="Close search"><kbd>esc</kbd></button>
         </div>
         <div className="plist" ref={list}>
           {ordered.map((c, i) => {
