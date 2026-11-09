@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { extname, join, resolve, sep } from 'node:path'
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
 import type { Access, Connector, Flow, Report, Settings, Skill } from '../shared/types'
 import { installed, modelsFor, testConnector, useConnectors } from './agents'
@@ -149,7 +149,7 @@ function wire() {
   h('room:fork', (id: string, at: string) => engine.fork(id, at))
   h('room:crew', (id: string, crew: string[]) => engine.setCrew(id, crew))
   h('room:workspace', (id: string, path: string) => engine.setWorkspace(id, path))
-  h('room:send', (id: string, text: string, access: Access, arena: boolean, files?: string[]) => { engine.send(id, text, access, { arena, files }) })
+  h('room:send', (id: string, text: string, access: Access, arena: boolean, files?: string[]) => { engine.send(id, text, access, { arena, files: files?.length ? into(id, files) : files }) })
   h('room:project', (id: string, on: boolean) => engine.setProject(id, on))
   h('room:rewind', (id: string, target: { event?: string; ref?: string }) => engine.rewind(id, target))
   h('room:changed', (id: string, event: string) => engine.changedSince(id, event))
@@ -313,6 +313,30 @@ function wire() {
 }
 
 catchErrors()
+
+// Attachments go inside the room's folder, where every agent may read them, under a plain name a
+// model won't mangle; the folder is kept out of the project's git status.
+function into(room: string, files: string[]) {
+  const ws = store.room(room)?.workspace
+  if (!ws) return files
+  const dir = join(ws, '.lunchbox', 'attachments')
+  return files.map((f) => {
+    try {
+      if (!existsSync(f) || statSync(f).isDirectory() || statSync(f).size > 200e6) return f
+      if (!relative(ws, f).startsWith('..') && !isAbsolute(relative(ws, f))) return f
+      mkdirSync(dir, { recursive: true })
+      const exclude = join(ws, '.git', 'info', 'exclude')
+      if (existsSync(join(ws, '.git', 'info')) && !(existsSync(exclude) && readFileSync(exclude, 'utf8').includes('.lunchbox/'))) appendFileSync(exclude, '\n.lunchbox/\n')
+      const ext = extname(f).replace(/[^.\w]/g, '').slice(0, 10)
+      const name = `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${basename(f, extname(f)).normalize('NFKD').replace(/[^\w.-]+/g, '-').slice(0, 40)}${ext}`
+      const to = join(dir, name)
+      copyFileSync(f, to)
+      return to
+    } catch {
+      return f
+    }
+  })
+}
 
 app.whenReady().then(async () => {
   store = new Store(join(app.getPath('userData'), 'data'), cipher)

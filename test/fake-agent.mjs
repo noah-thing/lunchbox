@@ -35,7 +35,7 @@ if (name === 'codex') {
   process.exit(1)
 }
 
-const mcp = args.includes('--mcp-config') ? JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers.lunchbox.url : null
+const mcp = args.includes('--mcp-config') ? JSON.parse(((v) => (v.trim().startsWith('{') ? v : readFileSync(v, 'utf8')))(args[args.indexOf('--mcp-config') + 1])).mcpServers.lunchbox.url : null
 if (mcp && input.includes('Borrow:')) {
   let id = 0
   const rpc = async (method, params) => {

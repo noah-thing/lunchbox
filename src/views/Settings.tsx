@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { Loader, Mark } from '../ui/bits'
 import { Logo } from '../ui/Logo'
+import { Maker } from '../ui/Maker'
 import { ACCESS, desk, reason, reload, short, unavailable, useApp, type RemoteStatus } from '../lib/desk'
 import type { Look } from '../App'
 import { Toggle } from './Flows'
@@ -147,6 +148,7 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
           </div>
         </div>
         <p className="about"><Logo size={16} /><b>Lunchbox</b><span>{env.version}</span></p>
+        <Maker />
       </section>
     </div>
   )

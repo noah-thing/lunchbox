@@ -151,7 +151,12 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
                   </button>
                 )
               })}
-              {!listed.length && <div className="menunote">No agents found. Install one, or add an API key in Agents.</div>}
+              {!listed.length && <div className="menunote">No agents found yet.</div>}
+              <div className="sep" />
+              {/* Everything else, free providers and custom agents, lives on the Agents page. */}
+              <button className="item" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'agents', add: true } }))}>
+                <span className="grow"><b>See all agents</b><span>Free models, OpenCode, Qoder, any API or command line tool</span></span>
+              </button>
             </>
           )}
         </Menu>

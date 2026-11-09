@@ -37,8 +37,7 @@ type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
 // Failures of one command in one turn before the loop guard stops it.
 const LOOP = 3
-const MAX_HOPS = 8
-const IMAGE_MODEL = 'gpt-6-astra'
+const MAX_HOPS = 24
 // Grok Build only loads MCP servers from config files, which the room does not touch.
 const BORROWS = new Set(['claude', 'codex', 'gemini'])
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
@@ -51,6 +50,8 @@ export class Engine {
   private queues = new Map<string, Promise<unknown>>()
   private gens = new Map<string, number>()
   private flushed = new Set<string>()
+  // The protocol last sent to each resumed session, so an unchanged one is not sent again.
+  private protos = new Map<string, string>()
   private allowed = new Map<string, Set<string>>()
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
@@ -513,7 +514,8 @@ export class Engine {
     } else {
       const ask = `Generate this image with your image tool and save it as ${path}${size ? ` at ${size}` : ''}. Reply with the path only.\n\nImage: ${prompt}`
       // Quiet: the image itself is what the room shows, not the instruction that produced it.
-      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }, true, prompt, size).catch((e: Error) => e.message)
+      // The person's own Codex model draws the image unless they picked one for images.
+      const said = await this.consult(room, from, 'codex', ask, access, ctx, this.store.settings.imageModel ? { codex: this.store.settings.imageModel } : undefined, true, prompt, size).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
     this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage })
@@ -531,19 +533,17 @@ export class Engine {
       return this.turn(room, next, task, access, ctx)
     }
     const me = this.agent(who)!
-    const crew = meta.crew.map((id) => this.agent(id)).filter((a): a is AgentInfo => !!a && !this.why(a.id))
+    const crew = meta.crew.map((id) => this.agent(id)).filter((a): a is AgentInfo => !!a)
     if (!crew.some((a) => a.id === who)) crew.unshift(me)
     const pack = this.hooks.packs().find((p) => p.id === meta.pack)
     const session = meta.sessions[who]
     // Only the CLIs Lunchbox knows how to resume get a delta; a connector always gets the whole room.
     const resumed = !!session && ['claude', 'codex', 'grok'].includes(who)
     const events = this.store.events(room)
-    const p = prompt(meta, events, who, this.task(task), this.name, resumed)
-    this.store.update(room, (m) => {
-      m.seen[who] = p.seen
-      m.saved.full += p.full
-      m.saved.sent += p.sent
-    })
+    // Crewmates who are out right now are named in the request, not the protocol, so the cached
+    // protocol stays the same when someone hits a limit and comes back.
+    const out = meta.crew.filter((id) => id !== who && this.why(id)).map(this.name)
+    const p = prompt(meta, events, who, this.task(task) + (out.length ? `\n(Out right now, so do not ask them: ${out.join(', ')}.)` : ''), this.name, resumed)
 
     const live = this.live(room)
     const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now(), image: task.kind === 'answer' && task.quiet ? true : undefined, label: task.kind === 'answer' ? task.label : undefined, size: task.kind === 'answer' ? task.size : undefined }
@@ -560,8 +560,9 @@ export class Engine {
     const http = me.via !== 'cli'
     const fails = new Map<string, number>()
     let looped = ''
+    const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits)
     const running = run(who, {
-      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits), cwd: meta.workspace, access,
+      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || this.protos.get(`${room}:${who}`) !== system, cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
@@ -648,6 +649,7 @@ export class Engine {
       const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' ? task.from : undefined)
       this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
       if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
+      if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
       return null
     }
     if (this.store.health[who]) {
@@ -684,7 +686,14 @@ export class Engine {
         })
       }
     }
-    this.store.update(room, (m) => { m.heard[who] = events.length })
+    // Only a turn that happened counts as delivered: memory and savings move on success.
+    this.store.update(room, (m) => {
+      m.heard[who] = events.length
+      m.seen[who] = p.seen
+      m.saved.full += p.full
+      m.saved.sent += p.sent
+    })
+    this.protos.set(`${room}:${who}`, system)
 
     const edited = r.acts.filter((a) => a.t === 'edit').map((a) => (a as { path: string }).path)
     if (edited.length) {

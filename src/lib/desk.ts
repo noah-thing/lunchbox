@@ -97,7 +97,7 @@ export const ACCESS: { id: Access; name: string; line: string; level: number }[]
   { id: 'plan', name: 'Plan', line: 'Read and plan. Nothing on disk changes.', level: 0 },
   { id: 'ask', name: 'Ask', line: 'Reading is free. Edits and commands wait for your OK.', level: 1 },
   { id: 'workspace', name: 'Auto', line: 'Free inside the folder. Anything outside it asks.', level: 2 },
-  { id: 'full', name: 'Full access', line: 'Anything on this computer. Deleting folders, sudo and force pushes still ask.', level: 3 },
+  { id: 'full', name: 'Full access', line: 'Anything on this computer, without asking. Only wiping the disk or your home folder is refused.', level: 3 },
 ]
 
 export const KIND_LABEL: Record<Kind, string> = {

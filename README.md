@@ -128,7 +128,7 @@ You choose the mode per message, in the composer.
 | Plan | Read only | Reads run, the rest is refused |
 | Ask | Read freely, edits wait for you | Anything that writes asks first |
 | Auto | Edit and run inside the folder | Free inside the folder, outside asks |
-| Full access | Anything on the computer | Free, except deleting folders, sudo and force pushes |
+| Full access | Anything on the computer, without asking | Free, except wiping the disk or the home folder |
 
 Some commands never run in any mode, such as `rm -rf ~`. The rules live in [`electron/policy.ts`](electron/policy.ts) and have their own tests.
 

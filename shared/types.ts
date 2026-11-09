@@ -191,6 +191,7 @@ export type Settings = {
   habits?: string[]
   dismissed?: string[]
   autoUpdate?: boolean
+  feedIssued?: number
 }
 
 // Anything not built in: an API that speaks the OpenAI or Anthropic format, or a command-line

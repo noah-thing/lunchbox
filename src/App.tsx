@@ -71,6 +71,12 @@ export function App() {
   const [palette, setPalette] = useState(false)
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
   const [report, setReport] = useState<ReportOpen | null>(null)
+  // Deep links from inside components, such as See all agents in the crew menu.
+  useEffect(() => {
+    const to = (e: Event) => go((e as CustomEvent<View>).detail)
+    addEventListener('lb:go', to)
+    return () => removeEventListener('lb:go', to)
+  })
   useEffect(() => {
     const open = (e: Event) => setReport((e as CustomEvent<ReportOpen>).detail ?? {})
     addEventListener('lb:report', open)
@@ -241,7 +247,7 @@ export function App() {
       </aside>
 
       <main className="sheet">
-        <Guard key={view.name}>
+        <Guard key={view.name === 'room' ? `room:${view.id}` : view.name}>
         {/* Pages scroll, so only a strip along the top moves the window. A scroll area that is
             also a drag region swallows the wheel on macOS. */}
         {!['room', 'browser', 'new'].includes(view.name) && <div className="sheetdrag" aria-hidden="true" />}

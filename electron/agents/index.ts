@@ -22,6 +22,7 @@ export type Input = {
   session?: string
   allow?: string[]
   hands?: string
+  fresh?: boolean
 }
 
 export type Result = {
@@ -51,13 +52,19 @@ type Def = Omit<AgentInfo, 'found' | 'ready' | 'version' | 'note' | 'models' | '
 // The provider an HTTP agent talks to: its own local server, or the key it is billed to.
 export const providerOf = (d: Def) => d.provider ?? d.key!
 
-const prompt = (i: Input) => `${i.system}\n\n${i.prompt}`
+// A resumed session already has the protocol; it is sent again only when it changed.
+const prompt = (i: Input) => (i.fresh === false ? i.prompt : `${i.system}\n\n${i.prompt}`)
 
 // Calls to a crewmate can take minutes, far past the CLIs' default tool timeouts.
 const HANDS_TIMEOUT = 15 * 60
 
-const claudeHands = (i: Input) =>
-  i.hands ? ['--mcp-config', JSON.stringify({ mcpServers: { lunchbox: { type: 'http', url: i.hands } } })] : []
+// The hands URL carries a per-turn token, so it goes in a private file rather than the command
+// line, where any other program on the computer could read it.
+function claudeHands(i: Input, file: string): Pick<Spec, 'extra'> & { args: string[] } {
+  if (!i.hands) return { args: [] }
+  const path = file.replace(/\.txt$/, '.mcp.json')
+  return { args: ['--mcp-config', path], extra: [{ path, text: JSON.stringify({ mcpServers: { lunchbox: { type: 'http', url: i.hands } } }) }] }
+}
 
 const codexHands = (i: Input) =>
   i.hands
@@ -79,14 +86,16 @@ export const CATALOG: Def[] = [
   {
     id: 'claude', name: 'Claude Code', short: 'Claude', maker: 'Anthropic', via: 'cli', bin: 'claude', tools: true, mark: 'claude',
     good: 'Design, careful edits, long reasoning', alphabet: '.:-=+*#%@',
-    spawn: (i) => {
+    spawn: (i, file) => {
       const allowed = [...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
+      const hands = claudeHands(i, file)
       return {
+        extra: hands.extra,
         args: [
           '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
           ...{ plan: ['--permission-mode', 'plan'], ask: ['--permission-mode', 'default'], workspace: ['--permission-mode', 'acceptEdits'], full: ['--dangerously-skip-permissions'] }[i.access],
           ...(allowed.length && i.access !== 'full' ? ['--allowedTools', allowed.join(',')] : []),
-          ...claudeHands(i),
+          ...hands.args,
           ...(i.model ? ['--model', i.model] : []),
           ...(i.session ? ['--resume', i.session] : []),
         ],
@@ -269,7 +278,7 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     if (!path) return failed(`${d.name} is not installed on this computer`)
     const file = join(tmpdir(), `lunchbox-${process.pid}-${t0}-${Math.random().toString(36).slice(2, 8)}.txt`)
     const spec = d.spawn!(input, file)
-    if (spec.file) writeFileSync(file, spec.file)
+    if (spec.file) writeFileSync(file, spec.file, { mode: 0o600 })
     for (const x of spec.extra ?? []) writeFileSync(x.path, x.text, { mode: 0o600 })
     // Stop pressed while the tool was still being found: it never starts.
     if (stopped) return failed('Stopped')

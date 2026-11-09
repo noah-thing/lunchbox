@@ -13,7 +13,12 @@ export function Notices() {
     desk.call('notices').then((n: Notice[]) => setList(n ?? [])).catch(() => {})
     desk.call('update').then((u: UpdateState) => u && setUpdate(u)).catch(() => {})
     const a = desk.on('notices', (n) => setList((n as Notice[]) ?? []))
-    const b = desk.on('update', (u) => { setUpdate(u as UpdateState); setLater(false) })
+    const b = desk.on('update', (u) => setUpdate((old) => {
+      const next = u as UpdateState
+      // "Later" holds until a different version turns up, not until the next routine check.
+      if ('version' in next && (!('version' in old) || old.version !== next.version)) setLater(false)
+      return next
+    }))
     return () => { a(); b() }
   }, [])
   const dismiss = (id: string) => { setList((l) => l.filter((n) => n.id !== id)); desk.call('notice:dismiss', id) }
@@ -22,13 +27,13 @@ export function Notices() {
   const card = list.find((n) => n.kind === 'card')
   const banner = list.find((n) => n.kind === 'banner')
   const toasts = list.filter((n) => n.kind === 'toast').slice(0, 3)
-  const ready = !later && (update.state === 'ready' || update.state === 'manual' || update.state === 'available')
+  const ready = !later && (update.state === 'ready' || update.state === 'manual' || update.state === 'available' || update.state === 'downloading')
 
   return (
     <>
       {ready ? (
         <div className="nbanner" role="status">
-          <span className="grow">{update.state === 'ready' ? `Lunchbox ${update.version} is ready. It installs when you restart.` : `Lunchbox ${update.version} is out.`}</span>
+          <span className="grow">{update.state === 'ready' ? `Lunchbox ${update.version} is ready. It installs when you restart.` : update.state === 'downloading' ? `Downloading Lunchbox ${update.version}${update.progress ? `, ${Math.round(update.progress * 100)}%` : ''}` : `Lunchbox ${update.version} is out.`}</span>
           {update.state === 'ready' && <button className="btn small" onClick={() => desk.call('update:install')}>Restart now</button>}
           {update.state === 'available' && <button className="btn small" onClick={() => desk.call('update:download')}>Get it</button>}
           {update.state === 'manual' && <button className="btn small" onClick={() => window.open(update.url, '_blank')}>Download</button>}

@@ -762,3 +762,15 @@ textarea:focus-visible,input:focus-visible{outline:0}
 html[data-platform=win32] .roomhead,html[data-platform=linux] .roomhead,
 html[data-platform=win32] .panelhead,html[data-platform=linux] .panelhead,
 html[data-platform=win32] .bbar,html[data-platform=linux] .bbar{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)}
+html[data-platform=win32] .ntoasts,html[data-platform=linux] .ntoasts,html[data-platform=win32] .nbanner,html[data-platform=linux] .nbanner{top:56px}
+/* Made by, at the foot of Settings. */
+.maker{display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px}
+.makerby{color:var(--faint)}
+.makerx{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--line);transition:box-shadow 140ms var(--out),background-color 140ms var(--out)}
+@media (hover:hover){.makerx:hover{background:var(--hover);box-shadow:inset 0 0 0 1px var(--line2)}}
+.makerx img{width:24px;height:24px;border-radius:50%;object-fit:cover}
+.makername{display:flex;align-items:center;gap:3px}
+.makername b{font-weight:600}
+.makername svg{width:14px;height:14px}
+.makerhandle{color:var(--dim)}
+.makergh{color:var(--dim)}

@@ -27,8 +27,9 @@ for (const n of notices) {
   if ((n.image && !n.image.startsWith('https://')) || (n.action && !n.action.url?.startsWith('https://'))) throw new Error(`Images and links must be https: ${n.id}`)
   ids.add(n.id)
 }
-const sig = sign(null, Buffer.from(JSON.stringify(notices)), key).toString('base64')
-writeFileSync(join(repo, 'notices.json'), JSON.stringify({ notices, sig }, null, 2) + '\n')
+const issued = Date.now()
+const sig = sign(null, Buffer.from(JSON.stringify({ notices, issued })), key).toString('base64')
+writeFileSync(join(repo, 'notices.json'), JSON.stringify({ notices, issued, sig }, null, 2) + '\n')
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'inherit' })
 git('add', 'notices.json')
 git('-c', 'user.name=Noah', '-c', 'user.email=261804785+noah-thing@users.noreply.github.com', 'commit', '-m', `Messages: ${notices.map((n) => n.id).join(', ') || 'none'}`)

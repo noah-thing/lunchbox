@@ -47,7 +47,8 @@ export async function listModels(name: string, key: string): Promise<string[]> {
   }
   const res = await fetch(`${p.base}/models`, { headers: headers(p.style, key), signal })
   if (!res.ok) throw await failure(res)
-  return ((await res.json()).data ?? []).map((m: { id: string }) => m.id).sort().reverse()
+  // Only models that chat: embedding, speech, image and moderation models fail on chat requests.
+  return ((await res.json()).data ?? []).map((m: { id: string }) => m.id).filter((id: string) => !/embed|whisper|tts|dall|image|moderation|audio|realtime|transcribe|search-preview/i.test(id)).sort().reverse()
 }
 
 async function pick(name: string, key: string, model: string) {
@@ -103,13 +104,18 @@ export async function chat(name: string, key: string, model: string, system: str
     // One block per message of the conversation and a breakpoint on the last one. The next turn
     // finds that breakpoint again within the 20 block lookback and reads everything before it
     // from cache; only the new messages, the memory and the task are billed in full.
-    const blocks: { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[] = history.map((text) => ({ type: 'text', text }))
-    if (blocks.length) blocks[blocks.length - 1].cache_control = { type: 'ephemeral' }
+    const blocks: { type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: '1h' } }[] = history.map((text) => ({ type: 'text', text }))
+    // Two marks in the history: the newest block, and the last block of the previous step of 20,
+    // so a busy room still finds its earlier prefix within the provider's lookback.
+    const marks = new Set([blocks.length - 1, 20 * Math.floor((blocks.length - 1) / 20) - 1].filter((i) => i >= 0))
+    for (const i of marks) blocks[i].cache_control = { type: 'ephemeral' }
     res = await fetch(`${p.base}/messages`, {
       method: 'POST', signal, headers: headers(p.style, key),
       body: JSON.stringify({
         model: id, max_tokens: 8192, stream: true,
-        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+        // The system block is the same for the whole room, so it is kept for an hour, not five
+        // minutes: a room left for lunch still starts from the cache.
+        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } }],
         messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
       }),
     })

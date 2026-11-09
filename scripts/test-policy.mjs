@@ -30,7 +30,7 @@ const expect = (access, cmd, want) => {
 expect('plan', 'git diff', 'allow'); expect('plan', 'npm test', 'deny'); expect('plan', 'rm -rf dist', 'deny')
 expect('ask', 'ls', 'allow'); expect('ask', 'npm test', 'ask')
 expect('workspace', 'npm test', 'allow'); expect('workspace', 'npm install', 'ask'); expect('workspace', 'touch /tmp/x', 'ask')
-expect('full', 'npm install', 'allow'); expect('full', 'touch /tmp/x', 'allow'); expect('full', 'rm -rf dist', 'ask'); expect('full', 'rm -rf ~', 'deny')
+expect('full', 'npm install', 'allow'); expect('full', 'touch /tmp/x', 'allow'); expect('full', 'rm -rf dist', 'allow'); expect('full', 'rm -rf ~', 'deny')
 expect('workspace', 'npm test', 'allow')
 const remembered = new Set(['npm install'])
 if (decide('workspace', 'npm install zod', root, root, remembered).decision !== 'allow') { bad++; console.log('FAIL remembered prefix') }

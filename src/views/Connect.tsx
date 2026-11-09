@@ -5,17 +5,21 @@ import { IconClose } from '../ui/icons'
 import { desk, reload, useApp } from '../lib/desk'
 
 type Kind = Connector['kind']
-type Preset = Partial<Connector> & { label: string; keyUrl?: string }
+type Preset = Partial<Connector> & { label: string; keyUrl?: string; free?: boolean }
 
 // Starting points only: every field stays editable, and anything not listed works the same way.
 const PRESETS: Record<Kind, Preset[]> = {
   openai: [
+    { label: 'OpenRouter free models', name: 'OpenRouter Free', base: 'https://openrouter.ai/api/v1', model: 'openrouter/auto', keyUrl: 'https://openrouter.ai/keys', free: true },
+    { label: 'Google AI Studio', name: 'Gemini Free', base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-flash-latest', keyUrl: 'https://aistudio.google.com/apikey', free: true },
+    { label: 'GitHub Models', name: 'GitHub Models', base: 'https://models.github.ai/inference', keyUrl: 'https://github.com/settings/personal-access-tokens', free: true },
+    { label: 'NVIDIA NIM', name: 'NVIDIA', base: 'https://integrate.api.nvidia.com/v1', keyUrl: 'https://build.nvidia.com', free: true },
     { label: 'DeepSeek', name: 'DeepSeek', base: 'https://api.deepseek.com/v1', model: 'deepseek-chat', keyUrl: 'https://platform.deepseek.com/api_keys' },
-    { label: 'Groq', name: 'Groq', base: 'https://api.groq.com/openai/v1', keyUrl: 'https://console.groq.com/keys' },
+    { label: 'Groq', name: 'Groq', base: 'https://api.groq.com/openai/v1', keyUrl: 'https://console.groq.com/keys', free: true },
     { label: 'Mistral', name: 'Mistral', base: 'https://api.mistral.ai/v1', keyUrl: 'https://console.mistral.ai/api-keys' },
     { label: 'Together', name: 'Together', base: 'https://api.together.xyz/v1', keyUrl: 'https://api.together.ai/settings/api-keys' },
     { label: 'Fireworks', name: 'Fireworks', base: 'https://api.fireworks.ai/inference/v1', keyUrl: 'https://fireworks.ai/account/api-keys' },
-    { label: 'Cerebras', name: 'Cerebras', base: 'https://api.cerebras.ai/v1', keyUrl: 'https://cloud.cerebras.ai' },
+    { label: 'Cerebras', name: 'Cerebras', base: 'https://api.cerebras.ai/v1', keyUrl: 'https://cloud.cerebras.ai', free: true },
     { label: 'Kimi', name: 'Kimi', base: 'https://api.moonshot.ai/v1', keyUrl: 'https://platform.moonshot.ai/console/api-keys' },
     { label: 'DeepInfra', name: 'DeepInfra', base: 'https://api.deepinfra.com/v1/openai', keyUrl: 'https://deepinfra.com/dash/api_keys' },
     { label: 'Perplexity', name: 'Perplexity', base: 'https://api.perplexity.ai', model: 'sonar', keyUrl: 'https://www.perplexity.ai/settings/api' },
@@ -25,7 +29,9 @@ const PRESETS: Record<Kind, Preset[]> = {
     { label: 'A proxy or gateway', name: 'Claude gateway', base: 'https://' },
   ],
   cli: [
-    { label: 'OpenCode', name: 'OpenCode', command: 'opencode', args: 'run {prompt}' },
+    { label: 'OpenCode', name: 'OpenCode', command: 'opencode', args: 'run {prompt}', free: true },
+    { label: 'Qoder', name: 'Qoder', command: 'qodercli', args: '-p {prompt}' },
+    { label: 'Crush', name: 'Crush', command: 'crush', args: 'run {prompt}' },
     { label: 'Aider', name: 'Aider', command: 'aider', args: '--message {prompt} --yes-always --no-pretty' },
     { label: 'Goose', name: 'Goose', command: 'goose', args: 'run -t {prompt}' },
     { label: 'Cursor Agent', name: 'Cursor Agent', command: 'cursor-agent', args: '-p {prompt} --output-format text' },
@@ -95,7 +101,7 @@ export function ConnectorSheet({ edit, close, say }: { edit?: Connector; close: 
         <div className="presets">
           {PRESETS[c.kind].map((p) => (
             <button key={p.label} onClick={() => { const { label, keyUrl: url, ...rest } = p; put(rest); setKeyUrl(url) }}>
-              {p.label}{p.command && found[p.command] && <i title="Installed on this computer" />}
+              {p.label}{p.free && <small>free</small>}{p.command && found[p.command] && <i title="Installed on this computer" />}
             </button>
           ))}
         </div>

@@ -25,11 +25,15 @@ export function newer(a: string, b: string) {
   return !xt && !!yt
 }
 
-export function verified(body: unknown): Notice[] | null {
-  const feed = body as { notices?: unknown; sig?: unknown }
-  if (!Array.isArray(feed?.notices) || typeof feed.sig !== 'string') return null
+// The signature covers the notices and the time they were issued, so an old feed can't be served
+// again to bring back a message that was taken down.
+export function verified(body: unknown, last = 0, now = Date.now()): { notices: Notice[]; issued: number } | null {
+  const feed = body as { notices?: unknown; issued?: unknown; sig?: unknown }
+  if (!Array.isArray(feed?.notices) || typeof feed.sig !== 'string' || typeof feed.issued !== 'number') return null
+  if (feed.issued < last || feed.issued > now + 3600e3) return null
   try {
-    return verify(null, Buffer.from(JSON.stringify(feed.notices)), KEY, Buffer.from(feed.sig, 'base64')) ? (feed.notices as Notice[]) : null
+    const signed = Buffer.from(JSON.stringify({ notices: feed.notices, issued: feed.issued }))
+    return verify(null, signed, KEY, Buffer.from(feed.sig, 'base64')) ? { notices: feed.notices as Notice[], issued: feed.issued } : null
   } catch {
     return null
   }
@@ -88,10 +92,12 @@ export class Updates {
     if (!app.isPackaged) return
     updater.autoUpdater.autoDownload = on
     updater.autoUpdater.autoInstallOnAppQuit = on
+    if (on && this.state.state === 'available') this.download()
   }
 
   install() {
-    if (this.state.state === 'ready') updater.autoUpdater.quitAndInstall()
+    // Silent, and the app opens again: no installer wizard on Windows, no closed app on Linux.
+    if (this.state.state === 'ready') updater.autoUpdater.quitAndInstall(true, true)
   }
 
   private async manual(error: string) {
@@ -115,9 +121,10 @@ export class Updates {
     try {
       const res = await net.fetch(`${FEED}?t=${Math.floor(Date.now() / 60e3)}`, { cache: 'no-store' })
       if (!res.ok) return
-      const list = verified(await res.json())
-      if (!list) return
-      this.notices = list
+      const feed = verified(await res.json(), this.store.settings.feedIssued ?? 0)
+      if (!feed) return
+      if (feed.issued !== this.store.settings.feedIssued) this.store.saveSettings({ feedIssued: feed.issued })
+      this.notices = feed.notices
       this.emit('notices', this.shown())
     } catch {}
   }
