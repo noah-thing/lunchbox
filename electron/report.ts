@@ -4,7 +4,7 @@ import { homedir, release } from 'node:os'
 import { join } from 'node:path'
 import type { AgentInfo, Report } from '../shared/types'
 
-// Reports go to a small function that files them as issues in the private repo; the app never
+// Reports go to a small function that files them as issues in a private reports repo; the app never
 // holds a GitHub token. When it can't be reached, a report waits in the outbox and goes later.
 const ENDPOINT = 'https://lunchbox-report.vercel.app/api/report'
 
