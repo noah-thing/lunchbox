@@ -675,6 +675,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .xsearch .meta{margin-left:auto;padding-left:12px;color:var(--faint);font-feature-settings:"tnum"}
 .xsearch .dotfield{position:relative;height:52px;border-top:1px solid var(--line)}
 .xsearch .posts{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.xsearch .posts:last-child{border-bottom:0}
 .xsearch .post{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px 14px 13px;background:var(--well);animation:land 520ms var(--out) both;animation-delay:calc(var(--i) * 140ms)}
 .xsearch .post .by{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px}
 .xsearch .post .by b{font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

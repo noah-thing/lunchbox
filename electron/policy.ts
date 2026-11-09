@@ -45,6 +45,9 @@ function segments(command: string) {
 
 function isRead(segment: string) {
   if (/[^>]>[^&]|^>|>>/.test(segment)) return false
+  // $(...) and backticks run their own command, and env with arguments launches one.
+  if (/\$\(|`|<\(/.test(segment)) return false
+  if (/^env\s+\S/i.test(segment)) return false
   if (READ_GIT.test(segment) || VERSION.test(segment)) return true
   const [first, ...rest] = segment.split(/\s+/)
   const head = first.toLowerCase()

@@ -7,7 +7,7 @@ import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
 import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
-import { agentOf, clock, desk, KIND_LABEL, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
+import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
 import { Composer } from './Composer'
 
@@ -79,7 +79,8 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel() }
-      if (e.key === 'Escape' && data?.live.turns.length && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
+      // Esc refuses a pending command first; only with nothing waiting does it stop the turn.
+      if (e.key === 'Escape' && data?.live.turns.length && !data.live.runs.some((r) => r.state === 'asking') && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
@@ -553,7 +554,7 @@ function SearchLive({ search, elapsed }: { search: Search; elapsed: string }) {
     <div className="xsearch live">
       <header>
         <SourceIcon search={search} />
-        <span className="shimmer">Searching {search.source}</span><span>for</span><span className="query">“{search.query}”</span>
+        <span className="shimmer">Searching {search.source}</span>{search.query && <><span>for</span><span className="query">“{search.query}”</span></>}
         <span className="meta">{[...search.filters, elapsed].join(' · ')}</span>
       </header>
       <div className="dotfield" aria-hidden><i className="dots" /><i className="dots lit" /></div>
@@ -589,24 +590,23 @@ function Ident({ seed }: { seed: string }) {
 
 function Sources({ search, out }: { search: Search; out?: string }) {
   const { total, posts } = postsOf(out)
-  if (!posts.length) return null
   const shown = posts.slice(0, 4)
   return (
     <div className="xsearch done">
       <header>
         <SourceIcon search={search} />
-        <b>Searched {search.source}</b><span>for</span><span className="query">“{search.query}”</span>
+        <b>Searched {search.source}</b>{search.query && <><span>for</span><span className="query">“{search.query}”</span></>}
         {search.filters.length > 0 && <span className="meta">{search.filters.join(' · ')}</span>}
       </header>
-      <div className="posts">
+      {shown.length > 0 && <div className="posts">
         {shown.map((p, i) => (
           <article key={p.handle + i} className="post" style={{ '--i': i } as CSSProperties}>
             <div className="by"><Ident seed={p.handle} /><b>@{p.handle}</b><small><IconHeart />{p.likes}</small></div>
             <p>{p.text}</p>
           </article>
         ))}
-      </div>
-      {total && <footer>Top {shown.length} of {total}</footer>}
+      </div>}
+      {total && shown.length > 0 && <footer>Top {shown.length} of {total}</footer>}
     </div>
   )
 }
@@ -665,8 +665,11 @@ function actLabel(a: Act) {
 function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   const [open, setOpen] = useState(false)
   if (!acts.length) return null
-  const shown = (a: Act) => (a.t === 'cmd' && !!searchOf(a.command) && postsOf(a.out).posts.length > 0) || (a.t === 'tool' && /make_image$/.test(a.name))
-  const found = acts.flatMap((a) => (a.t === 'cmd' && shown(a) ? [<Sources key={a.command} search={searchOf(a.command)!} out={a.out} />] : []))
+  // Searches show as their own card: commands with posts in their output, and the search tools
+  // every CLI has, which report only what was searched.
+  const searched = (a: Act) => (a.t === 'cmd' ? (postsOf(a.out).posts.length ? searchOf(a.command) : null) : a.t === 'tool' && /^(x|web)_search$/.test(a.name) ? searchOf(`${a.name} ${a.detail ?? ''}`) : null)
+  const shown = (a: Act) => !!searched(a) || (a.t === 'tool' && /make_image$/.test(a.name))
+  const found = acts.flatMap((a, i) => { const q = searched(a); return q ? [<Sources key={`s${i}`} search={q} out={a.t === 'cmd' ? a.out : undefined} />] : [] })
   acts = acts.filter((a) => !shown(a))
   if (!acts.length) return <>{found}</>
   const cmds = acts.filter((a) => a.t === 'cmd').length
@@ -768,8 +771,9 @@ function RunBlock({ run, answer, kill }: { run: RunView; answer?: Actions['answe
     if (!asking || !answer || !run.id) return
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'TEXTAREA') return
-      if (e.key === 'Enter') answer(run.id!, 'once')
-      if (e.key === 'Escape') answer(run.id!, 'deny')
+      // ⌘Enter runs it, so pressing Enter on some other button never approves a command.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); answer(run.id!, 'once') }
+      if (e.key === 'Escape') { e.preventDefault(); answer(run.id!, 'deny') }
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
@@ -797,7 +801,7 @@ function RunBlock({ run, answer, kill }: { run: RunView; answer?: Actions['answe
         <div className="ask">
           <span>This {v?.reason}. Run it in <code>{short(run.cwd)}</code>?</span>
           <div className="row">
-            <button className="btn small" onClick={() => answer(run.id!, 'once')}>Run <kbd>↵</kbd></button>
+            <button className="btn small" onClick={() => answer(run.id!, 'once')}>Run <kbd>{mod}↵</kbd></button>
             {v?.kind !== 'danger' && <button className="btn small quiet" onClick={() => answer(run.id!, 'always')}>Always in this folder</button>}
             <button className="btn small quiet" onClick={() => answer(run.id!, 'deny')}>Don’t run</button>
           </div>

@@ -27,7 +27,7 @@ export type Look = 'lunchbox' | 'neyra'
 const saved = <T,>(key: string, fallback: T): T => {
   try { const v = localStorage.getItem('lb.' + key); return v ? JSON.parse(v) : fallback } catch { return fallback }
 }
-const keep = (key: string, v: unknown) => localStorage.setItem('lb.' + key, JSON.stringify(v))
+const keep = (key: string, v: unknown) => { try { localStorage.setItem('lb.' + key, JSON.stringify(v)) } catch {} }
 const calm = () => !document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches
 
 // Native view transitions for every change a person makes. Elements that share a

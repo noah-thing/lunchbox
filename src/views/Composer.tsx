@@ -62,10 +62,12 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   const mention = before.match(/(^|\s)@([\w-]*)$/)
   const slash = before.match(/^\/([\w -]*)$/)
   let suggestions: Suggestion[] = []
-  if (mention && crew.length > 1) {
+  if (mention) {
+    // The crew first, then anyone else who is ready: @ brings them in for this message.
     const q = mention[2].toLowerCase()
-    suggestions = crew.map((id) => agentOf(id, agents)).filter((a) => a.id.startsWith(q) || a.short.toLowerCase().startsWith(q))
-      .map((a) => ({ key: a.id, label: a.short, hint: a.good, insert: `@${a.id} `, mark: a.mark }))
+    const others = agents.filter((a) => a.ready && !crew.includes(a.id)).map((a) => a.id)
+    suggestions = [...crew, ...others].map((id) => agentOf(id, agents)).filter((a) => a.id.startsWith(q) || a.short.toLowerCase().startsWith(q))
+      .map((a) => ({ key: a.id, label: a.short, hint: crew.includes(a.id) ? a.good : `Joins for this message. ${a.good}`, insert: `@${a.id} `, mark: a.mark }))
   } else if (slash) {
     const q = slash[1].toLowerCase()
     const checks = packs.find((p) => p.id === pack)?.checks ?? []

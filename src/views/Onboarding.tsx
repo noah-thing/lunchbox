@@ -189,7 +189,7 @@ const INSTALL: Record<string, { cmd?: string; url: string }> = {
   grok: { url: 'https://x.ai' },
   ollama: { url: 'https://ollama.com/download' },
   lmstudio: { url: 'https://lmstudio.ai' },
-  llamacpp: { cmd: 'brew install llama.cpp', url: 'https://github.com/ggml-org/llama.cpp' },
+  llamacpp: { cmd: navigator.platform.startsWith('Win') ? 'winget install llama.cpp' : /Mac/.test(navigator.platform) ? 'brew install llama.cpp' : undefined, url: 'https://github.com/ggml-org/llama.cpp' },
 }
 
 function Missing({ a }: { a: AgentInfo }) {

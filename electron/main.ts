@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
-import type { Access, Flow, Settings, Skill } from '../shared/types'
-import { modelsFor } from './agents'
+import type { Access, Connector, Flow, Settings, Skill } from '../shared/types'
+import { installed, modelsFor, testConnector, useConnectors } from './agents'
 import { markdown, replay } from './export'
 import { Flows } from './flows'
 import { fetchPack, importPack, loadPacks, packJson, removePack } from './packs'
@@ -12,6 +12,7 @@ import { Hands } from './hands'
 import { Remote } from './remote'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
+import { resetPath } from './system'
 import { Snapshots } from './snap'
 import { Browser, type Device } from './browser'
 import { Toolbox } from './tools'
@@ -115,7 +116,7 @@ function wire() {
 
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
   h('agents', () => engine.agents)
-  h('agents:refresh', () => engine.refresh())
+  h('agents:refresh', () => { resetPath(); return engine.refresh() })
   h('limits', () => limits.get())
   h('limits:refresh', () => limits.poll().then(() => limits.get()))
   h('local:start', async (id: string) => {
@@ -229,17 +230,20 @@ function wire() {
   h('settings', () => store.settings)
   h('settings:set', async (patch: Partial<Settings>) => {
     store.saveSettings(patch)
-    if (patch.models || patch.disabled) await engine.refresh()
+    if (patch.connectors) useConnectors(store.settings.connectors)
+    if (patch.models || patch.disabled || patch.connectors) await engine.refresh()
     if (patch.budgets) emit('ledger', engine.ledger())
     return store.settings
   })
   h('spent:clear', (id: string) => { delete store.spent[id]; store.saveState(); emit('ledger', engine.ledger()) })
-  h('keys', () => Object.fromEntries(Object.entries(store.keys()).map(([k, v]) => [k, `${v.slice(0, 4)}…${v.slice(-4)}`])))
+  h('keys', () => Object.fromEntries(Object.entries(store.keys()).filter(([k]) => !k.startsWith('tool:')).map(([k, v]) => [k, v.length >= 20 ? `${v.slice(0, 4)}…${v.slice(-4)}` : '••••••••'])))
   h('keys:set', async (provider: string, key: string) => {
     store.setKey(provider, key.trim())
     return engine.refresh()
   })
   h('keys:secure', () => safeStorage.isEncryptionAvailable())
+  h('connector:test', (c: Connector, key: string) => testConnector(c, key ?? ''))
+  h('connector:installed', (bins: string[]) => installed(Array.isArray(bins) ? bins : []))
   h('packs', () => packs())
   h('packs:import', async () => {
     if (!win) return null
@@ -310,6 +314,7 @@ app.whenReady().then(async () => {
   wire()
   const icon = join(__dirname, '../build/icon-1024.png')
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
+  useConnectors(store.settings.connectors)
   createWindow()
   await engine.refresh()
   limits.start()

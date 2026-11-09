@@ -146,7 +146,14 @@ export class Browser {
 
   async open(url: string) {
     const wc = this.ensure().webContents
-    const target = /^[a-z][\w+.-]*:/i.test(url) ? url : /^localhost|^127\.|^\d+\.\d+\.\d+\.\d+/.test(url) ? `http://${url}` : /\s/.test(url) || !url.includes('.') ? `https://duckduckgo.com/?q=${encodeURIComponent(url)}` : `https://${url}`
+    const u = url.trim()
+    // localhost:3000 looks like a scheme to a naive test, so a host and port is checked first.
+    const target = /^(localhost|127\.\d+\.\d+\.\d+|\d+\.\d+\.\d+\.\d+)(:\d+)?(\/|$)/i.test(u) ? `http://${u}`
+      : /^https?:\/\//i.test(u) ? u
+      : /^[a-z][\w+.-]*:/i.test(u) && !/^[\w.-]+:\d+/.test(u) ? null
+      : /\s/.test(u) || !u.includes('.') ? `https://duckduckgo.com/?q=${encodeURIComponent(u)}` : `https://${u}`
+    // Only web pages: file:, javascript: and app schemes never load here.
+    if (!target) return wc.getURL()
     await wc.loadURL(target).catch(() => {})
     this.changed()
     return wc.getURL()

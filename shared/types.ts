@@ -182,6 +182,21 @@ export type Settings = {
   browser?: boolean
   remote?: { on: boolean; chat?: number; name?: string; access?: Access }
   planLimits?: boolean
+  connectors?: Connector[]
+}
+
+// Anything not built in: an API that speaks the OpenAI or Anthropic format, or a command-line
+// agent run with a prompt. Keys live in the keychain under `conn:<id>`, never in settings.
+export type Connector = {
+  id: string
+  name: string
+  kind: 'openai' | 'anthropic' | 'cli'
+  base?: string
+  model?: string
+  command?: string
+  args?: string
+  output?: 'text' | 'stream-json'
+  good?: string
 }
 
 export type FlowStep = { text: string; to?: string }

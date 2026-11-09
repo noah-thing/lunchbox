@@ -11,7 +11,7 @@ import type { Hands, Tool } from '../hands'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
 import { clearMemory, writeMemory } from './project'
-import { execute, type Ran } from '../shell'
+import { execute, kill, type Ran } from '../shell'
 import type { Snapshots } from '../snap'
 import type { Store } from '../store'
 import { prompt, protocol } from './context'
@@ -78,10 +78,13 @@ export class Engine {
   }
 
   // The next crewmate who can take the work, in crew order, preferring one with the same hands.
-  private fallback(meta: RoomMeta, from: string) {
+  // The next one in the crew who can take the work. When the whole crew is out, anyone else that
+  // is set up and ready takes it, so a wall never ends the task. The asker never answers itself.
+  private fallback(meta: RoomMeta, from: string, asker?: string) {
     const needTools = this.agent(from)?.tools
     const order = [...meta.crew.slice(meta.crew.indexOf(from) + 1), ...meta.crew.slice(0, Math.max(0, meta.crew.indexOf(from)))]
-    const ok = order.filter((id) => id !== from && !this.why(id))
+    const outside = this.agents.filter((a) => !meta.crew.includes(a.id) && a.ready).map((a) => a.id)
+    const ok = [...order, ...outside].filter((id) => id !== from && id !== asker && !this.why(id))
     return ok.find((id) => !needTools || this.agent(id)?.tools) ?? ok[0] ?? null
   }
 
@@ -277,6 +280,9 @@ export class Engine {
     for (const p of this.procs.get(room) ?? []) p.stop()
     this.procs.get(room)?.clear()
     const live = this.live(room)
+    // Commands too: a running one is killed and one waiting for approval is refused, so the
+    // room's queue never hangs on a question nobody will answer.
+    for (const r of live.runs) kill(r.id)
     for (const lt of live.turns) {
       this.flushed.add(lt.id)
       if (lt.text.trim()) this.add(room, { kind: 'say', who: lt.who, text: lt.text.trim(), acts: lt.acts, error: 'Stopped' })
@@ -316,7 +322,11 @@ export class Engine {
       return
     }
     const head = text.match(/^\s*((?:@[\w-]+[\s,]*)+)/)?.[1] ?? ''
-    const mentioned = meta.crew.filter((id) => new RegExp(`@${id}(?![\\w-])`, 'i').test(head))
+    // @ reaches any agent that is set up, by id or by name. One from outside the crew joins it.
+    const named = (a: AgentInfo) => [a.id, a.short.toLowerCase().replace(/[^a-z0-9]+/g, '-')]
+    const mentioned = this.agents.filter((a) => a.ready && named(a).some((h) => new RegExp(`@${h}(?![\\w-])`, 'i').test(head))).map((a) => a.id)
+    const joining = mentioned.filter((id) => !meta.crew.includes(id))
+    if (joining.length) this.setCrew(room, [...meta.crew, ...joining])
     const first = !this.store.events(room).some((e) => e.kind === 'you')
     const cat = classify(text)
     const lead = mentioned[0] ?? this.lead(meta, cat)
@@ -334,6 +344,11 @@ export class Engine {
         await Promise.all(crew.map((who) => this.turn(room, who, { kind: 'reply' }, access, { ...ctx, arena: id })))
       } else {
         await this.conversation(room, lead, { kind: 'reply' }, access, ctx)
+        // Everyone else named at the start answers in turn, each seeing what came before.
+        for (const who of mentioned.slice(1)) {
+          if ((this.gens.get(room) ?? 0) !== gen) break
+          await this.conversation(room, who, { kind: 'reply' }, access, ctx)
+        }
       }
       this.settle(room)
     })
@@ -399,7 +414,8 @@ export class Engine {
     const meta = this.store.room(room)
     if (!meta) return
     if (this.waiting(room)) this.hooks.notify(meta.name, 'Needs you', room)
-    else this.hooks.notify(meta.name, 'Done', room)
+    // A flow says once when it is finished, not after every step.
+    else if (!meta.flow) this.hooks.notify(meta.name, 'Done', room)
   }
 
   private async conversation(room: string, who: string, task: Task, access: Access, ctx: Ctx) {
@@ -549,6 +565,12 @@ export class Engine {
     }
     if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
 
+    // A reply that got partway before the limit is kept, and the limit still counts.
+    if (r.text && r.limit) {
+      this.store.spent[who] = { until: r.limit.until, reason: 'limit' }
+      this.store.saveState()
+      this.hooks.emit('ledger', this.ledger())
+    }
     if (!r.text && (r.limit || r.error)) {
       if (r.error) r.error = plain(r.error)
       if (r.limit) this.store.spent[who] = { until: r.limit.until, reason: r.error ?? 'limit' }
@@ -557,7 +579,7 @@ export class Engine {
       if (r.limit) this.hooks.emit('ledger', this.ledger())
       else this.refresh()
       // In side by side everyone is already answering, so a failed slot stays empty and says why.
-      const next = ctx.arena ? null : this.fallback(meta, who)
+      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' ? task.from : undefined)
       this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
       if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
       return null

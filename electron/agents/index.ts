@@ -2,9 +2,11 @@ import { createInterface } from 'node:readline'
 import { rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Access, AgentInfo, Act, Usage } from '../../shared/types'
+import { existsSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
+import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
 import { env, launch, stop, version, which } from '../system'
-import { claudeLike, codex, gemini, limitOf, reason, type Turn, type Update } from './parse'
+import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
 import { chat, listModels, PROVIDERS } from './http'
 import { localSetup } from '../local'
 
@@ -41,7 +43,7 @@ type Spec = {
   file?: string
   env?: Record<string, string>
   extra?: { path: string; text: string }[]
-  parser: { turn: Turn; line: (o: any) => Update | null }
+  parser: { turn: Turn; line: (o: any) => Update | null; raw?: (s: string) => Update | null }
 }
 
 type Def = Omit<AgentInfo, 'found' | 'ready' | 'version' | 'note' | 'models' | 'model'> & { spawn?: (i: Input, file: string) => Spec; key?: string; provider?: string }
@@ -99,8 +101,17 @@ export const CATALOG: Def[] = [
     good: 'Building, running and fixing tests', alphabet: '.-01',
     spawn: (i) => {
       const sandbox = { plan: ['-s', 'read-only'], ask: ['-s', 'read-only'], workspace: ['-s', 'workspace-write'], full: ['--dangerously-bypass-approvals-and-sandbox'] }[i.access]
-      const common = ['--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...codexHands(i), ...(i.model ? ['-m', i.model] : [])]
-      return { args: i.session ? ['exec', 'resume', ...common, i.session, '-'] : ['exec', ...common, '-'], stdin: prompt(i), parser: codex() }
+      const tail = [...codexHands(i), ...(i.model ? ['-m', i.model] : [])]
+      // `exec resume` takes neither -C nor -s: the folder comes from the working directory and the
+      // sandbox from config, or every resumed turn fails and silently starts a new session.
+      const resumeSandbox = i.access === 'full' ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-c', `sandbox_mode="${i.access === 'workspace' ? 'workspace-write' : 'read-only'}"`]
+      return {
+        args: i.session
+          ? ['exec', 'resume', '--json', '--skip-git-repo-check', ...resumeSandbox, ...tail, i.session, '-']
+          : ['exec', '--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...tail, '-'],
+        stdin: prompt(i),
+        parser: codex(),
+      }
     },
   },
   {
@@ -141,16 +152,59 @@ export const CATALOG: Def[] = [
   { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: false, mark: 'openrouter', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
 ]
 
-export const def = (id: string) => CATALOG.find((d) => d.id === id)
+// Connectors the person added, rebuilt whenever settings change.
+let custom: Def[] = []
+
+// A command line split like a shell would, keeping quoted parts together.
+export function words(s: string) {
+  const out: string[] = []
+  for (const m of s.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g)) out.push(m[1] !== undefined ? m[1].replace(/\\(.)/g, '$1') : (m[2] ?? m[3]))
+  return out
+}
+
+function fromConnector(c: Connector): Def {
+  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: c.kind === 'cli', mark: c.id, good: c.good || 'Added by you', alphabet: '.:+*#' }
+  if (c.kind !== 'cli') {
+    PROVIDERS[`conn:${c.id}`] = { base: (c.base ?? '').replace(/\/+$/, ''), style: c.kind, prefer: c.model ? new RegExp(`^${c.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) : /./ }
+    return { ...base, via: 'api', key: `conn:${c.id}`, provider: `conn:${c.id}` }
+  }
+  const [bin = '', ...fixed] = words(c.command ?? '')
+  return {
+    ...base, via: 'cli', bin,
+    // {prompt} is the whole request, {file} a temporary file holding it, {model} and {cwd} as named.
+    // Without {prompt} or {file} the request goes to the agent on standard input.
+    spawn: (i, file) => {
+      const text = prompt(i)
+      const template = [...fixed, ...words(c.args ?? '')]
+      const inline = template.some((a) => a.includes('{prompt}') || a.includes('{file}'))
+      const args = template.map((a) => a.replaceAll('{prompt}', text).replaceAll('{file}', file).replaceAll('{model}', i.model ?? c.model ?? '').replaceAll('{cwd}', i.cwd)).filter((a) => a !== '')
+      return { args, stdin: inline ? '' : text, file: template.some((a) => a.includes('{file}')) ? text : undefined, parser: c.output === 'stream-json' ? claudeLike() : textOut() }
+    },
+  }
+}
+
+export function useConnectors(list: Connector[] = []) {
+  for (const k of Object.keys(PROVIDERS)) if (k.startsWith('conn:')) delete PROVIDERS[k]
+  custom = list.filter((c) => c.id && c.name).map(fromConnector)
+}
+
+const all = () => [...CATALOG, ...custom]
+
+export const def = (id: string) => all().find((d) => d.id === id)
+
+async function locate(bin: string) {
+  if (isAbsolute(bin)) return existsSync(bin) ? bin : ''
+  return /^[\w.@+-]+$/.test(bin) ? which(bin) : ''
+}
 
 const paths = new Map<string, string>()
 
 export async function detect(keys: Record<string, string>, models: Record<string, string>, health: Record<string, string>): Promise<AgentInfo[]> {
   return Promise.all(
-    CATALOG.map(async (d): Promise<AgentInfo> => {
+    all().map(async (d): Promise<AgentInfo> => {
       const base = { ...d, spawn: undefined, key: undefined, model: models[d.id], note: health[d.id] }
       if (d.via === 'cli') {
-        const path = await which(d.bin!)
+        const path = await locate(d.bin!)
         if (path) paths.set(d.id, path)
         return { ...base, found: !!path, ready: !!path, version: path ? await version(path) : undefined }
       }
@@ -160,8 +214,10 @@ export async function detect(keys: Record<string, string>, models: Record<string
         setup.running = !!list
         return { ...base, found: setup.installed || !!list, ready: chatty.length > 0, models: chatty, model: models[d.id] || chatty[0], setup }
       }
+      // A connector may point at a server that needs no key, such as vLLM on this computer.
       const key = keys[d.key!]
-      return { ...base, found: !!key, ready: !!key }
+      const mine = d.key!.startsWith('conn:')
+      return { ...base, found: mine || !!key, ready: mine || !!key }
     }),
   )
 }
@@ -192,9 +248,9 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
   let stopped = false
   const done = (async (): Promise<Result> => {
     const t0 = Date.now()
-    const path = paths.get(id) || (await which(d.bin!))
+    const path = paths.get(id) || (await locate(d.bin!))
     if (!path) return failed(`${d.name} is not installed on this computer`)
-    const file = join(tmpdir(), `lunchbox-${process.pid}-${t0}.txt`)
+    const file = join(tmpdir(), `lunchbox-${process.pid}-${t0}-${Math.random().toString(36).slice(2, 8)}.txt`)
     const spec = d.spawn!(input, file)
     if (spec.file) writeFileSync(file, spec.file)
     for (const x of spec.extra ?? []) writeFileSync(x.path, x.text, { mode: 0o600 })
@@ -205,6 +261,11 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     child.stdin?.end(spec.stdin ?? '')
     const lines = createInterface({ input: child.stdout! })
     lines.on('line', (raw) => {
+      if (spec.parser.raw) {
+        const u = spec.parser.raw(raw)
+        if (u) onUpdate(u)
+        return
+      }
       if (!raw.startsWith('{')) return
       try {
         const u = spec.parser.line(JSON.parse(raw))
@@ -234,3 +295,33 @@ function failed(error: string): Result {
 }
 
 export { PROVIDERS }
+
+// Checks a connector before it is saved: the command is on this computer, or the API answers
+// with its list of models.
+export async function testConnector(c: Connector, key: string): Promise<{ ok: boolean; note: string; models?: string[] }> {
+  if (c.kind === 'cli') {
+    const [bin] = words(c.command ?? '')
+    const path = bin ? await locate(bin) : ''
+    if (!path) return { ok: false, note: `${bin || 'The command'} was not found on this computer` }
+    const v = await version(path).catch(() => '')
+    return { ok: true, note: `Found at ${path}${v ? `, version ${v}` : ''}` }
+  }
+  if (!/^https?:\/\//.test(c.base ?? '')) return { ok: false, note: 'The address should start with https:// or http://' }
+  const id = `test:${Date.now()}`
+  PROVIDERS[id] = { base: c.base!.replace(/\/+$/, ''), style: c.kind, prefer: /./ }
+  try {
+    const models = await listModels(id, key)
+    return { ok: true, note: models.length ? `Connected, ${models.length} model${models.length > 1 ? 's' : ''}` : 'Connected', models }
+  } catch (e) {
+    return { ok: false, note: (e as Error).message || 'No answer from that address' }
+  } finally {
+    delete PROVIDERS[id]
+  }
+}
+
+// Which of these commands are installed, for offering the ones already on this computer.
+export async function installed(bins: string[]) {
+  const out: Record<string, boolean> = {}
+  await Promise.all(bins.slice(0, 20).map(async (b) => { out[b] = !!(await locate(b)) }))
+  return out
+}

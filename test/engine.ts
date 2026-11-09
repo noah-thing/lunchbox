@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, readFileSync, symlinkSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -157,7 +157,8 @@ test('room: checkpoints, rewind and project memory', { skip: process.platform ==
   assert.deepEqual(engine.setProject(room.id, true), ['AGENTS.md'])
   assert.match(read(join(work, 'AGENTS.md'), 'utf8'), /Make the heading say hello/)
   engine.setProject(room.id, false)
-  assert.equal(read(join(work, 'AGENTS.md'), 'utf8'), '')
+  // A file that only held the room's memory is removed along with it.
+  assert.equal(existsSync(join(work, 'AGENTS.md')), false)
   store.flush()
 })
 

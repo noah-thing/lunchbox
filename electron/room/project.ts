@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Block, RoomMeta } from '../../shared/types'
 
@@ -67,6 +67,8 @@ export function clearMemory(workspace: string) {
     if (!existsSync(file)) continue
     const before = readFileSync(file, 'utf8')
     const after = strip(before)
-    if (after !== before) writeFileSync(file, after)
+    // A file that held nothing but the room's memory goes away with it.
+    if (!after.trim()) rmSync(file, { force: true })
+    else if (after !== before) writeFileSync(file, after)
   }
 }

@@ -125,6 +125,11 @@ export class Flows {
         const text = (step.to && f.crew.includes(step.to) ? `@${step.to} ` : '') + fill(step.text, vars)
         await this.engine.send(meta.id, text, f.access, { from: 'flow' })
         await this.engine.idle(meta.id)
+        const said = this.store.events(meta.id).findLast((e) => e.kind === 'say')
+        // Stopping the room stops the flow; the next step would only start the work again.
+        if (said?.kind === 'say' && said.error === 'Stopped') break
+        // {{last}} in a later step is what the step before it answered.
+        if (said?.kind === 'say' && said.text) vars.last = said.text.slice(0, 3000)
       }
       const events = this.store.events(meta.id)
       const last = events.findLast((e) => e.kind === 'say')

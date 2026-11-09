@@ -115,7 +115,7 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: 'site-qa', group: 'code', name: 'Website QA', line: 'Clicks through the site and reports what broke',
-    every: 'day', at: '06:30', crew: ['claude'], pack: 'qa',
+    every: 'day', at: '06:30', crew: ['claude'], pack: 'software',
     steps: [{ text: 'Open the site this folder builds in the Lunchbox browser. Visit every page linked from the home page on desktop and phone sizes. Report console errors, broken links, layout breaks and slow pages, with screenshots.' }],
   },
 

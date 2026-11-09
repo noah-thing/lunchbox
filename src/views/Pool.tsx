@@ -1,6 +1,6 @@
-import { useMemo, type CSSProperties } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { CATEGORIES, rating } from '../../shared/route'
-import type { AgentInfo, PlanWindow, Usage } from '../../shared/types'
+import type { AgentInfo, PlanLimits, PlanWindow, Usage } from '../../shared/types'
 import { Mark, Meter } from '../ui/bits'
 import { IconShare } from '../ui/icons'
 import { clock, desk, money, now, reason, reload, tokens, unavailable, useApp } from '../lib/desk'
@@ -17,7 +17,9 @@ export function Pool({ go, say }: { go: (v: View) => void; say: (t: string) => v
   const today = sum(ledger?.today)
   const week = sum(ledger?.week)
   const cacheShare = week.input + week.cached > 0 ? week.cached / (week.input + week.cached) : 0
-  const ready = present.filter((a) => !unavailable(a)).length
+  const limits = useApp((s) => s.limits)
+  const [open, setOpen] = useState(false)
+  const pool = weeklyPool(present, limits, settings.budgets)
   const route = settings.route ?? 'best'
 
   return (
@@ -32,8 +34,9 @@ export function Pool({ go, say }: { go: (v: View) => void; say: (t: string) => v
           <Stat label="Today" value={money(today.cost)} line={`${tokens(today.input + today.output)} tokens`} />
           <Stat label="Last 7 days" value={money(week.cost)} line={`${tokens(week.input + week.output)} tokens`} />
           <Stat label="Served from cache" value={`${Math.round(cacheShare * 100)}%`} line={`${tokens(week.cached)} tokens not paid twice`} open={() => go({ name: 'savings' })} />
-          <Stat label="Ready now" value={`${ready}/${present.length}`} line={ready === present.length ? 'Everyone can take work' : 'Some are resting'} />
+          <Stat label="Your weekly pool" value={pool.total ? `${tokens(pool.total)} tokens` : 'Not sized yet'} line={pool.total ? `${tokens(pool.left)} left this week` : 'Grows as your plans are used'} open={() => setOpen(!open)} hint={open ? 'Hide what makes up your pool' : 'See what makes up your pool'} on={open} />
         </div>
+        {open && <PoolBreakdown rows={pool.rows} />}
 
         <section className="group rise" style={{ '--i': 2 } as CSSProperties}>
           <h2>Two weeks<span className="quiet">cost per day</span></h2>
@@ -67,9 +70,52 @@ export function Pool({ go, say }: { go: (v: View) => void; say: (t: string) => v
   )
 }
 
-function Stat({ label, value, line, open }: { label: string; value: string; line: string; open?: () => void }) {
+function Stat({ label, value, line, open, hint = 'Open Savings', on = false }: { label: string; value: string; line: string; open?: () => void; hint?: string; on?: boolean }) {
   const body = <><small>{label}</small><b>{value}</b><span>{line}</span></>
-  return open ? <button className="stat link" onClick={open} title="Open Savings">{body}</button> : <div className="stat">{body}</div>
+  return open ? <button className={`stat link${on ? ' on' : ''}`} onClick={open} title={hint} aria-expanded={on}>{body}</button> : <div className="stat">{body}</div>
+}
+
+type PoolRow = { a: AgentInfo; size: string; left?: string; note: string }
+
+// Everything you can spend in a week, added up across plans. Token windows are summed; Gemini
+// counts requests and API keys are pay as you go, so they are listed beside the total, not in it.
+function weeklyPool(present: AgentInfo[], limits: Record<string, PlanLimits | undefined>, budgets: Record<string, number>) {
+  let total = 0
+  let left = 0
+  const rows: PoolRow[] = present.map((a) => {
+    const windows = limits[a.id]?.windows ?? []
+    const week = windows.find((w) => /week/i.test(w.label))
+    const day = windows.find((w) => /day/i.test(w.label))
+    if (a.via === 'local') return { a, size: 'Unlimited', note: 'Runs on this computer, free' }
+    if (a.via !== 'cli') return { a, size: 'Pay as you go', note: budgets[a.id] ? `Capped at ${money(budgets[a.id])} a day` : 'No daily cap set' }
+    if (week?.total && week.unit !== 'requests') {
+      total += week.total
+      left += week.total * Math.max(0, 1 - week.used)
+      return { a, size: `${tokens(week.total)} tokens`, left: `${tokens(week.total * Math.max(0, 1 - week.used))} left`, note: week.resets ? `Resets ${when(week.resets)}` : 'Weekly window' }
+    }
+    if (day?.total && day.unit === 'requests') {
+      return { a, size: `${Math.round(day.total * 7).toLocaleString()} requests`, left: `${Math.round(day.total * Math.max(0, 1 - day.used)).toLocaleString()} left today`, note: `${Math.round(day.total).toLocaleString()} a day, counted in requests` }
+    }
+    if (week) return { a, size: 'Sized after its first turn', note: 'The provider shares a percentage, the size comes from use' }
+    return { a, size: 'No published limit', note: 'This tool does not report a plan limit' }
+  })
+  return { total, left, rows }
+}
+
+function PoolBreakdown({ rows }: { rows: PoolRow[] }) {
+  return (
+    <div className="poolrows rise">
+      {rows.map(({ a, size, left, note }) => (
+        <div key={a.id} className="poolrow">
+          <Mark seed={a.mark} size={16} />
+          <b>{a.name}</b>
+          <span className="psize">{size}</span>
+          <span className="pleft">{left ?? ''}</span>
+          <span className="pnote">{note}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 // Each day is a column of cells; a lit cell is a share of the busiest day.
