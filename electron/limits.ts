@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PlanLimits, PlanWindow, Usage } from '../shared/types'
 import type { Store } from './store'
-import { env, which } from './system'
+import { env, launch, which } from './system'
 import { snapshots, tallied, update, used as usedSince, type Tally } from './tally'
 
 // Plan limits as each provider reports them for the login its CLI already has: how much of the
@@ -144,7 +144,13 @@ async function grok(): Promise<PlanLimits> {
   if (!auth?.key) return { agent: 'grok', windows: [], at: Date.now(), error: 'Not signed in to Grok' }
   if (!auth.expires_at || Date.parse(auth.expires_at) < Date.now() + 60e3) {
     const bin = await which('grok')
-    if (bin) await new Promise((ok) => execFile(bin, ['models'], { timeout: 20000, env: { ...process.env, ...envCache } }, () => ok(null)))
+    // launch, not execFile: on Windows an npm installed CLI is a .cmd that only cmd.exe can start.
+    if (bin) await new Promise((ok) => {
+      const child = launch(bin, ['models'], { env: { ...process.env, ...envCache }, stdio: 'ignore' })
+      const timer = setTimeout(() => { child.kill(); ok(null) }, 20000)
+      child.on('exit', () => { clearTimeout(timer); ok(null) })
+      child.on('error', () => { clearTimeout(timer); ok(null) })
+    })
     auth = entry()
   }
   try {

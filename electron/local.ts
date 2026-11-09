@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import type { LocalSetup, Pull } from '../shared/types'
-import { env, isWin, which } from './system'
+import { env, isWin, launch, which } from './system'
 import { PROVIDERS } from './agents/http'
 
 const DOWNLOAD: Record<string, string> = {
@@ -59,7 +59,7 @@ export async function start(id: string): Promise<{ ok: boolean; error?: string }
   const detached = { detached: true, stdio: 'ignore' as const, env: await env(), windowsHide: true }
   if (id === 'lmstudio') {
     const lms = (await which('lms')) || join(homedir(), '.lmstudio', 'bin', isWin ? 'lms.exe' : 'lms')
-    if (existsSync(lms)) spawn(lms, ['server', 'start'], detached).unref()
+    if (existsSync(lms)) launch(lms, ['server', 'start'], detached).unref()
     else if (app) open(app)
     else return { ok: false, error: 'LM Studio is not installed' }
     return (await up(id, 20000)) ? { ok: true } : { ok: false, error: 'LM Studio opened, but its server is off. Turn it on under Developer, or run: lms server start' }
@@ -69,7 +69,7 @@ export async function start(id: string): Promise<{ ok: boolean; error?: string }
     else {
       const bin = await which('ollama')
       if (!bin) return { ok: false, error: 'Ollama is not installed' }
-      spawn(bin, ['serve'], detached).unref()
+      launch(bin, ['serve'], detached).unref()
     }
     return (await up(id, 15000)) ? { ok: true } : { ok: false, error: 'Ollama did not start. Try opening it yourself once.' }
   }
