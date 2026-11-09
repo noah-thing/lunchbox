@@ -19,7 +19,7 @@ A pack is a small JSON file:
 | --- | --- |
 | `id` | Unique, lowercase |
 | `name`, `line` | How the pack shows up in the app |
-| `brief` | Sent to every agent in a room that uses the pack |
+| `brief` | Added to the instructions of each agent in a room that uses the pack |
 | `ideas` | Starting points shown on the home screen |
 | `checks` | Commands you can run from `/`; a passing check also counts as proof |
 
