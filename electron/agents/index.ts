@@ -218,7 +218,8 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     if (spec.file) rmSync(file, { force: true })
     for (const x of spec.extra ?? []) rmSync(x.path, { force: true })
     const turn = spec.parser.turn
-    const text = (turn.final || turn.text).trim()
+    // The CLI's final answer is only its last message. When the turn wrote before that too, keep it all.
+    const text = (turn.final && turn.text.trim().endsWith(turn.final.trim()) ? turn.text : turn.final || turn.text).trim()
     let error = turn.error
     if (stopped) error = 'Stopped'
     else if (code !== 0 && !error && !text) error = reason(stderr) || `${d.name} exited with code ${code}`

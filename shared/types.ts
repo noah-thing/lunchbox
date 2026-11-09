@@ -103,6 +103,12 @@ export type LiveTurn = {
   text: string
   acts: Act[]
   started: number
+  // What the agent is doing this moment, such as a command it is running.
+  now?: string
+  // Set when the turn is drawing an image for a crewmate; label is the image's description.
+  image?: boolean
+  label?: string
+  size?: string
 }
 
 export type LiveRun = {

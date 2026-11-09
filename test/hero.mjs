@@ -20,7 +20,7 @@ for (const name of ['claude', 'codex', 'grok']) symlinkSync(root + 'test/fake-ag
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${mkdtempSync(join(tmpdir(), 'lunchbox-hero-'))}`], cwd: root,
-  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '25', FAKE_SCRIPT: 'showcase', SHOWCASE_HOLD: '25000' },
+  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '25', FAKE_SCRIPT: 'showcase', SHOWCASE_HOLD: '25000', SHOWCASE_PACE: process.env.HERO_AT ? 'real' : '' },
   timeout: 30000,
 })
 try {
@@ -36,6 +36,20 @@ try {
   await page.keyboard.type('Our hackathon Build Night is in three weeks. Find out what people on X want from hackathons, write the announcement, design the banner and put up the event page.')
   await page.keyboard.press('Enter')
   await page.waitForSelector('.room')
+  // HERO_AT stops at one live moment and saves a still of it, for checking those states by eye.
+  const AT = { search: '.xsearch.live', sources: '.xsearch.done', developing: '.developing', testing: '.workline code' }[process.env.HERO_AT ?? '']
+  if (AT) {
+    await page.waitForSelector(AT, { timeout: 60000 })
+    await page.waitForTimeout(1400)
+    await page.evaluate(() => { const t = document.querySelector('.transcript'); if (t) t.scrollTop = t.scrollHeight })
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: root + `test/shots/at-${process.env.HERO_AT}.png` })
+    await app.close()
+    // A stand-in agent can still be finishing a write; let it, then clear the folder.
+    await new Promise((r) => setTimeout(r, 6000))
+    rmSync(work, { recursive: true, force: true })
+    process.exit(0)
+  }
   // Mid-flight: Grok has answered, Codex's header is in the room, and Codex is running the tests.
   await page.waitForFunction(() => !!document.querySelector('.room img') && document.body.innerText.includes('npm test'), null, { timeout: 60000 })
     .catch(async (e) => { await page.screenshot({ path: out + 'failed.png' }); throw e })

@@ -5,10 +5,12 @@ import { dirname, join } from 'node:path'
 // Claude leads, Grok searches X, Codex draws the banner through the room's image tool, then
 // builds the event page and proves it with a passing test run.
 
-const ASK_GROK = `On it. Grok first, so the announcement answers what people actually want.
+const ASK_GROK = `On it. Grok checks X for what people want from a hackathon, I write the announcement on that, and Codex designs the banner and builds the event page.
 @grok: what do developers on X say makes a hackathon worth going to?`
 
 const GROK = `Three things come up most: one night instead of a weekend (338 posts), real prizes over swag (271), and teams formed before the night (164).`
+
+const BRIEF = `Grok found three clear wants: one night, real prizes, teams set in advance. The announcement leads with all three. Codex, the banner first.`
 
 const POST = `Banner is in. The announcement, built on what Grok found:
 
@@ -16,12 +18,11 @@ const POST = `Banner is in. The announcement, built on what Grok found:
 
 @codex: build events/build-night.html with the banner and the announcement, then run the tests.`
 
-const DONE = `Ready to announce.
+const DONE = `Build Night is ready to announce. The event page is up at events/build-night.html with the banner and the announcement, and its tests pass. Post the announcement above when you're ready.
 - [x] What people want, from X
 - [x] Announcement
 - [x] Banner
-- [x] Event page
-The tests pass.`
+- [x] Event page`
 
 const BANNER = {
   prompt: 'Build Night banner: chrome BUILD N1GHT on black, glossy pixel objects',
@@ -32,8 +33,24 @@ const BANNER = {
 const usage = (text) => ({ input_tokens: 6, output_tokens: Math.round(text.length / 4), cache_read_input_tokens: 14200, cache_creation_input_tokens: 900 })
 const IMAGE = new URL('./fixtures/showcase-banner.png', import.meta.url).pathname
 
+// SHOWCASE_PACE=real gives the recording human timing: a pause to think before writing, text
+// that streams in uneven chunks at reading speed, and searches, images and tests that take as
+// long as they would. Without it the script runs at test speed.
+const real = process.env.SHOWCASE_PACE === 'real'
+
 export async function showcase(name, input, args, say, sleep, pause) {
   const asked = input.includes('asks you:')
+  const wait = (ms, fast) => sleep(real ? ms : fast)
+  const stream = (text) => {
+    say({ type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } })
+    const words = text.split(/(?<= )/)
+    for (let i = 0; i < words.length;) {
+      const n = real ? 1 + Math.floor(Math.random() * 3) : 1
+      say({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: words.slice(i, i + n).join('') } } })
+      i += n
+      if (real) sleep(40 + Math.floor(Math.random() * 90))
+    }
+  }
 
   if (name === 'codex') {
     const cwd = args[args.indexOf('-C') + 1] || process.cwd()
@@ -41,13 +58,13 @@ export async function showcase(name, input, args, say, sleep, pause) {
     const image = input.match(/save it as (\S+?\.png)/)
     if (image) {
       say({ type: 'item.started', item: { type: 'command_execution', command: `image_gen ${BANNER.file}` } })
-      sleep(pause * 30)
+      wait(5200, pause * 30)
       mkdirSync(dirname(image[1]), { recursive: true })
       copyFileSync(IMAGE, image[1])
       say({ type: 'item.completed', item: { type: 'agent_message', text: image[1] } })
     } else {
       say({ type: 'item.started', item: { type: 'command_execution', command: 'ls events' } })
-      sleep(pause * 6)
+      wait(1600, pause * 6)
       mkdirSync(join(cwd, 'events'), { recursive: true })
       writeFileSync(join(cwd, 'events/build-night.html'), '<img src="build-night.png" alt="Build Night">\n<h1>Build Night</h1>\n<p>One night. Real prizes. Stockholm, 29 November.</p>\n')
       say({ type: 'item.completed', item: { type: 'file_change', changes: [{ path: 'events/build-night.html', kind: 'add' }] } })
@@ -64,10 +81,17 @@ export async function showcase(name, input, args, say, sleep, pause) {
   const session = `${name}-showcase`
   say({ type: 'system', subtype: 'init', session_id: session, model: 'claude-sonnet-5-5' })
   let reply
+  let lead = ''
   if (name === 'grok' && asked) {
     say({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x1', name: 'run_terminal_command', input: { command: 'x-search "hackathon" --since 30d --top' } }] } })
-    sleep(pause * 10)
-    say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x1', content: '773 posts', is_error: false }] } })
+    wait(3400, pause * 10)
+    say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x1', is_error: false, content: [
+      '773 posts',
+      "@mira.codes · One night beats a whole weekend. I can't give up two days anymore. · 2.4k",
+      "@jonasbuilds · Real prizes or I'm not coming. Stickers don't pay rent. · 1.9k",
+      "@tobi_ships · The best ones I've been to had teams set a week before. · 1.6k",
+      "@devnoor · Ship one thing in one night, demo it, go home. That's the format. · 1.2k",
+    ].join('\n') }] } })
     reply = GROK
   } else if (input.includes('crewmates answered above') && input.includes('events/build-night.html is up')) {
     reply = DONE
@@ -75,6 +99,11 @@ export async function showcase(name, input, args, say, sleep, pause) {
     // The banner comes from the room's image tool, which hands the drawing to Codex.
     const url = args.includes('--mcp-config') ? JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers.lunchbox.url : null
     if (url) {
+      wait(1400 + Math.floor(Math.random() * 500), 0)
+      stream(BRIEF)
+      say({ type: 'assistant', message: { content: [{ type: 'text', text: BRIEF }] } })
+      lead = BRIEF
+      wait(500, 0)
       let id = 0
       const rpc = async (method, params) => (await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) })).json()
       await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name, version: '1' } })
@@ -86,9 +115,9 @@ export async function showcase(name, input, args, say, sleep, pause) {
   } else {
     reply = ASK_GROK
   }
-  sleep(pause * 4)
-  for (const word of reply.split(/(?<= )/)) say({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: word } } })
+  wait(lead ? 900 : 1500 + Math.floor(Math.random() * 700), pause * 4)
+  stream(reply)
   say({ type: 'assistant', message: { content: [{ type: 'text', text: reply }] } })
-  const u = usage(reply)
+  const u = usage(lead + reply)
   say({ type: 'result', subtype: 'success', is_error: false, result: reply, session_id: session, total_cost_usd: 0.012, usage: u, modelUsage: { 'claude-sonnet-5-5': { inputTokens: 6, outputTokens: u.output_tokens, cacheReadInputTokens: 14200, cacheCreationInputTokens: 900 } } })
 }

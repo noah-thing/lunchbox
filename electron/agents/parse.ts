@@ -84,6 +84,11 @@ export function claudeLike() {
         return null
       case 'stream_event': {
         const d = o.event?.delta
+        // A turn that writes, uses a tool, then writes again: keep the parts as paragraphs.
+        if (o.event?.type === 'content_block_start' && o.event.content_block?.type === 'text' && turn.text.trim() && !turn.text.endsWith('\n\n')) {
+          turn.text += '\n\n'
+          return { delta: '\n\n' }
+        }
         if (o.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
           streamed = true
           turn.text += d.text
@@ -149,7 +154,7 @@ export function codex() {
         turn.session = o.thread_id
         return null
       case 'item.started':
-        if (o.item?.type === 'command_execution') return { working: unwrap(o.item.command) }
+        if (o.item?.type === 'command_execution') return { working: `$ ${unwrap(o.item.command)}` }
         return null
       case 'item.completed': {
         const it = o.item ?? {}

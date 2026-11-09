@@ -2,6 +2,8 @@
 const P = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.25, 'aria-hidden': true } as const
 
 export const IconPlus = () => <svg {...P}><path d="M8 3v10M3 8h10" /></svg>
+export const IconX = () => <svg {...P} strokeWidth={1.4}><path d="M3.5 3h3l6 10h-3z" /><path d="M12.5 3 8.6 7.4M3.5 13l3.9-4.4" /></svg>
+export const IconGlobe = () => <svg {...P}><circle cx="8" cy="8" r="5.5" /><path d="M2.5 8h11M8 2.5c1.6 1.6 2.4 3.4 2.4 5.5S9.6 11.9 8 13.5M8 2.5C6.4 4.1 5.6 5.9 5.6 8s.8 3.9 2.4 5.5" /></svg>
 export const IconSearch = () => <svg {...P}><circle cx="7" cy="7" r="4.25" /><path d="M10.2 10.2 13 13" /></svg>
 export const IconFolderPlus = () => <svg {...P}><path d="M2.5 4.5h4l1.2 1.3h5.8v6.7h-11z" /><path d="M8 7.6v3.2M6.4 9.2h3.2" /></svg>
 export const IconFolder = () => <svg {...P}><path d="M2.5 4.5h4l1.2 1.3h5.8v6.7h-11z" /></svg>

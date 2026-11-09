@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { sentence } from '../../shared/steps'
 import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
 import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage } from '../../shared/types'
@@ -27,7 +28,7 @@ type Hooks = {
 
 type Task =
   | { kind: 'reply' }
-  | { kind: 'answer'; from: string; ask: string; via?: 'tool'; quiet?: boolean }
+  | { kind: 'answer'; from: string; ask: string; via?: 'tool'; quiet?: boolean; label?: string; size?: string }
   | { kind: 'continue' }
   | { kind: 'retry'; tools: string[] }
 
@@ -441,9 +442,9 @@ export class Engine {
     }
   }
 
-  private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>, quiet = false) {
+  private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>, quiet = false, label?: string, size?: string) {
     if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
-    const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool', quiet }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
+    const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool', quiet, label, size }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
     if (!r?.text) throw new Error(`${this.name(to)} could not answer right now.`)
     return r.text
   }
@@ -466,7 +467,7 @@ export class Engine {
     } else {
       const ask = `Generate this image with your image tool and save it as ${path}${size ? ` at ${size}` : ''}. Reply with the path only.\n\nImage: ${prompt}`
       // Quiet: the image itself is what the room shows, not the instruction that produced it.
-      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }, true).catch((e: Error) => e.message)
+      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }, true, prompt, size).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
     this.add(room, { kind: 'image', by, for: from, prompt, path, usage })
@@ -498,7 +499,7 @@ export class Engine {
     })
 
     const live = this.live(room)
-    const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now() }
+    const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now(), image: task.kind === 'answer' && task.quiet ? true : undefined, label: task.kind === 'answer' ? task.label : undefined, size: task.kind === 'answer' ? task.size : undefined }
     live.turns.push(lt)
     live.active = who
     live.doing = task.kind === 'answer' ? `${me.short} is answering ${this.name(task.from)}` : task.kind === 'continue' ? `${me.short} is reading the answers` : `${me.short} is working`
@@ -515,8 +516,8 @@ export class Engine {
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
-      if (u.acts) lt.acts.push(...u.acts)
-      if (u.working) live.doing = `${me.short}: ${u.working.slice(0, 90)}`
+      if (u.acts) { lt.acts.push(...u.acts); lt.now = undefined; live.doing = `${me.short} is thinking` }
+      if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
       this.changed(room)
     })
     const procs = this.procs.get(room) ?? new Set()

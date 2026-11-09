@@ -174,10 +174,18 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .handhead .name{color:var(--ink)}
 .handhead code{margin-left:4px;padding:0 6px;border-radius:4px;background:var(--hover);color:var(--faint);line-height:18px}
 .exchange{position:relative;display:flex;flex-direction:column;gap:6px;padding-left:14px;border-left:1px solid var(--line2)}
-.hands.live .exchange::before{content:"";position:absolute;left:-2px;top:0;width:3px;height:14px;border-radius:2px;background:var(--ink);animation:travel 900ms var(--move) both}
-@keyframes travel{from{transform:translateY(0);opacity:1}to{transform:translateY(calc(100% + 40px));opacity:0}}
-.exchange .asked{font-size:12.5px;color:var(--faint);line-height:1.5}
-.exchange .asked::before{content:"asked  ";font:11px var(--mono);white-space:pre}
+/* A handoff arriving: the header first, then the thread draws down, then the ask and the work.
+   While the crewmate works, light runs down the thread, the same light as the search card. */
+.ev.settled{animation:none}
+.hands.live{animation:land 320ms var(--out) both}
+.hands.live .exchange{animation:handrule 520ms 90ms cubic-bezier(.65,0,.35,1) both}
+@keyframes handrule{from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0 0 0 0)}}
+.hands.live .exchange>*{animation:land 420ms var(--out) both;animation-delay:200ms}
+.hands.live .exchange>*+*{animation-delay:320ms}
+.hands.live .exchange::before{content:"";position:absolute;left:-1px;top:0;width:1px;height:56px;background:linear-gradient(transparent,var(--ink),transparent);opacity:.8;animation:handlight 1.8s 600ms cubic-bezier(.45,0,.55,1) infinite both}
+@keyframes handlight{from{transform:translateY(-56px);opacity:0}15%{opacity:.8}85%{opacity:.8}to{transform:translateY(var(--h,240px));opacity:0}}
+.hands.live .exchange{overflow:visible}
+.exchange .asked{font-size:13px;color:var(--dim);line-height:1.5}
 .exchange .got{font-size:13.5px;line-height:1.55}
 .handhead .tag{margin-left:4px;line-height:20px}
 .picture{display:flex;flex-direction:column;gap:8px;margin-top:4px;max-width:440px}
@@ -451,15 +459,17 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .rich li.todo{display:flex;align-items:flex-start;gap:10px}
 .rich ul>li.todo{margin-left:-16px}
 .rich li.todo::before{display:none}
-.rich li.todo>i{flex:none;width:12px;height:12px;margin-top:5px;border-radius:3px;box-shadow:inset 0 0 0 1px var(--line2)}
+.rich li.todo>i{position:relative;flex:none;width:14px;height:14px;margin-top:4px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2)}
 .rich li.todo.done>i{background:var(--ink);box-shadow:none}
-.rich li.todo.done>span{color:var(--faint);text-decoration:line-through;text-decoration-color:var(--line2)}
+.rich li.todo.done>i::after{content:"";position:absolute;left:4.5px;top:2px;width:3.5px;height:7px;border:solid var(--ground);border-width:0 1.6px 1.6px 0;transform:rotate(42deg)}
+.rich li.todo.done>span{color:var(--dim)}
 .rich code{font:12.5px var(--mono);padding:1px 5px;border-radius:4px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
 .rich a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px;transition:text-decoration-color 140ms var(--out)}
 .rich a:hover{text-decoration-color:var(--ink)}
 .codeblock{position:relative;padding:12px 14px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:12px/1.6 var(--mono);color:var(--dim);overflow-x:auto;white-space:pre}
 .codeblock[data-lang]::after{content:attr(data-lang);position:absolute;top:8px;right:10px;font-size:10px;color:var(--faint)}
-.caret{display:inline-block;width:7px;height:1.05em;margin-left:2px;vertical-align:-.15em;background:var(--ink);animation:caret 1s steps(1) infinite}
+.caret{display:inline-block;width:2px;height:1.1em;margin-left:3px;border-radius:1px;vertical-align:-.18em;background:var(--ink);animation:caretsoft 1.1s ease-in-out infinite}
+@keyframes caretsoft{0%,100%{opacity:.9}50%{opacity:.15}}
 
 .busyline{display:flex;align-items:center;gap:12px;height:22px;font-size:12.5px}
 .busyline .strip{color:var(--faint);font-size:11px}
@@ -623,3 +633,51 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .newmeta{position:relative;z-index:3}
 .foldermenu .item .grow{min-width:0}
 .foldermenu .item .grow>span,.foldermenu .item b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Live work: what an agent is doing, said plainly, with the time so far */
+.workline{display:flex;align-items:center;gap:9px;min-height:26px;margin-top:6px;font-size:13px;color:var(--dim)}
+.workline .loader{flex:none;opacity:.85}
+.workline .shimmer{flex:none}
+.workline code{min-width:0;font:12px var(--mono);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:land 260ms var(--out) both}
+.workline time{flex:none;font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
+.workline time::before{content:"·";margin-right:9px;color:var(--faint)}
+.act .ok{color:var(--faint);margin-right:6px}
+
+/* The field of dots that live work happens on. A dim grid, and the same grid lit inside a band of
+   light that travels across it. Search and image share it, so waiting looks the same everywhere. */
+.dotfield,.developing .canvas{--pitch:8px}
+.dotfield .dots,.developing .dots{position:absolute;inset:0;background-image:radial-gradient(circle at center,var(--ink) .9px,transparent 1.25px);background-size:var(--pitch) var(--pitch);background-position:center;opacity:.09}
+.dotfield .dots.lit,.developing .dots.lit{opacity:.85;
+  -webkit-mask-image:linear-gradient(100deg,transparent 34%,rgba(0,0,0,.3) 43%,#000 50%,rgba(0,0,0,.3) 57%,transparent 66%);mask-image:linear-gradient(100deg,transparent 34%,rgba(0,0,0,.3) 43%,#000 50%,rgba(0,0,0,.3) 57%,transparent 66%);
+  -webkit-mask-size:220% 100%;mask-size:220% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;animation:dotpass 2.2s cubic-bezier(.45,0,.55,1) infinite alternate}
+@keyframes dotpass{from{-webkit-mask-position:100% 0;mask-position:100% 0}to{-webkit-mask-position:0% 0;mask-position:0% 0}}
+.room.stopping .dots.lit{animation-play-state:paused}
+
+/* Search: one card from the moment it starts to what it found */
+.xsearch{margin:8px 0 2px;max-width:600px;border-radius:12px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);overflow:hidden;animation:land 320ms var(--out) both}
+.xsearch header{display:flex;align-items:center;gap:7px;height:40px;padding:0 14px;font-size:12.5px;color:var(--dim);white-space:nowrap}
+.xsearch .src{display:grid;place-items:center;width:14px;color:var(--dim);flex:none}
+.xsearch .src svg{width:12px;height:12px}
+.xsearch header b{font-weight:500;color:var(--ink)}
+.xsearch header .shimmer{font-size:12.5px;flex:none}
+.xsearch .query{color:var(--ink);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.xsearch .meta{margin-left:auto;padding-left:12px;color:var(--faint);font-feature-settings:"tnum"}
+.xsearch .dotfield{position:relative;height:52px;border-top:1px solid var(--line)}
+.xsearch .posts{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.xsearch .post{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px 14px 13px;background:var(--well);animation:land 420ms var(--out) both;animation-delay:calc(var(--i) * 90ms)}
+.xsearch .post .by{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px}
+.xsearch .post .by b{font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xsearch .post .by small{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:11.5px;color:var(--faint);font-feature-settings:"tnum"}
+.xsearch .post p{margin:0;font-size:12.5px;line-height:1.45;color:var(--dim);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.xsearch footer{height:34px;display:flex;align-items:center;padding:0 14px;font-size:12px;color:var(--faint);font-feature-settings:"tnum"}
+.ident{flex:none;width:18px;height:18px;border-radius:50%;background:var(--sheet);box-shadow:inset 0 0 0 1px var(--line);fill:var(--dim)}
+
+/* An image on its way, at its own size. When it lands, the picture opens over the same spot. */
+.developing{margin:8px 0 0;max-width:560px}
+.developing .canvas{position:relative;aspect-ratio:var(--ar,3/2);border-radius:12px;overflow:hidden;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
+.developing figcaption{display:flex;align-items:baseline;gap:16px;margin-top:8px;font-size:12.5px;line-height:1.45;color:var(--faint)}
+.developing figcaption span{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.developing figcaption small{flex:none;font:11px var(--mono);font-feature-settings:"tnum"}
+.picture{max-width:560px}
+.picture .frame.loaded img{animation:reveal 900ms cubic-bezier(.22,1,.36,1) both}
+@keyframes reveal{from{clip-path:inset(0 100% 0 0 round 12px);filter:blur(6px)}to{clip-path:inset(0 0 0 0 round 12px);filter:blur(0)}}

@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
 import { plan } from '../../shared/plan'
-import { Loader, Mark, Meter, Strip, Thumb } from '../ui/bits'
+import { searchOf, stepOf, type Search } from '../../shared/steps'
+import { Loader, Mark, Meter, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
-import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconRewind, IconSplit } from '../ui/icons'
+import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
 import { agentOf, clock, desk, KIND_LABEL, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
 import { Composer } from './Composer'
@@ -211,16 +212,43 @@ function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta
   )
 }
 
+// The saved event a live row turns into when its turn ends.
+const replaces = (e: Event, t: LiveTurn) => e.at >= t.started && (e.kind === 'say' ? e.who === t.who : e.kind === 'hands' ? e.to === t.who : e.kind === 'image' && !!t.image && e.by === t.who)
+
 // The transcript is a timeline. Agent turns hang off a thin thread in the gutter so a chain of
 // handoffs reads as one piece of work; your messages sit on the right and break the thread.
 function Transcript({ events, live, agents, actions, focus, empty }: { events: Event[]; live: Live | null; agents: AgentInfo[]; actions: Actions; focus?: string; empty: boolean }) {
   const box = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const size = events.length + (live ? live.turns.reduce((n, t) => n + t.text.length + t.acts.length, 0) + live.runs.reduce((n, r) => n + r.out.length + r.state.length, 0) : 0)
+  // Opening a room lands at the bottom at once. After that the view eases after new content
+  // instead of jumping to it, for as long as you stay at the bottom.
+  const opened = useRef(false)
   useLayoutEffect(() => {
     const el = box.current
-    if (el && stick.current) el.scrollTop = el.scrollHeight
+    if (!el || !stick.current) return
+    if (!opened.current) { el.scrollTop = el.scrollHeight; opened.current = events.length > 0; return }
   }, [size])
+  const working = !!live?.turns.length || !!live?.runs.length
+  useEffect(() => {
+    let raf = 0
+    const follow = () => {
+      const el = box.current
+      if (el && stick.current) {
+        const gap = el.scrollHeight - el.clientHeight - el.scrollTop
+        if (gap > 0.5) el.scrollTop += Math.max(1, gap * 0.16)
+      }
+      raf = requestAnimationFrame(follow)
+    }
+    raf = requestAnimationFrame(follow)
+    const stop = setTimeout(() => cancelAnimationFrame(raf), working ? 1e9 : 1500)
+    return () => { cancelAnimationFrame(raf); clearTimeout(stop) }
+  }, [working, size])
+  // A turn that finishes swaps its live row for the saved event. The swap must not play the
+  // arrival again, so events that replace a live row are marked settled and never animate in.
+  const settled = useRef(new Set<string>())
+  const seen = useRef(new Map<string, LiveTurn>())
+  for (const t of live?.turns ?? []) seen.current.set(t.id, t)
   useEffect(() => {
     if (!focus) return
     const el = box.current?.querySelector(`[data-id="${focus}"]`)
@@ -247,23 +275,27 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       continue
     }
     const speaker = e.kind === 'say' ? e.who : e.kind
-    rows.push(<Row key={e.id} e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} />)
+    if (!settled.current.has(e.id) && [...seen.current.values()].some((t) => replaces(e, t))) settled.current.add(e.id)
+    rows.push(<Settled.Provider key={e.id} value={settled.current.has(e.id)}><Row e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} /></Settled.Provider>)
     last = speaker
   }
-  const landed = (t: LiveTurn) => events.some((e) => e.at >= t.started && (e.kind === 'say' ? e.who === t.who : e.kind === 'hands' && e.to === t.who))
+  const landed = (t: LiveTurn) => events.some((e) => replaces(e, t))
   for (const t of live?.turns ?? []) {
     if (landed(t)) continue
     if (t.arena) {
       if (!arenas.has(t.arena)) { arenas.add(t.arena); rows.push(<Arena key={t.id} id={t.arena} done={[]} going={live!.turns.filter((x) => x.arena === t.arena)} agents={agents} pick={actions.pick} />) }
       continue
     }
-    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} />)
+    const helper = live!.turns.find((x) => x.from === t.who && x.id !== t.id)
+    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} />)
     last = t.who
   }
   for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} /></Ev>)
 
   return (
-    <div className="transcript" ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
+    <div className="transcript" ref={box}
+      onWheel={(e) => { if (e.deltaY < 0) stick.current = false }}
+      onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) stick.current = true }}>
       <div className="column">
         {empty && !live?.turns.length && <div className="roomempty">Nothing here yet. Say what you need and the crew takes it from there.</div>}
         {rows}
@@ -273,9 +305,12 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   )
 }
 
+const Settled = createContext(false)
+
 function Ev({ mark, grouped = false, className = '', id, children }: { mark: ReactNode; grouped?: boolean; className?: string; id?: string; children: ReactNode }) {
+  const settled = useContext(Settled)
   return (
-    <div className={`ev ${className}${grouped ? ' grouped' : ''}`} data-id={id}>
+    <div className={`ev ${className}${grouped ? ' grouped' : ''}${settled ? ' settled' : ''}`} data-id={id}>
       <div className="gut">{!grouped && mark}</div>
       <div className="evbody">{children}</div>
     </div>
@@ -395,19 +430,33 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
   }
 }
 
-function LiveRow({ t, agents, doing, grouped }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean }) {
+function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean; helper?: AgentInfo }) {
   const a = agentOf(t.who, agents)
-  const quiet = !t.text.trim()
-  const working = <div className="busyline"><span className="shimmer">{doing || `${a.short} is thinking`}</span><Strip alphabet={a.alphabet} length={14} /></div>
+  // A line that hands work to a crewmate ("@grok: ...") becomes its own handoff block when the
+  // turn ends, so it is never typed out here first.
+  const said = t.kind === 'say' ? t.text.replace(/(^|\n)@[\w.-]+:[^\n]*(?=\n|$)/g, '').replace(/(^|\n)@[\w.-]*:?[^\n]*$/, '').trimEnd() : t.text
+  const shown = useSmooth(said)
+  const quiet = !said.trim()
+  const working = <Working t={t} a={a} fallback={doing} waiting={helper} />
+  if (t.image) {
+    const from = agentOf(t.from ?? '', agents)
+    return (
+      <Ev mark={<Mark seed={a.mark} size={16} active />} className="hands live">
+        <div className="handhead"><b className="name">{a.short}</b><span>is drawing an image for</span><Mark seed={from.mark} size={12} /><span>{from.short}</span></div>
+        <Developing t={t} a={a} />
+      </Ev>
+    )
+  }
   if (t.kind === 'hands') {
     const from = agentOf(t.from ?? '', agents)
     return (
       <Ev mark={<Mark seed={a.mark} size={16} active />} className="hands live">
-        <div className="handhead"><Mark seed={from.mark} size={12} /><span>{from.short} asked</span><b className="name">{a.short}</b></div>
+        <div className="handhead"><b className="name">{from.short}</b><span>asked</span><Mark seed={a.mark} size={12} /><b className="name">{a.short}</b></div>
         <div className="exchange">
           <p className="asked">{t.ask}</p>
-          {quiet ? working : <div className="got"><Rich text={t.text} caret /></div>}
+          {!quiet && <div className="got"><Rich text={shown} caret /></div>}
           <Acts acts={t.acts} live />
+          {quiet && working}
         </div>
       </Ev>
     )
@@ -415,10 +464,148 @@ function LiveRow({ t, agents, doing, grouped }: { t: LiveTurn; agents: AgentInfo
   return (
     <Ev mark={<Mark seed={a.mark} size={16} active />} grouped={grouped} className="turn live">
       {!grouped && <div className="who"><b className="name">{a.short}</b></div>}
-      {!quiet && <Rich text={t.text} caret />}
+      {!quiet && <Rich text={shown} caret />}
       <Acts acts={t.acts} live />
-      {(quiet || doing.includes(':')) && working}
+      {(quiet || !!t.now) && working}
     </Ev>
+  )
+}
+
+// Text as it streams in, let out at an even reading pace. Agents send words in bursts; shown
+// as they come, the line stutters. This keeps a steady speed and only hurries when far behind,
+// so it never trails the agent by more than a moment.
+function useSmooth(text: string) {
+  const target = useRef(text)
+  target.current = text
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    let raf = 0
+    let shown = 0
+    let last = performance.now()
+    const tick = (now: number) => {
+      const dt = Math.min(50, now - last)
+      last = now
+      const left = target.current.length - shown
+      if (left > 0) {
+        shown = Math.min(target.current.length, shown + Math.max(70, left * 4.5) * dt / 1000)
+        setN(Math.floor(shown))
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [])
+  return n >= text.length ? text : text.slice(0, n)
+}
+
+// Seconds since a live turn started, ticking while it runs.
+function useElapsed(since: number) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(t)
+  }, [])
+  const s = Math.max(0, Math.floor((now - since) / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+// What an agent is doing right now, in words: the verb, the command or tool, and how long it
+// has taken so far.
+function Working({ t, a, fallback, waiting }: { t: LiveTurn; a: AgentInfo; fallback: string; waiting?: AgentInfo }) {
+  const elapsed = useElapsed(t.started)
+  // Mid-turn help: the crewmate's own row below shows the work, this line says who has it.
+  if (waiting) return <div className="workline"><Loader size={10} /><span className="shimmer">Waiting for {waiting.short}</span><time>{elapsed}</time></div>
+  const search = t.now ? searchOf(t.now) : null
+  if (search) return <SearchLive search={search} elapsed={elapsed} />
+  const step = t.now ? stepOf(t.now) : null
+  return (
+    <div className="workline">
+      <Loader size={10} />
+      {step ? <><span className="shimmer">{step.verb}</span>{step.text && <code>{step.text}</code>}</> : <span className="shimmer">{fallback.startsWith(a.short + ' ') ? fallback : `${a.short} is thinking`}</span>}
+      <time>{elapsed}</time>
+    </div>
+  )
+}
+
+// While the search runs: where it looks, for what, and a field of dots with light moving across
+// it, the same field an image develops on.
+function SearchLive({ search, elapsed }: { search: Search; elapsed: string }) {
+  return (
+    <div className="xsearch live">
+      <header>
+        <SourceIcon search={search} />
+        <span className="shimmer">Searching {search.source}</span><span>for</span><span className="query">“{search.query}”</span>
+        <span className="meta">{[...search.filters, elapsed].join(' · ')}</span>
+      </header>
+      <div className="dotfield" aria-hidden><i className="dots" /><i className="dots lit" /></div>
+    </div>
+  )
+}
+
+const SourceIcon = ({ search }: { search: Search }) => <span className="src">{search.source === 'X' ? <IconX /> : <IconGlobe />}</span>
+
+// What a search found, read from the command's own output: one line per post as
+// "@handle · text · likes", with the total on the first line.
+type Post = { handle: string; text: string; likes: string }
+function postsOf(out = ''): { total?: string; posts: Post[] } {
+  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean)
+  const posts = lines.map((l) => l.match(/^@(\S+)\s+·\s+(.+?)\s+·\s+([\d.,]+k?)$/)).filter((m): m is RegExpMatchArray => !!m).map((m) => ({ handle: m[1], text: m[2], likes: m[3] }))
+  const total = lines.find((l) => /^\d[\d,]*\s+(posts|results)$/.test(l))
+  return { total, posts }
+}
+
+// A face for a handle that has none here: a mirrored five by five pattern from the handle itself,
+// so the same person always looks the same.
+function Ident({ seed }: { seed: string }) {
+  let h = 2166136261
+  for (const c of seed) h = Math.imul(h ^ c.charCodeAt(0), 16777619)
+  const cells: ReactNode[] = []
+  for (let y = 0; y < 5; y++) for (let x = 0; x < 3; x++) {
+    if (!((h >>> (y * 3 + x)) & 1)) continue
+    cells.push(<rect key={`${x}${y}`} x={x * 4 + 2} y={y * 4 + 2} width="3.4" height="3.4" rx=".6" />)
+    if (x < 2) cells.push(<rect key={`m${x}${y}`} x={(4 - x) * 4 + 2} y={y * 4 + 2} width="3.4" height="3.4" rx=".6" />)
+  }
+  return <svg className="ident" viewBox="0 0 24 24" aria-hidden>{cells}</svg>
+}
+
+function Sources({ search, out }: { search: Search; out?: string }) {
+  const { total, posts } = postsOf(out)
+  if (!posts.length) return null
+  const shown = posts.slice(0, 4)
+  return (
+    <div className="xsearch done">
+      <header>
+        <SourceIcon search={search} />
+        <b>Searched {search.source}</b><span>for</span><span className="query">“{search.query}”</span>
+        {search.filters.length > 0 && <span className="meta">{search.filters.join(' · ')}</span>}
+      </header>
+      <div className="posts">
+        {shown.map((p, i) => (
+          <article key={p.handle + i} className="post" style={{ '--i': i } as CSSProperties}>
+            <div className="by"><Ident seed={p.handle} /><b>@{p.handle}</b><small><IconHeart />{p.likes}</small></div>
+            <p>{p.text}</p>
+          </article>
+        ))}
+      </div>
+      {total && <footer>Top {shown.length} of {total}</footer>}
+    </div>
+  )
+}
+
+const IconHeart = () => <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.3C.9 8.2 3 4.5 6.7 4.5c2.1 0 3.6 1.1 4.4 2.5h1.8c.8-1.4 2.3-2.5 4.4-2.5 3.7 0 5.8 3.7 4.3 7.2C19.5 16.4 12 21 12 21z" /></svg>
+
+// An image on its way, at the size it will arrive. Light passes over a field of dots until the
+// picture lands in the same place.
+function Developing({ t, a }: { t: LiveTurn; a: AgentInfo }) {
+  const elapsed = useElapsed(t.started)
+  const [w, h] = (t.size?.match(/^(\d+)x(\d+)$/)?.slice(1).map(Number)) ?? [1024, 1024]
+  return (
+    <figure className="developing" style={{ '--ar': `${w} / ${h}` } as CSSProperties}>
+      <div className="canvas" role="img" aria-label={`${a.short} is drawing an image`}>
+        <i className="dots" /><i className="dots lit" />
+      </div>
+      <figcaption><span>{t.label}</span><small>{w} × {h} · {elapsed}</small></figcaption>
+    </figure>
   )
 }
 
@@ -452,6 +639,10 @@ function actLabel(a: Act) {
 function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   const [open, setOpen] = useState(false)
   if (!acts.length) return null
+  const shown = (a: Act) => (a.t === 'cmd' && !!searchOf(a.command) && postsOf(a.out).posts.length > 0) || (a.t === 'tool' && /make_image$/.test(a.name))
+  const found = acts.flatMap((a) => (a.t === 'cmd' && shown(a) ? [<Sources key={a.command} search={searchOf(a.command)!} out={a.out} />] : []))
+  acts = acts.filter((a) => !shown(a))
+  if (!acts.length) return <>{found}</>
   const cmds = acts.filter((a) => a.t === 'cmd').length
   const files = new Set(acts.flatMap((a) => (a.t === 'edit' ? [a.path] : []))).size
   const other = acts.filter((a) => a.t === 'tool').length
@@ -459,6 +650,8 @@ function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   const parts = [cmds && `${cmds} command${cmds > 1 ? 's' : ''}`, files && `${files} file${files > 1 ? 's' : ''} changed`, other && `${other} tool call${other > 1 ? 's' : ''}`].filter(Boolean)
   const list = live && !open ? acts.slice(-4) : acts
   return (
+    <>
+    {found}
     <div className={`acts${open || live ? ' open' : ''}`}>
       <button className="actsum" onClick={() => setOpen(!open)} aria-expanded={open}>
         <i className="tick" />{parts.join(' · ')}{failed > 0 && <span className="bad">{failed} failed</span>}
@@ -467,11 +660,12 @@ function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
         <div className="actlist">
           {list.map((a, i) => {
             const l = actLabel(a)
-            return <div key={i} className={`act${l.bad ? ' bad' : ''}`}><code>{a.t === 'cmd' && <span>$</span>}{l.code}</code><small>{l.tail}</small></div>
+            return <div key={i} className={`act${l.bad ? ' bad' : ''}`}><code>{live && !l.bad && <span className="ok">✓</span>}{a.t === 'cmd' && <span>$</span>}{l.code}</code><small>{l.tail}</small></div>
           })}
         </div>
       )}
     </div>
+    </>
   )
 }
 
