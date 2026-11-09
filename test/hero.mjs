@@ -61,6 +61,8 @@ try {
       await page.evaluate(() => {
         const t = document.querySelector('.transcript')
         const grok = [...document.querySelectorAll('.transcript .ev')].find((e) => e.textContent?.includes('answered'))
+        // Scroll the way a person does, so the room stops following new output.
+        t?.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true }))
         if (t && grok) t.scrollTop += grok.getBoundingClientRect().top - t.getBoundingClientRect().top - 20
       })
       await page.waitForTimeout(250)

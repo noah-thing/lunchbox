@@ -176,21 +176,20 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .exchange{position:relative;display:flex;flex-direction:column;gap:6px;padding-left:14px;border-left:1px solid var(--line2)}
 /* A handoff arriving: the header first, then the thread draws down, then the ask and the work.
    While the crewmate works, light runs down the thread, the same light as the search card. */
-.ev.settled{animation:none}
+.ev.settled,.ev.settled :is(.xsearch,.post,.exchange,.exchange>*,.workline code,.acts,.proof){animation:none}
 .hands.live{animation:land 320ms var(--out) both}
 .hands.live .exchange{animation:handrule 520ms 90ms cubic-bezier(.65,0,.35,1) both}
 @keyframes handrule{from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0 0 0 0)}}
 .hands.live .exchange>*{animation:land 420ms var(--out) both;animation-delay:200ms}
 .hands.live .exchange>*+*{animation-delay:320ms}
-.hands.live .exchange::before{content:"";position:absolute;left:-1px;top:0;width:1px;height:56px;background:linear-gradient(transparent,var(--ink),transparent);opacity:.8;animation:handlight 1.8s 600ms cubic-bezier(.45,0,.55,1) infinite both}
-@keyframes handlight{from{transform:translateY(-56px);opacity:0}15%{opacity:.8}85%{opacity:.8}to{transform:translateY(var(--h,240px));opacity:0}}
-.hands.live .exchange{overflow:visible}
+.hands.live .exchange::before{content:"";position:absolute;left:-1px;top:0;bottom:0;width:1px;background:linear-gradient(transparent,var(--ink),transparent) no-repeat;background-size:1px 56px;background-position:0 -56px;animation:handlight 1.8s 600ms cubic-bezier(.45,0,.55,1) infinite}
+@keyframes handlight{from{background-position:0 -56px}to{background-position:0 calc(100% + 56px)}}
 .exchange .asked{font-size:13px;color:var(--dim);line-height:1.5}
 .exchange .got{font-size:13.5px;line-height:1.55}
 .handhead .tag{margin-left:4px;line-height:20px}
 .picture{display:flex;flex-direction:column;gap:8px;margin-top:4px;max-width:440px}
 .picture .frame{display:grid;place-items:center;min-height:160px;padding:0;border-radius:12px;overflow:hidden;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);cursor:zoom-in;transition:box-shadow 160ms var(--out)}
-.picture .frame.loaded{min-height:0}
+.picture .frame.loaded,.picture .frame.sized{min-height:0}
 @media (hover:hover){.picture .frame:hover{box-shadow:inset 0 0 0 1px var(--line2)}}
 .picture img{display:block;width:100%;height:auto;animation:fadein 480ms var(--out) both}
 .picture figcaption{display:flex;flex-direction:column;gap:2px;font-size:12.5px;color:var(--dim);line-height:1.45}
@@ -474,10 +473,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .busyline{display:flex;align-items:center;gap:12px;height:22px;font-size:12.5px}
 .busyline .strip{color:var(--faint);font-size:11px}
 .acts{display:flex;flex-direction:column;gap:6px;margin-top:2px}
-.actsum{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;height:24px;padding:0 10px 0 8px;border-radius:12px;font:11px var(--mono);color:var(--faint);box-shadow:inset 0 0 0 1px var(--line);transition:color 140ms var(--out),box-shadow 140ms var(--out)}
-@media (hover:hover){.actsum:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--line2)}}
-.actsum .tick{width:5px;height:5px;border-radius:1px;background:currentColor;transition:transform 200ms var(--out)}
-.acts.open .actsum .tick{transform:rotate(45deg)}
+.actsum{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0;font-size:12.5px;color:var(--faint);font-feature-settings:"tnum";transition:color 140ms var(--out)}
+@media (hover:hover){.actsum:hover{color:var(--dim)}}
+.actsum .chev{transition:transform 200ms var(--out)}
+.acts.open .actsum .chev{transform:rotate(90deg)}
 .actsum .bad{color:var(--bad)}
 .actlist{display:flex;flex-direction:column;padding:4px 0;border-left:1px solid var(--line2);margin-left:10px;animation:fadein 200ms var(--out) both}
 .act{display:flex;align-items:center;gap:12px;min-height:24px;padding-left:12px;animation:land 260ms var(--out) both}
@@ -664,7 +663,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .xsearch .meta{margin-left:auto;padding-left:12px;color:var(--faint);font-feature-settings:"tnum"}
 .xsearch .dotfield{position:relative;height:52px;border-top:1px solid var(--line)}
 .xsearch .posts{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.xsearch .post{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px 14px 13px;background:var(--well);animation:land 420ms var(--out) both;animation-delay:calc(var(--i) * 90ms)}
+.xsearch .post{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px 14px 13px;background:var(--well);animation:land 520ms var(--out) both;animation-delay:calc(var(--i) * 140ms)}
 .xsearch .post .by{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px}
 .xsearch .post .by b{font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .xsearch .post .by small{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:11.5px;color:var(--faint);font-feature-settings:"tnum"}

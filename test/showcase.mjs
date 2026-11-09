@@ -58,7 +58,7 @@ export async function showcase(name, input, args, say, sleep, pause) {
     const image = input.match(/save it as (\S+?\.png)/)
     if (image) {
       say({ type: 'item.started', item: { type: 'command_execution', command: `image_gen ${BANNER.file}` } })
-      wait(5200, pause * 30)
+      wait(7600, pause * 30)
       mkdirSync(dirname(image[1]), { recursive: true })
       copyFileSync(IMAGE, image[1])
       say({ type: 'item.completed', item: { type: 'agent_message', text: image[1] } })
@@ -84,7 +84,7 @@ export async function showcase(name, input, args, say, sleep, pause) {
   let lead = ''
   if (name === 'grok' && asked) {
     say({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x1', name: 'run_terminal_command', input: { command: 'x-search "hackathon" --since 30d --top' } }] } })
-    wait(3400, pause * 10)
+    wait(5000, pause * 10)
     say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'x1', is_error: false, content: [
       '773 posts',
       "@mira.codes · One night beats a whole weekend. I can't give up two days anymore. · 2.4k",

@@ -56,6 +56,22 @@ try {
     timeline.marks.push({ name, t: (Date.now() - t0) / 1000, box })
   }
 
+  // Any frame where the conversation moves up while nobody scrolled is a jump; list them all.
+  await page.evaluate(() => {
+    window.__jumps = []
+    let last = null
+    const t0 = performance.now()
+    const look = () => {
+      const el = document.querySelector('.transcript')
+      if (el) {
+        const at = { t: (performance.now() - t0) / 1000, top: el.scrollTop, height: el.scrollHeight }
+        if (last && at.top < last.top - 0.5) window.__jumps.push({ ...at, from: last.top, was: last.height })
+        last = at
+      }
+      requestAnimationFrame(look)
+    }
+    requestAnimationFrame(look)
+  })
   await page.waitForTimeout(1200)
   const box = await page.evaluate(() => { const r = document.querySelector('.composer textarea').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height } })
   timeline.marks.push({ name: 'type', t: (Date.now() - t0) / 1000, box })
@@ -74,6 +90,8 @@ try {
   await mark('proved', '.transcript .ev', () => document.body.innerText.includes('Proved'))
   await page.waitForTimeout(3000)
   timeline.marks.push({ name: 'end', t: (Date.now() - t0) / 1000, box: null })
+  timeline.jumps = await page.evaluate(() => window.__jumps)
+  console.log('jumps', JSON.stringify(timeline.jumps))
   await cdp.send('Page.stopScreencast')
 } catch (e) {
   console.error(e)

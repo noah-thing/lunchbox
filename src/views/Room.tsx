@@ -247,6 +247,25 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // A turn that finishes swaps its live row for the saved event. The swap must not play the
   // arrival again, so events that replace a live row are marked settled and never animate in.
   const settled = useRef(new Set<string>())
+  // When a live row becomes its saved event the column can come out a few pixels shorter, which
+  // would pull the view up. The column keeps the tallest height it has reached, and the next
+  // thing written fills the difference. Removing events, by a rewind or a fork, lets it go.
+  const column = useRef<HTMLDivElement>(null)
+  const tallest = useRef({ h: 0, n: 0 })
+  useEffect(() => {
+    const el = column.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight
+      if (h > tallest.current.h) { tallest.current.h = h; el.style.minHeight = `${h}px` }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  useLayoutEffect(() => {
+    if (events.length < tallest.current.n && column.current) { tallest.current.h = 0; column.current.style.minHeight = '' }
+    tallest.current.n = events.length
+  }, [events.length])
   const seen = useRef(new Map<string, LiveTurn>())
   for (const t of live?.turns ?? []) seen.current.set(t.id, t)
   useEffect(() => {
@@ -296,7 +315,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     <div className="transcript" ref={box}
       onWheel={(e) => { if (e.deltaY < 0) stick.current = false }}
       onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) stick.current = true }}>
-      <div className="column">
+      <div className="column" ref={column}>
         {empty && !live?.turns.length && <div className="roomempty">Nothing here yet. Say what you need and the crew takes it from there.</div>}
         {rows}
         <div className="tail" />
@@ -359,7 +378,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
       return (
         <Ev id={e.id} mark={<Mark seed={by.mark} size={16} />} className="hands">
           <div className="handhead"><b className="name">{by.short}</b><span>made an image for</span><Mark seed={agentOf(e.for, agents).mark} size={12} /><span>{agentOf(e.for, agents).short}</span><span className="when">{clock(e.at)}</span></div>
-          <Picture path={e.path} prompt={e.prompt} />
+          <Picture path={e.path} prompt={e.prompt} size={e.size} />
         </Ev>
       )
     }
@@ -592,6 +611,8 @@ function Sources({ search, out }: { search: Search; out?: string }) {
   )
 }
 
+const IconChevron = () => <svg className="chev" width="10" height="10" viewBox="0 0 16 16" aria-hidden><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+
 const IconHeart = () => <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.3C.9 8.2 3 4.5 6.7 4.5c2.1 0 3.6 1.1 4.4 2.5h1.8c.8-1.4 2.3-2.5 4.4-2.5 3.7 0 5.8 3.7 4.3 7.2C19.5 16.4 12 21 12 21z" /></svg>
 
 // An image on its way, at the size it will arrive. Light passes over a field of dots until the
@@ -609,7 +630,12 @@ function Developing({ t, a }: { t: LiveTurn; a: AgentInfo }) {
   )
 }
 
-function Picture({ path, prompt }: { path: string; prompt: string }) {
+function Picture({ path, prompt, size }: { path: string; prompt: string; size?: string }) {
+  // Known size: the frame takes its final shape before the file has loaded, so nothing moves.
+  const asked = size?.match(/^(\d+)x(\d+)$/)?.slice(1).join(' / ')
+  // The file has the last word: a provider can return a slightly different shape than asked.
+  const [real, setReal] = useState<string | null>(null)
+  const ratio = real ?? asked
   const [src, setSrc] = useState<string | null>(null)
   const [missing, setMissing] = useState(false)
   useEffect(() => {
@@ -619,8 +645,8 @@ function Picture({ path, prompt }: { path: string; prompt: string }) {
   }, [path])
   return (
     <figure className="picture">
-      <button className={`frame${src ? ' loaded' : ''}`} onClick={() => desk.call('reveal', path)} title="Open">
-        {src ? <img src={src} alt={prompt} /> : missing ? <span className="err soft">The file is no longer there</span> : <Loader size={12} />}
+      <button className={`frame${src ? ' loaded' : ''}${ratio ? ' sized' : ''}`} style={ratio ? { aspectRatio: ratio } : undefined} onClick={() => desk.call('reveal', path)} title="Open">
+        {src ? <img src={src} alt={prompt} onLoad={(e) => setReal(`${e.currentTarget.naturalWidth} / ${e.currentTarget.naturalHeight}`)} /> : missing ? <span className="err soft">The file is no longer there</span> : <Loader size={12} />}
       </button>
       <figcaption><span>{prompt}</span><code>{short(path)}</code></figcaption>
     </figure>
@@ -648,17 +674,16 @@ function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   const other = acts.filter((a) => a.t === 'tool').length
   const failed = acts.filter((a) => actLabel(a).bad).length
   const parts = [cmds && `${cmds} command${cmds > 1 ? 's' : ''}`, files && `${files} file${files > 1 ? 's' : ''} changed`, other && `${other} tool call${other > 1 ? 's' : ''}`].filter(Boolean)
-  const list = live && !open ? acts.slice(-4) : acts
   return (
     <>
     {found}
-    <div className={`acts${open || live ? ' open' : ''}`}>
+    <div className={`acts${open ? ' open' : ''}`}>
       <button className="actsum" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <i className="tick" />{parts.join(' · ')}{failed > 0 && <span className="bad">{failed} failed</span>}
+        {parts.join(', ')}{failed > 0 && <span className="bad">{failed} failed</span>}<IconChevron />
       </button>
-      {(open || live) && (
+      {open && (
         <div className="actlist">
-          {list.map((a, i) => {
+          {acts.map((a, i) => {
             const l = actLabel(a)
             return <div key={i} className={`act${l.bad ? ' bad' : ''}`}><code>{live && !l.bad && <span className="ok">✓</span>}{a.t === 'cmd' && <span>$</span>}{l.code}</code><small>{l.tail}</small></div>
           })}

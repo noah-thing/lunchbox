@@ -470,7 +470,7 @@ export class Engine {
       const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }, true, prompt, size).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
-    this.add(room, { kind: 'image', by, for: from, prompt, path, usage })
+    this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage })
     return `Saved ${relative(meta.workspace, path)}`
   }
 
