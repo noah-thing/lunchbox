@@ -614,3 +614,12 @@ textarea:focus-visible,input:focus-visible{outline:0}
 /* The beat between pressing stop and the engine confirming: motion halts and the text settles. */
 .room.stopping .caret,.room.stopping .strip{display:none}
 .room.stopping .shimmer{animation:none;color:var(--faint)}
+/* The folder picker on the new room page sits with the chips, so it wears their shape. */
+.foldermenu .pill{height:28px;padding:0 10px 0 12px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--line)}
+.foldermenu .pill svg:first-child{width:14px;height:14px}
+.foldermenu .pill .mono{font:11.5px var(--mono)}
+.foldermenu .menu{top:calc(100% + 6px);bottom:auto;transform-origin:top left;width:340px}
+.foldermenu .item b.mono{font:500 12px var(--mono)}
+.newmeta{position:relative;z-index:3}
+.foldermenu .item .grow{min-width:0}
+.foldermenu .item .grow>span,.foldermenu .item b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

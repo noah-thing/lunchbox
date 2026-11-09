@@ -18,7 +18,7 @@ for (const name of ['claude', 'codex', 'grok']) symlinkSync(root + 'test/fake-ag
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${temp('profile')}`], cwd: root,
-  env: { ...process.env, LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '45' },
+  env: { ...process.env, LB_FOLDER: 'shared', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '45' },
   timeout: 30000,
 })
 const kill = setTimeout(() => { console.log('timed out'); app.close().finally(() => process.exit(1)) }, 110000)

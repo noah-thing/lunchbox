@@ -72,7 +72,9 @@ export function App() {
   const env = useApp((s) => s.env)
 
   useEffect(() => { boot() }, [])
-  useEffect(() => { if (!workspace && env.cwd) setWorkspaceState(env.cwd) }, [env.cwd, workspace])
+  // An empty workspace means each room makes its own folder. Older installs saved the shared root
+  // as their folder by default; that now means the same thing.
+  useEffect(() => { if (workspace && workspace === env.cwd) setWorkspaceState('') }, [env.cwd, workspace])
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme
     keep('theme', theme)
@@ -211,7 +213,7 @@ export function App() {
         {view.name === 'room' && <RoomView key={view.id} id={view.id} focus={view.focus} access={access} setAccess={setAccess} open={(id) => go({ name: 'room', id })} say={say} />}
         {view.name === 'new' && <NewRoom key={view.skill?.id ?? view.pack ?? 'new'} skill={view.skill} pack={view.pack} text={view.text} onCreated={(id) => go({ name: 'room', id })} go={go} access={access} setAccess={setAccess} workspace={workspace} setWorkspace={setWorkspace} />}
         {view.name === 'agents' && <Agents say={say} />}
-        {view.name === 'flows' && <Flows key={view.edit ?? view.template ?? 'list'} edit={view.edit} template={view.template} go={go} say={say} workspace={workspace} />}
+        {view.name === 'flows' && <Flows key={view.edit ?? view.template ?? 'list'} edit={view.edit} template={view.template} go={go} say={say} workspace={workspace || env.cwd} />}
         {view.name === 'pool' && <Pool go={go} say={say} />}
         {view.name === 'savings' && <Savings go={go} />}
         {view.name === 'library' && <Library go={go} say={say} />}

@@ -3,8 +3,9 @@ import { PLAYBOOKS } from '../../shared/skills'
 import type { Skill } from '../../shared/types'
 import { Band } from '../ui/Band'
 import { Loader, Mark } from '../ui/bits'
-import { IconFolder } from '../ui/icons'
-import { agentOf, ago, desk, short, unavailable, upcoming, useApp, type Access } from '../lib/desk'
+import { IconFolder, IconFolderPlus } from '../ui/icons'
+import { Menu } from '../ui/Access'
+import { agentOf, ago, desk, machine, short, unavailable, upcoming, useApp, type Access } from '../lib/desk'
 import type { View } from '../App'
 import { Composer } from './Composer'
 
@@ -65,6 +66,7 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
   const packs = useApp((s) => s.packs)
   const skills = useApp((s) => s.skills)
   const settings = useApp((s) => s.settings)
+  const env = useApp((s) => s.env)
   const usable = agents.filter((a) => !unavailable(a)).sort((a, b) => Number(b.tools) - Number(a.tools)).map((a) => a.id)
   const [chosen, setChosen] = useState<string[] | null>(() => (skill && skill.crew.every((c) => usable.includes(c)) ? skill.crew : null))
   const crew = chosen ?? defaultCrew(usable, settings.defaultCrew)
@@ -83,7 +85,8 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
   const start = async (text: string, files?: string[]) => {
     if (!crew.length || starting) return
     setStarting(true)
-    const meta = await desk.call('room:create', { crew, workspace, pack })
+    const meta = await desk.call('room:create', { crew, workspace, pack, about: text })
+    if (meta && workspace) remember(workspace)
     if (!meta) return setStarting(false)
     await desk.call('room:send', meta.id, text, access, arena, files)
     onCreated(meta.id)
@@ -91,6 +94,7 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
   const shownPacks = packs.filter((p, i) => i < 4 || p.id === pack)
   const morePacks = packs.filter((p) => !shownPacks.includes(p))
   const pick = async () => { const p = await desk.call('pick'); if (p) setWorkspace(p) }
+  const recent = recents().filter((r) => r !== workspace)
   const label = crew.length ? crew.map((id) => agentOf(id, agents).bin ?? agentOf(id, agents).short.toLowerCase()).join(' + ') : 'no agents yet'
 
   return (
@@ -110,7 +114,26 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
           )}
         </div>
         <div className="newmeta rise" style={{ '--i': 3 } as CSSProperties}>
-          <button className="chip mono" onClick={pick} title={workspace}><IconFolder />{short(workspace) || 'Choose a folder'}</button>
+          <Menu label="Where the room works" className="foldermenu" button={<><IconFolder />{workspace ? <span className="mono">{short(workspace)}</span> : 'New folder for this room'}</>}>
+            {(close) => (
+              <>
+                <button className={`item${!workspace ? ' on' : ''}`} onClick={() => { setWorkspace(''); close() }}>
+                  <IconFolderPlus />
+                  <span className="grow"><b>New folder for this room</b><span>Inside {short(env.cwd)}, named after what you ask</span></span>
+                </button>
+                {recent.slice(0, 4).map((r) => (
+                  <button key={r} className="item" onClick={() => { setWorkspace(r); close() }}>
+                    <IconFolder />
+                    <span className="grow"><b className="mono">{short(r)}</b><span>Used recently</span></span>
+                  </button>
+                ))}
+                <button className="item" onClick={() => { close(); pick() }}>
+                  <IconFolder />
+                  <span className="grow"><b>Choose a folder…</b><span>An existing project on {machine()}</span></span>
+                </button>
+              </>
+            )}
+          </Menu>
           <span className="divider" />
           <button className={`chip${!pack ? ' on' : ''}`} onClick={() => setPack(undefined)}>General</button>
           {shownPacks.map((p) => <button key={p.id} className={`chip${pack === p.id ? ' on' : ''}`} onClick={() => setPack(p.id)} title={p.line}>{p.name}</button>)}
@@ -138,4 +161,12 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
       </div>
     </div>
   )
+}
+
+// Folders you picked before, newest first. A convenience kept on this machine only.
+function recents(): string[] {
+  try { return JSON.parse(localStorage.getItem('lb.recentFolders') ?? '[]') } catch { return [] }
+}
+function remember(folder: string) {
+  try { localStorage.setItem('lb.recentFolders', JSON.stringify([folder, ...recents().filter((f) => f !== folder)].slice(0, 6))) } catch {}
 }

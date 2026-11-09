@@ -19,7 +19,7 @@ for (const name of ['claude', 'codex', 'grok']) symlinkSync(root + 'test/fake-ag
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${temp('profile')}`], cwd: root,
-  env: { ...process.env, LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '20' },
+  env: { ...process.env, LB_FOLDER: 'shared', LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '20' },
   timeout: 30000,
 })
 const kill = setTimeout(() => { console.log('timed out'); app.close().finally(() => process.exit(1)) }, 110000)
@@ -40,6 +40,9 @@ await page.waitForSelector('.newroom')
 await shot('01-home', 1200)
 await page.click('[aria-label^="Mode:"]')
 await shot('01b-modes', 400)
+await page.keyboard.press('Escape')
+await page.click('[aria-label="Where the room works"]')
+await shot('01c-folders', 400)
 await page.keyboard.press('Escape')
 
 await page.click('.composer textarea')

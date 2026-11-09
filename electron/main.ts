@@ -57,6 +57,16 @@ function defaults() {
 }
 const workspace = () => process.env.LB_WORKSPACE || join(app.getPath('documents'), 'Lunchbox')
 
+// A room without a chosen folder gets its own, named after what it is for:
+// ~/Documents/Lunchbox/fix-the-signup-form. Tests set LB_FOLDER=shared to stage files in one place.
+function roomFolder(about: string) {
+  if (process.env.LB_FOLDER === 'shared') return workspace()
+  const slug = about.toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s-]/g, '').trim().split(/\s+/).filter(Boolean).slice(0, 5).join('-').slice(0, 48) || 'room'
+  let dir = join(workspace(), slug)
+  for (let n = 2; existsSync(dir); n++) dir = join(workspace(), `${slug}-${n}`)
+  return dir
+}
+
 function createWindow() {
   const dark = nativeTheme.shouldUseDarkColors
   win = new BrowserWindow({
@@ -117,9 +127,10 @@ function wire() {
   h('agents:models', (id: string) => modelsFor(id, store.keys()).catch((e: Error) => ({ error: e.message })))
   h('rooms', () => engine.summaries())
   h('room', (id: string) => ({ meta: store.room(id), events: store.events(id), live: engine.live(id) }))
-  h('room:create', (opts: { crew: string[]; workspace: string; pack?: string; name?: string }) => {
-    mkdirSync(opts.workspace, { recursive: true })
-    return engine.create(opts)
+  h('room:create', (opts: { crew: string[]; workspace: string; pack?: string; name?: string; about?: string }) => {
+    const folder = opts.workspace || roomFolder(opts.about ?? opts.name ?? '')
+    mkdirSync(folder, { recursive: true })
+    return engine.create({ ...opts, workspace: folder })
   })
   h('room:rename', (id: string, name: string) => engine.rename(id, name))
   h('room:remove', (id: string) => engine.remove(id))

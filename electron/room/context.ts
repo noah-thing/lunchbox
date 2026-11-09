@@ -37,6 +37,7 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
     [
       'How the room works:',
       mates.length ? '- To get something from a crewmate, put a line on its own: "@handle: what you need". Their answer comes back to you before you finish. Ask only when they are clearly better placed, at most two at a time.' : '',
+      me.tools && access !== 'plan' ? '- The folder is yours to organise. Create subfolders for separate pieces of work, and give a new project its own folder inside it rather than scattering files.' : '',
       '- When the work has several steps, keep a short checklist with "- [ ] step" lines, and tick them with "- [x] step" as they get done.',
       '- Claims like "the tests pass" or "the build works" are checked against the commands that actually ran in this room after the last edit. Run the check before claiming it.',
       '- Write for the person: short and plain. Do not repeat what others already said.',
