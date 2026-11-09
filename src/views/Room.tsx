@@ -33,6 +33,8 @@ const remembered = (key: string, fallback: boolean) => {
 export function RoomView({ id, access, setAccess, open, focus, say }: {
   id: string; access: Access; setAccess: (a: Access) => void; open: (room: string) => void; focus?: string; say: (t: string) => void
 }) {
+  // Shown as stopped the moment the button is pressed; the engine confirms a few ms later.
+  const [stopping, setStopping] = useState(false)
   const [data, setData] = useState<Data | null>(null)
   const [panel, setPanel] = useState(() => remembered('panel', innerWidth >= 1280))
   const [replay, setReplay] = useState<number | null>(null)
@@ -76,15 +78,22 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel() }
-      if (e.key === 'Escape' && data?.live.turns.length && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') desk.call('room:stop', id)
+      if (e.key === 'Escape' && data?.live.turns.length && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
   })
 
+  const turning = data?.live.turns.length ?? 0
+  useEffect(() => { if (!turning) setStopping(false) }, [turning])
+  function stop() {
+    setStopping(true)
+    desk.call('room:stop', id)
+  }
+
   if (!data) return <div className="room loading"><Loader size={14} /></div>
   const { meta, events, live } = data
-  const busy = live.turns.length > 0 || live.runs.length > 0
+  const busy = !stopping && (live.turns.length > 0 || live.runs.length > 0)
 
   const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
   const actions: Actions = {
@@ -110,7 +119,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   const shown = replay === null ? events : events.slice(0, replay)
 
   return (
-    <div className={`room${panel ? ' withdetails' : ''}`}>
+    <div className={`room${panel ? ' withdetails' : ''}${stopping ? ' stopping' : ''}`}>
       <section className="convo">
         <header className="roomhead">
           <Title name={meta.name} rename={(n) => desk.call('room:rename', id, n)} />
@@ -131,7 +140,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
         <div className="dock">
           <Composer
             crew={meta.crew} setCrew={(c) => desk.call('room:crew', id, c)} onSend={send} access={access} setAccess={setAccess}
-            busy={busy} onStop={() => desk.call('room:stop', id)} arena={arena} setArena={setArena} pack={meta.pack} folder={meta.workspace}
+            busy={busy} onStop={stop} arena={arena} setArena={setArena} pack={meta.pack} folder={meta.workspace}
             placeholder={meta.crew.length > 1 ? 'Message the room. @ to address one agent, ! to run a command.' : 'Message the room. Start with ! to run a command.'}
           />
         </div>

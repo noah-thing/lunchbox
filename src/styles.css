@@ -320,8 +320,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 @media (hover:hover){.ideas button:hover{color:var(--ink);background:var(--hover)}}
 
 /* Pages */
-.page{height:100%;overflow:auto;padding:72px 24px 48px;display:flex;flex-direction:column;align-items:center;gap:24px;-webkit-app-region:drag}
-.page>*{width:100%;max-width:var(--col);-webkit-app-region:no-drag}
+.page{height:100%;overflow:auto;padding:72px 24px 48px;display:flex;flex-direction:column;align-items:center;gap:24px}
+.page>*{width:100%;max-width:var(--col)}
+.sheetdrag{position:absolute;top:0;left:0;right:14px;height:40px;z-index:5;-webkit-app-region:drag}
 .page>.btn{width:auto;align-self:center}
 .pagehead h1{font-size:22px;font-weight:500;letter-spacing:-.01em}
 .pagehead p{color:var(--dim);margin-top:4px}
@@ -610,3 +611,6 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .obfix{margin:0 0 8px 30px}
 .seg button:has(.modeicon){display:inline-flex;align-items:center;gap:6px}
 .seg button.on .modeicon:not(.full){color:inherit}
+/* The beat between pressing stop and the engine confirming: motion halts and the text settles. */
+.room.stopping .caret,.room.stopping .strip{display:none}
+.room.stopping .shimmer{animation:none;color:var(--faint)}

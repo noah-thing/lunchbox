@@ -205,6 +205,9 @@ export function App() {
       </aside>
 
       <main className="sheet">
+        {/* Pages scroll, so only a strip along the top moves the window. A scroll area that is
+            also a drag region swallows the wheel on macOS. */}
+        {!['room', 'browser', 'new'].includes(view.name) && <div className="sheetdrag" aria-hidden="true" />}
         {view.name === 'room' && <RoomView key={view.id} id={view.id} focus={view.focus} access={access} setAccess={setAccess} open={(id) => go({ name: 'room', id })} say={say} />}
         {view.name === 'new' && <NewRoom key={view.skill?.id ?? view.pack ?? 'new'} skill={view.skill} pack={view.pack} text={view.text} onCreated={(id) => go({ name: 'room', id })} go={go} access={access} setAccess={setAccess} workspace={workspace} setWorkspace={setWorkspace} />}
         {view.name === 'agents' && <Agents say={say} />}

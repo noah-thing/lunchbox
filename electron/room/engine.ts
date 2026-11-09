@@ -46,6 +46,7 @@ export class Engine {
   private procs = new Map<string, Set<{ stop(): void }>>()
   private queues = new Map<string, Promise<unknown>>()
   private gens = new Map<string, number>()
+  private flushed = new Set<string>()
   private allowed = new Map<string, Set<string>>()
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
@@ -267,10 +268,22 @@ export class Engine {
     return copy
   }
 
+  // Stopping is instant from the user's side: what each agent wrote so far lands in the room now
+  // and the live turns clear, while the processes are killed and exit in their own time.
   stop(room: string) {
     this.gens.set(room, (this.gens.get(room) ?? 0) + 1)
     for (const p of this.procs.get(room) ?? []) p.stop()
     this.procs.get(room)?.clear()
+    const live = this.live(room)
+    for (const lt of live.turns) {
+      this.flushed.add(lt.id)
+      if (lt.text.trim()) this.add(room, { kind: 'say', who: lt.who, text: lt.text.trim(), acts: lt.acts, error: 'Stopped' })
+    }
+    live.turns = []
+    live.doing = ''
+    live.active = null
+    this.hooks.emit('room:live', { room, live })
+    this.list()
   }
 
   pin(room: string, eventId: string) {
@@ -526,7 +539,8 @@ export class Engine {
     }
     const stopped = (this.gens.get(room) ?? 0) !== ctx.gen || r.error === 'Stopped'
     if (stopped) {
-      if (lt.text.trim()) this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts, error: 'Stopped' })
+      const already = this.flushed.delete(lt.id)
+      if (lt.text.trim() && !already) this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts, error: 'Stopped' })
       return null
     }
     if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
