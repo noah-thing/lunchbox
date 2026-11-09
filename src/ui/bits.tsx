@@ -21,17 +21,16 @@ function cells(seed: string) {
   return glyph(seed[0] ?? '?').flatMap((bits, y) => Array.from({ length: 5 }, (_, x) => ((bits >> (4 - x)) & 1 ? [[x + 1, y]] : [])).flat())
 }
 
-// Drawn by hand for each tool, white on black, and used as a mask so they take the ink colour of
-// whatever theme they sit in. Tools without one keep the dot grid drawn from their name.
-const BRANDS = import.meta.glob<string>('../marks/*.png', { eager: true, query: '?url', import: 'default' })
-const brand = (id: string) => BRANDS[`../marks/${{ codex: 'openai', local: 'ollama' }[id] ?? id}.png`]
+import { BRANDS } from './brands'
+const ALIAS: Record<string, string> = { local: 'ollama' }
 
 export function Mark({ seed, size = 16, blink = 0, active = false }: { seed: string; size?: number; blink?: number; active?: boolean }) {
-  const url = brand(seed)
-  if (url) {
-    const mask = `url(${url}) center / contain no-repeat`
-    return <i key={blink} className={`mark brand${blink ? ' blink' : ''}${active ? ' active' : ''}`} style={{ width: size, height: size, mask, WebkitMask: mask } as CSSProperties} aria-hidden="true" />
-  }
+  const brand = BRANDS[ALIAS[seed] ?? seed]
+  if (brand) return (
+    <svg key={blink} className={`mark brand${blink ? ' blink' : ''}${active ? ' active' : ''}`} width={size} height={size} viewBox="0 0 24 24" fillRule="evenodd" aria-hidden="true">
+      {brand.map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  )
   const on = useMemo(() => cells(seed), [seed])
   const grid = size >= 20
   return (

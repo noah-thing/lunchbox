@@ -67,7 +67,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .mark circle{transform-box:fill-box;transform-origin:center}
 .mark.blink .on{animation:pop 420ms var(--out) both;animation-delay:var(--d)}
 .mark.active .on{animation:glow 1.4s ease-in-out infinite;animation-delay:var(--d)}
-.mark.brand{background:var(--ink)}
+.mark.brand{fill:var(--ink);transform-origin:center}
 .mark.brand.blink{animation:markin 420ms var(--out) both}
 .mark.brand.active{animation:markbreathe 1.6s ease-in-out infinite}
 @keyframes markin{from{opacity:0;transform:scale(.8)}}
