@@ -27,7 +27,6 @@ export function Library({ go, say }: { go: (v: View) => void; say: (t: string) =
   useEffect(() => { sessionStorage.setItem('lb.libtab', tab) }, [tab])
   const skills = useApp((s) => s.skills)
   const packs = useApp((s) => s.packs)
-  const habits = useApp((s) => s.settings.habits) ?? []
   const counts: Record<Tab, number> = { playbooks: PLAYBOOKS.length, tools: CATALOG.length, packs: packs.length, habits: HABITS.length, skills: skills.length }
 
   return (
