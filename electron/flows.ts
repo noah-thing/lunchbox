@@ -109,7 +109,7 @@ export class Flows {
     const started = Date.now()
     if (f.every) f.next = nextRun(f, started + 60e3)
     const date = new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-    const vars = { date, last: this.last(f) }
+    const vars: { date: string; last?: string; previous?: string } = { date, last: this.last(f), previous: '' }
     const meta = this.engine.create({
       crew: f.crew, workspace: f.workspace, pack: f.pack, flow: f.id,
       name: `${f.name}, ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
@@ -128,8 +128,8 @@ export class Flows {
         const said = this.store.events(meta.id).findLast((e) => e.kind === 'say')
         // Stopping the room stops the flow; the next step would only start the work again.
         if (said?.kind === 'say' && said.error === 'Stopped') break
-        // {{last}} in a later step is what the step before it answered.
-        if (said?.kind === 'say' && said.text) vars.last = said.text.slice(0, 3000)
+        // {{last}} is how the last run ended; {{previous}} is what the step before this one answered.
+        if (said?.kind === 'say' && said.text) vars.previous = said.text.slice(0, 3000)
       }
       const events = this.store.events(meta.id)
       const last = events.findLast((e) => e.kind === 'say')

@@ -44,8 +44,11 @@ export function describe(f: Pick<Flow, 'every' | 'at' | 'day'>) {
 
 // {{date}} is today, {{last}} is what the previous run ended with, so a flow can say
 // "what changed since {{last}}" and pick up where it stopped.
-export function fill(text: string, vars: { date: string; last?: string }) {
-  return text.replace(/\{\{\s*date\s*\}\}/g, vars.date).replace(/\{\{\s*last\s*\}\}/g, vars.last?.trim() || 'nothing yet, this is the first run')
+export function fill(text: string, vars: { date: string; last?: string; previous?: string }) {
+  return text
+    .replace(/\{\{\s*date\s*\}\}/g, vars.date)
+    .replace(/\{\{\s*last\s*\}\}/g, vars.last?.trim() || 'nothing yet, this is the first run')
+    .replace(/\{\{\s*previous\s*\}\}/g, vars.previous?.trim() || 'nothing yet, this is the first step')
 }
 
 export type Group = 'code' | 'research' | 'writing' | 'business' | 'personal'
