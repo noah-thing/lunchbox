@@ -95,7 +95,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 /* Window: a dark frame holding one sheet. The frame is chrome, the sheet is work. */
 .app{height:100%;display:grid;grid-template-columns:232px 1fr}
 .sidebar{display:flex;flex-direction:column;padding:0 8px 8px;min-height:0}
-.sbtop{height:44px;flex:none;display:flex;align-items:center;padding:0 10px;color:var(--ink);-webkit-app-region:drag}
+.sbtop{height:44px;flex:none;display:flex;align-items:center;padding:0 7px;color:var(--ink);-webkit-app-region:drag}
 /* macOS: just after the window buttons (they end at 70px), on the same line */
 .sbtop.mac{padding-left:84px}
 .sbtop .logo{opacity:.92}
