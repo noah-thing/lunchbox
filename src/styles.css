@@ -85,10 +85,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .resolve{white-space:pre-wrap}
 .resolve .ghost{visibility:hidden}
 .field{display:block;width:100%}
-.ladder{display:inline-flex;gap:2px;flex:none}
-.ladder i{width:4px;height:10px;border-radius:1px;background:var(--cell)}
-.ladder i.on{background:var(--ink)}
-.ladder.l3 i.on:nth-child(3){background:var(--bad)}
+.modeicon{flex:none;color:var(--ink)}
+.modeicon.full{color:var(--bad)}
 .stack{display:inline-flex}
 .stack>span{display:flex;padding:2px;border-radius:4px;background:var(--sheet);margin-left:-4px;transition:transform 200ms var(--out)}
 .stack>span:first-child{margin-left:0}
@@ -258,7 +256,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
 .item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px;border-radius:8px;transition:background-color 120ms var(--out)}
-.item>.ladder,.item>.mark{margin-top:3px}
+.item>.modeicon,.item>.mark{margin-top:2px}
 .item .grow{display:flex;flex-direction:column}
 .item b{font-weight:500}
 .item .grow span{font-size:12px;color:var(--dim)}
@@ -597,3 +595,18 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .pullbar .bar b{font-weight:400;color:var(--ink)}
 .pullbar.done,.pullbar.done .bar b{color:var(--ink)}
 .pullbar.failed{color:var(--bad)}
+
+/* Onboarding: fixes and installs */
+.obfix{padding:12px 14px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--line);margin-top:10px;animation:land 360ms var(--out) both}
+.obmissing{display:flex;flex-direction:column;gap:2px;margin-top:16px;animation:land 360ms var(--out) both;animation-delay:120ms}
+.obmissing>small{font:11px var(--mono);color:var(--faint);padding-bottom:6px}
+.obmissing .row{margin-top:10px;gap:12px;font-size:12px}
+.obmiss{display:flex;align-items:center;gap:10px;height:30px;font-size:12.5px;color:var(--dim)}
+.obmiss .mark{opacity:.6}
+.obmiss .name{width:110px;flex:none}
+.obmiss .cmd{font:11.5px var(--mono);color:var(--faint);text-align:left;padding:3px 8px;border-radius:6px;transition:background-color 140ms var(--out),color 140ms var(--out);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (hover:hover){.obmiss .cmd:hover{background:var(--hover);color:var(--ink)}}
+.arow code.todo{color:var(--warn)}
+.obfix{margin:0 0 8px 30px}
+.seg button:has(.modeicon){display:inline-flex;align-items:center;gap:6px}
+.seg button.on .modeicon:not(.full){color:inherit}

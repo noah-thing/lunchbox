@@ -31,9 +31,16 @@ await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSi
 const shot = async (name, wait = 700) => { await page.waitForTimeout(wait); await page.screenshot({ path: out + name + '.png' }) }
 
 await page.waitForSelector('.onboard')
-for (let i = 0; i < 4; i++) { await page.keyboard.press('Enter'); await page.waitForTimeout(i ? 900 : 2600) }
+for (let i = 0; i < 4; i++) {
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(i ? 900 : 2600)
+  if (i === 0) await shot('00-onboard-agents', 600)
+}
 await page.waitForSelector('.newroom')
 await shot('01-home', 1200)
+await page.click('[aria-label^="Mode:"]')
+await shot('01b-modes', 400)
+await page.keyboard.press('Escape')
 
 await page.click('.composer textarea')
 await page.keyboard.type('Write a short note on agent limits')

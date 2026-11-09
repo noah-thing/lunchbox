@@ -131,7 +131,7 @@ export const CATALOG: Def[] = [
       parser: gemini(),
     }),
   },
-  { id: 'ollama', name: 'Ollama', short: 'Local', maker: 'On this computer', via: 'local', bin: 'ollama', provider: 'ollama', tools: false, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
+  { id: 'ollama', name: 'Ollama', short: 'Ollama', maker: 'On this computer', via: 'local', bin: 'ollama', provider: 'ollama', tools: false, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
   { id: 'lmstudio', name: 'LM Studio', short: 'LM Studio', maker: 'On this computer', via: 'local', bin: 'lms', provider: 'lmstudio', tools: false, mark: 'lmstudio', good: 'Any model you load in LM Studio, served locally', alphabet: '.-=≡#' },
   { id: 'llamacpp', name: 'llama.cpp', short: 'llama.cpp', maker: 'On this computer', via: 'local', bin: 'llama-server', provider: 'llamacpp', tools: false, mark: 'llamacpp', good: 'A llama-server on port 8080, or any server that speaks the OpenAI API there', alphabet: '.,:;+*' },
   { id: 'claude-api', name: 'Claude API', short: 'Claude API', maker: 'Anthropic', via: 'api', key: 'anthropic', tools: false, mark: 'claude', good: 'Pay per token, with prompt caching', alphabet: '.:-=+*#%@' },

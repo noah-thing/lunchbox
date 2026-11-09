@@ -5,6 +5,7 @@ import { Loader, Mark } from '../ui/bits'
 import { IconClose, IconFolder, IconPlay, IconPlus } from '../ui/icons'
 import { ACCESS, agentOf, ago, desk, reason, short, unavailable, upcoming, useApp } from '../lib/desk'
 import type { View } from '../App'
+import { ModeIcon } from '../ui/Access'
 
 type Draft = { id?: string; name: string; steps: FlowStep[]; crew: string[]; workspace: string; pack?: string; access: Access; every?: Every; at: string; day: number; on: boolean }
 
@@ -233,7 +234,7 @@ function Editor({ initial, go, say }: { initial: Draft; go: (v: View) => void; s
             </div>
             <div className="setting">
               <div className="grow"><b>Mode</b><span>{ACCESS.find((a) => a.id === d.access)?.line}</span></div>
-              <span className="seg">{ACCESS.map((a) => <button key={a.id} className={d.access === a.id ? 'on' : ''} onClick={() => set({ access: a.id })}>{a.name}</button>)}</span>
+              <span className="seg">{ACCESS.map((a) => <button key={a.id} className={d.access === a.id ? 'on' : ''} onClick={() => set({ access: a.id })}><ModeIcon id={a.id} />{a.name}</button>)}</span>
             </div>
           </div>
           {d.access === 'ask' && <p className="hint warn">In Ask mode a flow stops at the first edit and waits for you. Plan or Auto suit unattended runs better.</p>}
