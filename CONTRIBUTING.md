@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-You need Node 24. To work on rooms you don't need real agents: the tests and `npm run tour` use a test agent in `test/fake-agent.mjs` that speaks the same stream formats as Claude Code, Codex and Grok.
+You need Node 24. The tests and `npm run tour` use a fake agent in `test/fake-agent.mjs` that prints the same stream formats as Claude Code, Codex and Grok, so you can work on rooms without real agents.
 
 ## Before you open a pull request
 
@@ -23,9 +23,9 @@ CI runs both, plus the build, on macOS, Windows and Linux. If you change anythin
 ## Guidelines
 
 - **Policy lives in the main process.** Anything about what an agent may do belongs in `electron/policy.ts`, with a test in `scripts/test-policy.mjs`.
-- **Nothing fake.** No placeholder screens, sample data or buttons that do nothing.
-- **Every platform.** Paths, shells and processes go through `electron/system.ts`.
-- **Plain words.** Interface text is short and direct. No em dashes.
+- **Real data on screen.** Screens show what the app knows, and a button does what its label says.
+- **Three platforms.** Paths, shells and processes go through `electron/system.ts`.
+- **Plain words.** Keep interface text short and direct, without em dashes.
 - **Small commits** that say what changed and why.
 
 ## Reporting a problem

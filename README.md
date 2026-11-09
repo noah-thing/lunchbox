@@ -14,6 +14,16 @@
   <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-F2F0EA?style=flat-square&labelColor=121110&label=runs%20on" alt="Runs on macOS, Windows and Linux">
   <img src="https://img.shields.io/badge/Electron-45-F2F0EA?style=flat-square&labelColor=121110&logo=electron&logoColor=F2F0EA" alt="Electron 45">
   <img src="https://img.shields.io/badge/license-all%20rights%20reserved-F2F0EA?style=flat-square&labelColor=121110" alt="All rights reserved">
+  <a href="https://x.com/fsconfig"><img src="https://img.shields.io/badge/follow-%40fsconfig-F2F0EA?style=flat-square&labelColor=121110&logo=x&logoColor=F2F0EA" alt="Follow @fsconfig on X"></a>
+</p>
+
+<p align="center">
+  <a href="https://x.com/fsconfig">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/made-by-dark.svg">
+      <img src=".github/assets/made-by-light.svg" width="178" height="44" alt="Made by Noah, @fsconfig on X">
+    </picture>
+  </a>
 </p>
 
 <p align="center">
@@ -30,15 +40,15 @@
 
 https://github.com/user-attachments/assets/92e057ae-6206-4a41-ae07-bffed98bee19
 
-<p align="center"><sub>Recorded as it ran. Claude plans a hackathon announcement, Grok searches X, Codex draws the banner, builds the event page and runs the tests.</sub></p>
+<p align="center"><sub>A recording of a real room: Claude plans a hackathon announcement, Grok searches X, and Codex draws the banner, builds the event page and runs the tests.</sub></p>
 
 <br>
 
 ## What it is
 
-You probably pay for more than one AI tool. Lunchbox puts them in the same window and lets them work on the same task: Claude Code, Codex, Grok Build, Gemini CLI, local models through Ollama or LM Studio, and API keys from Anthropic, OpenAI, xAI, Google and others.
+Lunchbox runs your AI coding tools side by side in one window and lets them work on the same task. It supports Claude Code, Codex, Grok Build and Gemini CLI, local models through Ollama or LM Studio, and API keys from Anthropic, OpenAI, xAI, Google and others.
 
-Each tool runs as itself, signed in with your account and billed to your plan. Lunchbox has no server of its own and sells no access.
+Each tool uses your own login and plan. Your work goes from your computer to the company behind the tool, with no Lunchbox server in between.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/room-dark.png">
@@ -49,38 +59,38 @@ Each tool runs as itself, signed in with your account and billed to your plan. L
   <tr>
     <td width="50%" valign="top">
       <b>You pick who leads</b><br>
-      Your messages go to the agent you choose. It does the work and brings in another when that one is better at it, such as Grok for a search on X.
+      Your messages go to the agent you choose. It brings in a crewmate for the parts that crewmate does better, such as Grok for a search on X.
     </td>
     <td width="50%" valign="top">
-      <b>Briefings, not transcripts</b><br>
-      Agents that are not working get nothing. When one joins, it receives the goal, what the room has learned, the files changed and its task.
+      <b>Short briefings</b><br>
+      A crewmate starts with the goal, what the room has learned, the files changed and its task. Only the lead reads the whole conversation.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <b>When a plan runs out</b><br>
-      If an agent hits its usage limit, the next one in the crew takes over the same task and is told where things stand.
+      <b>Limits handled</b><br>
+      If an agent hits its usage limit, the next one in the crew takes the same task and gets a briefing on where it stands.
     </td>
     <td valign="top">
       <b>Proof for claims</b><br>
-      When an agent says the tests pass, Lunchbox looks for a passing run after the last edit. If there is none, it asks you.
+      An agent that says the tests pass needs a passing test run after its last edit. Without one, Lunchbox asks you what to do.
     </td>
   </tr>
   <tr>
     <td valign="top">
       <b>Prompt caching</b><br>
-      Requests are ordered so providers can reuse what they have already read. The Savings page shows what that saved.
+      Lunchbox orders each request so the provider can reuse what it read last time. The Savings page shows the tokens and money that saved.
     </td>
     <td valign="top">
       <b>Flows</b><br>
-      Steps that run on a schedule, like nightly checks, a morning X digest or a weekly SEO pass. 25 templates included.
+      Run steps on a schedule, such as a nightly test run or a weekly SEO check. Lunchbox comes with 25 templates to start from.
     </td>
   </tr>
 </table>
 
 ## Quick start
 
-**1. Install Lunchbox.** One line downloads the latest version for your computer, installs it and opens it.
+**1. Install Lunchbox.** Paste one line into a terminal. The script installs the latest version for your computer and opens it.
 
 ```sh
 # macOS and Linux
@@ -92,7 +102,7 @@ curl -fsSL https://raw.githubusercontent.com/noah-thing/lunchbox-releases/main/i
 irm https://raw.githubusercontent.com/noah-thing/lunchbox-releases/main/install.ps1 | iex
 ```
 
-Prefer a normal download? The dmg, the Windows installer, the deb and the AppImage are all under [Releases](https://github.com/noah-thing/lunchbox-releases/releases/latest). Lunchbox updates itself after that.
+You can also download the dmg, the Windows installer, the deb or the AppImage from [Releases](https://github.com/noah-thing/lunchbox-releases/releases/latest). After the first install, Lunchbox updates itself.
 
 **2. Have at least one agent.** Lunchbox finds the ones you have on first launch.
 
@@ -105,46 +115,46 @@ Prefer a normal download? The dmg, the Windows installer, the deb and the AppIma
 | Local models | [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai) or `llama-server` | none |
 | API keys | Anthropic, OpenAI, xAI, Google, OpenRouter and more | Agents page in the app |
 
-**3. Say what you want done** and press Enter.
+**3. Type what you want done** and press Enter.
 
 ## How it works
 
 ### Rooms
 
-A room has a goal, a crew and a folder. Without a folder, Lunchbox makes one inside `Documents/Lunchbox`, named after what you asked for.
+A room is a task with its own crew and folder. If you don't pick a folder, Lunchbox makes one inside `Documents/Lunchbox` and names it after your request.
 
 | | |
 | --- | --- |
-| **Main agent** | The first agent in the crew answers everything you do not address to someone else. Change it with Make main in the agent menu, or in Settings for new rooms. |
-| **Bringing others in** | The main agent can ask a crewmate a question, or bring one in for a piece of work. A line in the room says who joined and why, and another says when it stepped out. Writing `@codex` yourself brings Codex in the same way. |
-| **Memory** | The brief, answers between agents, changed files and anything you pin are kept as versioned blocks. An agent is sent only the blocks that changed since it last looked. |
-| **Proof** | When an agent says the build works, Lunchbox looks for a matching command that exited 0 after the last edit. If there isn't one, you decide what happens next. |
-| **Side by side** | Send one message to the whole crew and keep the answer you like. Your picks rate the agents per kind of work. |
-| **Rewind** | The folder is saved before every message, so any change can be undone. Rooms can be forked, replayed and exported. |
+| **Main agent** | The first agent in the crew answers your messages unless you name another agent. Make main in the agent menu changes it for the room; Settings sets it for new rooms. |
+| **Bringing others in** | The main agent can ask a crewmate a question or hand it a piece of work. The room shows a line when a crewmate joins, with the task, and another when it steps out. Writing `@codex` yourself brings Codex in the same way. |
+| **Memory** | Lunchbox keeps the brief, answers between agents, changed files and your pins as versioned blocks, and sends each agent only the blocks that changed since its last turn. |
+| **Proof** | If an agent says the build works, Lunchbox looks for a matching command that exited 0 after the last edit. If there isn't one, you decide what happens next. |
+| **Side by side** | Send one message to the whole crew and keep the answer you like. Each pick counts toward that agent's rating for the kind of work. |
+| **Rewind** | Lunchbox saves the folder before each message, so you can undo any change. You can also fork a room, replay it or export it. |
 
 ### Access
 
-You choose the mode per message, in the composer.
+You choose the mode for each message in the composer.
 
 | Mode | Agents can | Commands you run with `!` |
 | --- | --- | --- |
-| Plan | Read only | Reads run, the rest is refused |
-| Ask | Read freely, edits wait for you | Anything that writes asks first |
+| Plan | Read only | Reads run, Lunchbox refuses the rest |
+| Ask | Read anything, edits wait for you | Anything that writes asks first |
 | Auto | Edit and run inside the folder | Free inside the folder, outside asks |
 | Full access | Anything on the computer, without asking | Free, except wiping the disk or the home folder |
 
-Some commands never run in any mode, such as `rm -rf ~`. The rules live in [`electron/policy.ts`](electron/policy.ts) and have their own tests.
+Lunchbox blocks a few commands in all four modes, such as `rm -rf ~`. You can read the rules in [`electron/policy.ts`](electron/policy.ts) and their tests in `scripts/test-policy.mjs`.
 
 ### Pool, Savings, Packs and Flows
 
 - **Pool** adds up your plans and keys: what is left in each five hour and weekly window, when it resets, and which agent your picks rate highest for each kind of work.
 - **Savings** shows what prompt caching saved, per agent and per room.
-- **Packs** give a room instructions for one kind of work, such as software, research, SEO or writing. See [docs/packs.md](docs/packs.md) to write your own.
+- **Packs** give a room instructions for one kind of work, such as software, research, SEO or writing. [docs/packs.md](docs/packs.md) shows how to write your own.
 - **Flows** run a few steps on a schedule, each in a room of its own.
 
 ## Your data
 
-Everything stays on your computer.
+Lunchbox keeps its data on your computer.
 
 | What | Where |
 | --- | --- |
@@ -152,7 +162,7 @@ Everything stays on your computer.
 | API keys | The system keychain |
 | Agent logins | With each tool, untouched |
 
-Each room is one `.jsonl` file you can open in any editor. Plan limits are read with the login each tool already has, and that login only goes to the company that issued it. You can turn this off in Settings.
+Each room is one `.jsonl` file you can open in any editor. To show plan limits, Lunchbox reads them with the login each tool already has and sends that login only to the company that issued it. Settings has a switch to turn this off.
 
 ## Development
 
@@ -169,16 +179,7 @@ npm run tour        # drives the real app and saves screenshots to test/shots
 npm run dist        # installers for the current platform in release/
 ```
 
-CI runs the type check, tests and build on macOS, Windows and Linux for every pull request. [CONTRIBUTING.md](CONTRIBUTING.md) explains how changes are made and [docs/architecture.md](docs/architecture.md) how the code is laid out.
-
-## Made by
-
-<a href="https://x.com/fsconfig">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/maker-dark.png">
-    <img alt="Noah, @fsconfig on X" src=".github/assets/maker-light.png" width="157" height="64">
-  </picture>
-</a>
+CI runs the type check, the tests and the build on macOS, Windows and Linux for each pull request. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to propose a change, and [docs/architecture.md](docs/architecture.md) how the code is laid out.
 
 ## License
 
