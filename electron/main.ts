@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { extname, join } from 'node:path'
+import { extname, join, resolve, sep } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
 import type { Access, Flow, Settings, Skill } from '../shared/types'
 import { modelsFor } from './agents'
@@ -13,7 +13,11 @@ import { Remote } from './remote'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
 import { Snapshots } from './snap'
+import { Browser, type Device } from './browser'
+import { Toolbox } from './tools'
 import { Store, type Cipher } from './store'
+import { cancelPull, pull, start } from './local'
+import { Limits } from './limits'
 
 app.setName('Lunchbox')
 
@@ -31,8 +35,11 @@ const cipher: Cipher = {
 
 let store: Store
 let engine: Engine
+let limits: Limits
 let flows: Flows
 let remote: Remote
+let browser: Browser
+let toolbox: Toolbox
 const packs = () => loadPacks(store.packFiles())
 const name = (id: string) => engine.agents.find((a) => a.id === id)?.short ?? id
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'room'
@@ -51,6 +58,16 @@ function defaults() {
   return { crew: preferred.length ? preferred : ready.slice(0, 3), workspace: workspace() }
 }
 const workspace = () => process.env.LB_WORKSPACE || join(app.getPath('documents'), 'Lunchbox')
+
+// A room without a chosen folder gets its own, named after what it is for:
+// ~/Documents/Lunchbox/fix-the-signup-form. Tests set LB_FOLDER=shared to stage files in one place.
+function roomFolder(about: string) {
+  if (process.env.LB_FOLDER === 'shared') return workspace()
+  const slug = about.toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s-]/g, '').trim().split(/\s+/).filter(Boolean).slice(0, 5).join('-').slice(0, 48) || 'room'
+  let dir = join(workspace(), slug)
+  for (let n = 2; existsSync(dir); n++) dir = join(workspace(), `${slug}-${n}`)
+  return dir
+}
 
 function createWindow() {
   const dark = nativeTheme.shouldUseDarkColors
@@ -97,12 +114,27 @@ function wire() {
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
   h('agents', () => engine.agents)
   h('agents:refresh', () => engine.refresh())
+  h('limits', () => limits.get())
+  h('limits:refresh', () => limits.poll().then(() => limits.get()))
+  h('local:start', async (id: string) => {
+    const r = await start(id)
+    await engine.refresh()
+    return r
+  })
+  h('local:pull', (model: string) => {
+    pull(model, (p) => {
+      emit('local:pull', p)
+      if (p.finished) engine.refresh()
+    })
+  })
+  h('local:cancel', (model: string) => cancelPull(model))
   h('agents:models', (id: string) => modelsFor(id, store.keys()).catch((e: Error) => ({ error: e.message })))
   h('rooms', () => engine.summaries())
   h('room', (id: string) => ({ meta: store.room(id), events: store.events(id), live: engine.live(id) }))
-  h('room:create', (opts: { crew: string[]; workspace: string; pack?: string; name?: string }) => {
-    mkdirSync(opts.workspace, { recursive: true })
-    return engine.create(opts)
+  h('room:create', (opts: { crew: string[]; workspace: string; pack?: string; name?: string; about?: string }) => {
+    const folder = opts.workspace || roomFolder(opts.about ?? opts.name ?? '')
+    mkdirSync(folder, { recursive: true })
+    return engine.create({ ...opts, workspace: folder })
   })
   h('room:rename', (id: string, name: string) => engine.rename(id, name))
   h('room:remove', (id: string) => engine.remove(id))
@@ -113,6 +145,15 @@ function wire() {
   h('room:project', (id: string, on: boolean) => engine.setProject(id, on))
   h('room:rewind', (id: string, target: { event?: string; ref?: string }) => engine.rewind(id, target))
   h('room:changed', (id: string, event: string) => engine.changedSince(id, event))
+  h('room:changes', (id: string, event: string) => engine.changesFor(id, event))
+  h('room:show', (id: string, rel: string) => {
+    const ws = store.room(id)?.workspace
+    if (!ws) return 'missing'
+    const abs = resolve(ws, rel)
+    if (!abs.startsWith(resolve(ws) + sep) || !existsSync(abs)) return 'missing'
+    shell.showItemInFolder(abs)
+    return 'ok'
+  })
   h('room:export', async (id: string, kind: 'md' | 'html') => {
     const meta = store.room(id)
     if (!meta) return null
@@ -120,6 +161,15 @@ function wire() {
     return kind === 'md'
       ? saveAs('Export as Markdown', `${slug(meta.name)}.md`, 'md', markdown(meta, events, name))
       : saveAs('Export a replay', `${slug(meta.name)}.html`, 'html', replay(meta, events, name))
+  })
+  h('save:png', (dataUrl: string, file: string) => {
+    const m = dataUrl.match(/^data:image\/png;base64,(.+)$/)
+    if (!m || !win) return null
+    return dialog.showSaveDialog(win, { title: 'Save image', defaultPath: join(app.getPath('downloads'), file), filters: [{ name: 'PNG', extensions: ['png'] }] }).then((r) => {
+      if (r.canceled || !r.filePath) return null
+      writeFileSync(r.filePath, Buffer.from(m[1], 'base64'))
+      return r.filePath
+    })
   })
   h('attach', async () => {
     if (!win) return []
@@ -140,6 +190,22 @@ function wire() {
   h('flows:remove', (id: string) => flows.remove(id))
   h('flows:toggle', (id: string, on: boolean) => flows.toggle(id, on))
   h('flows:run', (id: string) => flows.run(id).room)
+  h('browser', () => browser.state())
+  h('browser:place', (b: { x: number; y: number; width: number; height: number } | null) => browser.place(b))
+  h('browser:open', (url: string) => browser.open(url))
+  h('browser:nav', (kind: 'back' | 'forward' | 'reload' | 'stop') => browser.nav(kind))
+  h('browser:device', (d: Device) => browser.setDevice(d))
+  h('browser:devtools', () => browser.devtools())
+  h('browser:local', () => browser.local())
+  h('browser:shot', async () => {
+    const file = join(app.getPath('downloads'), `lunchbox-${new Date().toISOString().replace(/[:.]/g, '-')}.png`)
+    await browser.screenshot(file)
+    shell.showItemInFolder(file)
+    return file
+  })
+  h('tools', () => toolbox.list())
+  h('tools:set', (id: string, patch: { on?: boolean; input?: string; secrets?: Record<string, string> }) => toolbox.configure(id, patch))
+  h('tools:secrets', (id: string) => Object.fromEntries(Object.keys(store.keys()).filter((k) => k.startsWith(`tool:${id}:`)).map((k) => [k.split(':')[2], true])))
   h('remote', () => remote.status())
   h('remote:set', async (patch: { on?: boolean; access?: Access; token?: string }) => {
     if (patch.token !== undefined) store.setKey('telegram', patch.token.trim())
@@ -229,7 +295,14 @@ app.whenReady().then(async () => {
   store = new Store(join(app.getPath('userData'), 'data'), cipher)
   const hands = new Hands()
   await hands.start().catch(() => {})
-  engine = new Engine(store, { emit, notify, packs }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
+  browser = new Browser(() => win, emit)
+  toolbox = new Toolbox(store, emit)
+  const tools = (who: string, folder: string, access: Access) => [
+    ...(store.settings.browser !== false && access !== 'plan' ? browser.tools(who, folder) : []),
+    ...toolbox.tools(),
+  ]
+  limits = new Limits(store, (l) => { emit('limits', l); emit('ledger', engine.ledger()) }, () => engine.agents.filter((a) => a.found && a.via === 'cli').map((a) => a.id))
+  engine = new Engine(store, { emit, notify, packs, tools, turned: (who, u) => limits.turned(who, u) }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
   flows = new Flows(store, engine, { emit, notify })
   remote = new Remote(store, engine, { emit, defaults })
   wire()
@@ -237,9 +310,11 @@ app.whenReady().then(async () => {
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
   createWindow()
   await engine.refresh()
+  limits.start()
   flows.start()
   remote.start()
+  toolbox.startAll()
 })
-app.on('before-quit', () => { flows?.stop(); remote?.stop(); store?.flush() })
+app.on('before-quit', () => { limits?.stop(); flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
 app.on('window-all-closed', () => { if (!mac) app.quit() })
 app.on('activate', () => { if (!win) createWindow() })

@@ -138,6 +138,13 @@ test('room: checkpoints, rewind and project memory', { skip: process.platform ==
   writeFileSync(join(work, 'page.html'), '<h1>hello</h1>')
   writeFileSync(join(work, 'extra.css'), 'h1{}')
   assert.deepEqual((await engine.changedSince(room.id, first.id)).sort(), ['extra.css', 'page.html'])
+  const diff = await engine.changesFor(room.id, first.id)
+  const page = diff.find((f) => f.path === 'page.html')!
+  assert.equal(page.status, 'modified')
+  assert.deepEqual([page.added, page.removed], [1, 1])
+  assert.match(page.patch, /^-<h1>v1<\/h1>$/m)
+  assert.match(page.patch, /^\+<h1>hello<\/h1>$/m)
+  assert.equal(diff.find((f) => f.path === 'extra.css')?.status, 'added')
 
   const r = await engine.rewind(room.id, { event: first.id })
   assert.equal(read(join(work, 'page.html'), 'utf8'), '<h1>v1</h1>')
@@ -188,5 +195,33 @@ test('flows: steps run in order and the run is recorded', { skip: process.platfo
   await again.done
   const second = store.events(again.room).filter((e) => e.kind === 'you')[1] as Extract<ReturnType<typeof store.events>[number], { kind: 'you' }>
   assert.ok(!second.text.includes('first run'), '{{last}} carries the previous run')
+  store.flush()
+})
+
+// Side by side: Codex is out, and its slot must not be handed to someone who is already answering.
+test('room: a failed side by side slot stays empty', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-arena-'))
+  const bin = join(root, 'bin')
+  const agent = join(process.cwd(), 'test', 'fake-agent.mjs')
+  require('node:fs').mkdirSync(bin)
+  for (const name of ['claude', 'codex', 'grok']) symlinkSync(agent, join(bin, name))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+  await engine.refresh()
+  const room = engine.create({ crew: ['codex', 'claude', 'grok'], workspace: root })
+  engine.send(room.id, 'testing', 'workspace', { arena: true })
+  await engine.idle(room.id)
+
+  const events = store.events(room.id)
+  const said = events.filter((e) => e.kind === 'say').map((e) => (e as { who: string }).who).sort()
+  assert.deepEqual(said, ['claude', 'grok'])
+  const wall = events.find((e) => e.kind === 'wall') as Extract<typeof events[number], { kind: 'wall' }>
+  assert.equal(wall.from, 'codex')
+  assert.equal(wall.to, '')
+  assert.ok(wall.arena)
   store.flush()
 })

@@ -2,9 +2,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { claudeLike, codex, limitOf, reason } from '../electron/agents/parse'
+import { claudeLike, codex, gemini, limitOf, plain, reason } from '../electron/agents/parse'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
+import { chat, PROVIDERS } from '../electron/agents/http'
+import { cacheSaving, claudeCost } from '../shared/prices'
+import { createServer } from 'node:http'
+import { pull, suggest } from '../electron/local'
+import type { Pull } from '../shared/types'
 import { asks, plan } from '../shared/plan'
 import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
@@ -115,6 +120,76 @@ test('context: a resumed agent only gets what changed', () => {
   assert.ok(p.sent < p.full)
 })
 
+test('context: an agent without a session gets the whole memory every turn', () => {
+  const meta: RoomMeta = {
+    id: 'r', name: 'Room', created: 0, updated: 0, crew: ['claude-api'], workspace: '/tmp', sessions: {}, heard: {},
+    seen: { 'claude-api': { brief: 1 } }, saved: { full: 0, sent: 0 },
+    blocks: [{ id: 'brief', title: 'Brief', text: 'Make a site', v: 1, at: 0 }],
+  }
+  const p = prompt(meta, [ev({ kind: 'you', text: 'Go on' })], 'claude-api', 'Go.', (id) => id, false)
+  assert.ok(p.tail.includes('Make a site'), 'a stateless agent must not lose the brief')
+  assert.equal(p.sent, p.full)
+})
+
+test('context: the conversation stays a stable prefix from turn to turn, even past the window', () => {
+  const meta: RoomMeta = { id: 'r', name: 'Room', created: 0, updated: 0, crew: ['claude-api'], workspace: '/tmp', sessions: {}, heard: {}, seen: {}, saved: { full: 0, sent: 0 }, blocks: [] }
+  const events: Event[] = []
+  let kept = 0, turns = 0, previous: string[] = []
+  for (let i = 0; i < 120; i++) {
+    events.push(ev({ kind: 'you', text: `Message ${i} ` + 'words '.repeat(80) }))
+    const { history } = prompt(meta, events, 'claude-api', 'Go.', (id) => id, false)
+    if (previous.length) {
+      turns++
+      if (previous.every((l, j) => history[j] === l)) kept++
+    }
+    previous = history
+  }
+  // Past the window the start moves in steps, so nearly every turn can read its prefix from cache.
+  assert.ok(kept / turns > 0.85, `prefix kept on ${kept} of ${turns} turns`)
+})
+
+test('cache: Anthropic requests carry a breakpoint on the last history block and report the saving', async () => {
+  let body: any = null
+  const server = createServer((req, res) => {
+    let raw = ''
+    req.on('data', (c) => { raw += c })
+    req.on('end', () => {
+      body = JSON.parse(raw)
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.end([
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":40,"cache_read_input_tokens":10000,"cache_creation_input_tokens":200}}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Done."}}',
+        'data: {"type":"message_delta","usage":{"output_tokens":3}}',
+        '',
+      ].join('\n\n'))
+    })
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()))
+  const base = PROVIDERS.anthropic.base
+  PROVIDERS.anthropic.base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  try {
+    const r = await chat('anthropic', 'k', 'claude-opus-5-5', 'Rules', 'Memory and task', AbortSignal.timeout(5000), () => {}, ['Head', 'Person: one', 'Claude: two'], 'r:claude-api')
+    const blocks = body.messages[0].content
+    assert.equal(blocks.length, 4)
+    assert.deepEqual(blocks[2].cache_control, { type: 'ephemeral' }, 'breakpoint on the last history block')
+    assert.equal(blocks[3].cache_control, undefined, 'the changing part is never cached')
+    assert.equal(blocks[3].text, 'Memory and task')
+    assert.equal(r.usage.cached, 10000)
+    assert.equal(r.usage.written, 200)
+    assert.equal(r.usage.saved, cacheSaving('claude-opus-5-5', 10000, 200))
+    assert.ok((r.usage.saved ?? 0) > 0.03)
+  } finally {
+    PROVIDERS.anthropic.base = base
+    server.close()
+  }
+})
+
+test('cache: savings are only priced for models with a known price', () => {
+  assert.equal(cacheSaving('gpt-unknown', 1000, 0), null)
+  assert.ok((cacheSaving('claude-sonnet-5-5', 1_000_000, 0) ?? 0) > 1.7)
+  assert.ok((cacheSaving('claude-sonnet-5-5', 0, 1_000_000) ?? 0) < 0, 'a cold write costs extra')
+})
+
 test('route: messages are sorted into kinds of work', () => {
   assert.equal(classify('What are people saying on X about the launch today?'), 'live')
   assert.equal(classify('Fix the failing test in the auth module'), 'code')
@@ -178,4 +253,138 @@ test('export: markdown and a self contained replay', () => {
   assert.ok(html.includes('<b>limits</b>') && html.includes('<code>npm test</code>'))
   assert.equal(html.match(/<section /g)?.length, 3)
   assert.ok(!/src="http|href="http[^"]*\.css/.test(html), 'nothing is fetched')
+})
+
+test('pulling a local model reports the model layer, then ready', async () => {
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+    const lines = [
+      { status: 'pulling manifest' },
+      { status: 'pulling a1', total: 5000, completed: 2000 },
+      { status: 'pulling b2', total: 40, completed: 40 },
+      { status: 'pulling a1', total: 5000, completed: 5000 },
+      { status: 'success' },
+    ]
+    res.end(lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()))
+  const base = PROVIDERS.ollama.base
+  PROVIDERS.ollama.base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`
+  try {
+    const seen: Pull[] = []
+    await pull('qwen3:8b', (p) => seen.push(p))
+    const last = seen[seen.length - 1]
+    assert.equal(last.finished, true)
+    assert.equal(last.total, 5000, 'a small layer never replaces the model layer')
+    assert.equal(last.done, 5000)
+    assert.match(suggest().model, /^qwen3:/)
+  } finally {
+    PROVIDERS.ollama.base = base
+    server.close()
+  }
+})
+
+test('provider JSON errors read as a sentence', () => {
+  const raw = '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-terra\' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}'
+  assert.match(plain(raw), /^its model gpt-6\.1-terra is not available on a ChatGPT plan/)
+  assert.equal(plain('{"error":{"message":"Overloaded"}}'), 'Overloaded')
+  assert.equal(plain('plain words stay'), 'plain words stay')
+})
+
+// The Savings page is only as true as these numbers, so they are checked against a real turn.
+test('savings: Claude Code turn is priced exactly like Anthropic bills it', () => {
+  const { turn } = feed(claudeLike(), fixture('claude'))
+  const u = turn.usage
+  assert.equal(u.cached, 51804)
+  assert.equal(u.written, 29259)
+  assert.equal(u.input, 4 + 29259, 'input counts what was billed in full, writes included')
+  // Our price table rebuilds Claude Code's own cost for the call to the cent fraction.
+  const ours = claudeCost('claude-haiku-5-5', { input: 4, read: 51804, output: 398, short: 29259 })!
+  assert.ok(Math.abs(ours - u.cost) < 1e-6, `${ours} vs ${u.cost}`)
+  // Saved: 51804 reads at $0.09 off each million, minus a quarter of $0.10 on 29259 writes.
+  assert.ok(Math.abs((u.saved ?? 0) - (51804 * 0.09 - 29259 * 0.025) / 1e6) < 1e-9)
+})
+
+test('savings: hour long cache writes cost double, not a quarter extra', () => {
+  const short = cacheSaving('claude-sonnet-5-5', 100000, { short: 20000 })!
+  const hour = cacheSaving('claude-sonnet-5-5', 100000, { short: 0, hour: 20000 })!
+  assert.ok(Math.abs(short - (100000 * 1.8 - 20000 * 0.5) / 1e6) < 1e-9)
+  assert.ok(Math.abs(hour - (100000 * 1.8 - 20000 * 2) / 1e6) < 1e-9)
+  assert.equal(cacheSaving('gpt-6', 100000, 0), null, 'unknown prices stay in tokens')
+})
+
+test('savings: Gemini CLI cached tokens are not counted twice', () => {
+  const p = gemini()
+  p.line({ type: 'result', status: 'success', stats: { total_tokens: 1300, input_tokens: 1200, output_tokens: 100, cached: 800, input: 400 } })
+  assert.deepEqual([p.turn.usage.input, p.turn.usage.cached], [400, 800])
+  const q = gemini()
+  q.line({ type: 'result', status: 'success', stats: { input_tokens: 1200, output_tokens: 100, cached: 800 } })
+  assert.equal(q.turn.usage.input, 400)
+})
+
+test('savings: the ledger sums per day, per agent and per room', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const store = new Store(mkdtempSync(join(tmpdir(), 'lb-ledger-')), { seal: (t: string) => t, open: (t: string) => t })
+  store.record('claude', 'r1', { input: 1000, output: 50, cached: 9000, cost: 0.01, written: 1000, saved: 0.02, kept: 300 })
+  store.record('claude', 'r2', { input: 500, output: 20, cached: 4000, cost: 0.005, saved: 0.01 })
+  store.record('grok', 'r1', { input: 700, output: 10, cached: 300, cost: 0.002 })
+  const t = store.totals()
+  const today = t.days[t.days.length - 1]
+  assert.equal(t.days.length, 14)
+  const now = new Date()
+  assert.equal(today.day, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`, 'days are local dates')
+  assert.deepEqual([today.input, today.cached, today.kept], [2200, 13300, 300])
+  assert.ok(Math.abs(today.saved - 0.03) < 1e-12)
+  assert.deepEqual([t.week.claude.cached, t.week.claude.kept, t.week.grok.cached], [13000, 300, 300])
+  assert.ok(Math.abs((t.rooms.r1.saved ?? 0) - 0.02) < 1e-12)
+  assert.equal(t.rooms.r1.input, 1700)
+})
+
+test('plan limits: windows are sized in cost per percent, trusting the upper measurements', async () => {
+  const { windowSize, roughSize } = await import('../electron/limits')
+  const w = (start: number, pts: [number, number][]) => pts.map(([pct, units], i) => ({ at: start + i * 60e3, pct, units, start }))
+  // Three clean windows of about 120 credits and one where another computer used the plan,
+  // which made the percentage climb with fewer credits here.
+  const readings = [
+    ...w(1, [[2, 2.4], [30, 36]]),
+    ...w(2, [[0, 0], [50, 61]]),
+    ...w(3, [[10, 12], [40, 47]]),
+    ...w(4, [[5, 3], [60, 20]]),
+  ]
+  const size = windowSize(readings, 8)!
+  assert.ok(size > 115 && size < 125, `about 120 credits, got ${size}`)
+  assert.equal(windowSize(w(5, [[1, 1], [3, 3]]), 8), undefined, 'too little movement to trust')
+  assert.equal(roughSize(30, 25), 120)
+  assert.equal(roughSize(10, 0), undefined)
+})
+
+test('plan limits: Codex credits follow the published rates per model', async () => {
+  const { codexCredits } = await import('../shared/prices')
+  assert.equal(codexCredits('gpt-6-astra', { fresh: 1e6, cached: 0, output: 0 }), 250)
+  assert.equal(codexCredits('gpt-6.1-terra', { fresh: 0, cached: 1e6, output: 1e6 }), 1.25 + 125)
+  assert.equal(codexCredits('some-new-model', { fresh: 1e6, cached: 0, output: 0 }), 50, 'unlisted models count like GPT-6 Sol')
+})
+
+test('plan limits: tallies read logs once and pick up only what was added', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const home = mkdtempSync(join(tmpdir(), 'lb-tally-'))
+  process.env.CLAUDE_CONFIG_DIR = join(home, '.claude')
+  mkdirSync(join(home, '.claude', 'projects', 'p'), { recursive: true })
+  const file = join(home, '.claude', 'projects', 'p', 's.jsonl')
+  const line = (id: string, at: string, u: object) => JSON.stringify({ type: 'assistant', timestamp: at, requestId: 'r' + id, message: { id, usage: u } }) + '\n'
+  const t = new Date().toISOString()
+  writeFileSync(file, line('a', t, { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 5000, output_tokens: 20 }) + line('a', t, { input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 5000, output_tokens: 20 }))
+  const { update, used } = await import('../electron/tally')
+  const tally = { files: {} }
+  await update('claude', tally, Date.now() - 3600e3)
+  const u = used(tally, Date.now() - 3600e3)
+  assert.deepEqual([u.all, u.fresh], [5130, 130], 'a message written twice counts once')
+  assert.ok(u.units > 0, 'priced at list rates')
+  appendFileSync(file, line('b', t, { input_tokens: 5, output_tokens: 5 }))
+  await update('claude', tally, Date.now() - 3600e3)
+  assert.equal(used(tally, Date.now() - 3600e3).fresh, 140)
+  delete process.env.CLAUDE_CONFIG_DIR
 })

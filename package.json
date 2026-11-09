@@ -3,12 +3,13 @@
   "productName": "Lunchbox",
   "version": "0.1.0",
   "private": true,
-  "description": "Every AI you use, working as one.",
+  "description": "The AI tools you already pay for, working together in one room.",
   "author": {
     "name": "Noah",
     "email": "261804785+noah-thing@users.noreply.github.com"
   },
   "license": "UNLICENSED",
+  "repository": "github:noah-thing/lunchbox",
   "type": "module",
   "main": "out/main.cjs",
   "scripts": {

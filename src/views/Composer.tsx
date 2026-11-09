@@ -1,16 +1,36 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Mark } from '../ui/bits'
+import { Mark, Thumb } from '../ui/bits'
 import { Menu, ModePicker } from '../ui/Access'
-import { IconSplit, IconStop, IconUp } from '../ui/icons'
-import { agentOf, machine, unavailable, useApp, type Access } from '../lib/desk'
+import { IconClip, IconClose, IconSplit, IconStop, IconUp } from '../ui/icons'
+import { agentOf, desk, machine, unavailable, useApp, type Access } from '../lib/desk'
+import { PLAYBOOKS, fillPlaybook } from '../../shared/skills'
 
 type Suggestion = { key: string; label: string; hint: string; insert: string; mark?: string }
 
-export function Composer({ crew, setCrew, onSend, access, setAccess, busy = false, onStop, arena = false, setArena, draft, autoFocus = true, placeholder, pack }: {
-  crew: string[]; setCrew: (c: string[]) => void; onSend: (t: string) => void; access: Access; setAccess: (a: Access) => void
-  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; draft?: { text: string; n: number }; autoFocus?: boolean; placeholder?: string; pack?: string
+export function Composer({ crew, setCrew, onSend, access, setAccess, busy = false, onStop, arena = false, setArena, draft, autoFocus = true, placeholder, pack, folder }: {
+  crew: string[]; setCrew: (c: string[]) => void; onSend: (t: string, files?: string[]) => void; access: Access; setAccess: (a: Access) => void
+  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; draft?: { text: string; n: number }; autoFocus?: boolean; placeholder?: string; pack?: string; folder?: string
 }) {
   const [text, setText] = useState('')
+  const [files, setFiles] = useState<string[]>([])
+  const [over, setOver] = useState(false)
+  const addFiles = (paths: string[]) => setFiles((f) => [...new Set([...f, ...paths.filter(Boolean)])].slice(0, 12))
+  const attach = async () => addFiles(await desk.call('attach'))
+  // Dropped files keep their path; pasted images have none, so they are written to the folder.
+  const take = async (list: FileList | null) => {
+    if (!list?.length) return false
+    const out: string[] = []
+    for (const f of Array.from(list)) {
+      const path = desk.pathOf?.(f)
+      if (path) { out.push(path); continue }
+      if (!f.type.startsWith('image/')) continue
+      const data = await new Promise<string>((done) => { const r = new FileReader(); r.onload = () => done(String(r.result)); r.readAsDataURL(f) })
+      const saved = await desk.call('attach:data', data, f.type.split('/')[1] || 'png', folder)
+      if (saved) out.push(saved)
+    }
+    addFiles(out)
+    return out.length > 0
+  }
   const [at, setAt] = useState(0)
   const [caret, setCaret] = useState(0)
   const area = useRef<HTMLTextAreaElement>(null)
@@ -50,9 +70,10 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
     const q = slash[1].toLowerCase()
     const checks = packs.find((p) => p.id === pack)?.checks ?? []
     suggestions = [
-      ...skills.map((s) => ({ key: s.id, label: s.name, hint: `Skill, ${s.steps.length} steps`, insert: `${s.brief}\n\nSteps that worked last time:\n${s.steps.map((x) => `- ${x}`).join('\n')}` })),
       ...checks.map((c) => ({ key: c.command, label: c.label, hint: c.command, insert: `!${c.command}` })),
-    ].filter((s) => s.label.toLowerCase().includes(q)).slice(0, 7)
+      ...skills.map((s) => ({ key: s.id, label: s.name, hint: `Skill, ${s.steps.length} steps`, insert: `${s.brief}\n\nSteps that worked last time:\n${s.steps.map((x) => `- ${x}`).join('\n')}` })),
+      ...PLAYBOOKS.map((p) => ({ key: `p-${p.id}`, label: p.name, hint: `${p.field} · ${p.line}`, insert: fillPlaybook(p, '') })),
+    ].filter((s) => s.label.toLowerCase().includes(q) || s.hint.toLowerCase().includes(q)).slice(0, 8)
   }
   const pickSuggestion = (s: Suggestion) => {
     const start = mention ? caret - mention[2].length - 1 : 0
@@ -64,9 +85,10 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
 
   const shell = text.startsWith('!')
   const submit = () => {
-    if (!text.trim()) return
-    onSend(text.trim())
+    if (!text.trim() && !files.length) return
+    onSend(text.trim() || 'Have a look at the attached files.', files.length ? files : undefined)
     setText('')
+    setFiles([])
     setCaret(0)
   }
   const ready = crew.filter((id) => !unavailable(agentOf(id, agents)))
@@ -74,7 +96,21 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   const listed = [...agents].filter((a) => a.found || crew.includes(a.id)).sort((a, b) => Number(!!unavailable(a)) - Number(!!unavailable(b)))
 
   return (
-    <div className={`composer${shell ? ' shell' : ''}${arena ? ' arena' : ''}`}>
+    <div className={`composer${shell ? ' shell' : ''}${arena ? ' arena' : ''}${over ? ' over' : ''}`}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setOver(true) } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(false) }}
+      onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files) }}>
+      {files.length > 0 && (
+        <div className="attached">
+          {files.map((f) => (
+            <span key={f} className="file" title={f}>
+              <Thumb path={f} />
+              <span>{f.split(/[\\/]/).pop()}</span>
+              <button onClick={() => setFiles(files.filter((x) => x !== f))} aria-label="Remove"><IconClose /></button>
+            </span>
+          ))}
+        </div>
+      )}
       {suggestions.length > 0 && (
         <div className="suggest" role="listbox">
           {suggestions.map((s, i) => (
@@ -89,6 +125,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
         placeholder={placeholder ?? 'Message the room'}
         onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart); setAt(0) }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+        onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); take(e.clipboardData.files) } }}
         onKeyDown={(e) => {
           if (suggestions.length) {
             if (e.key === 'ArrowDown') { e.preventDefault(); return setAt(at + 1) }
@@ -124,10 +161,11 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
         {shell && <span className="shellnote">Runs on {machine()}</span>}
         {!shell && ready.length < crew.length && <span className="shellnote">{crew.length - ready.length} unavailable</span>}
         <span className="spacer" />
+        {!shell && <button className="iconbtn" onClick={attach} aria-label="Attach files" title="Attach files, or drop and paste them"><IconClip /></button>}
         <ModePicker value={access} onChange={setAccess} />
         {busy && !text.trim() && onStop
           ? <button className="send stop" onClick={onStop} aria-label="Stop" title="Stop (Esc)"><IconStop /></button>
-          : <button className="send" disabled={!text.trim()} onClick={submit} aria-label="Send"><IconUp /></button>}
+          : <button className="send" disabled={!text.trim() && !files.length} onClick={submit} aria-label="Send"><IconUp /></button>}
       </div>
     </div>
   )

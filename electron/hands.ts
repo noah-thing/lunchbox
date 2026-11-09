@@ -7,6 +7,8 @@ export type Tool = {
   description: string
   input: Record<string, unknown>
   required?: string[]
+  // A complete JSON schema, for tools passed through from another MCP server.
+  schema?: Record<string, unknown>
   run(args: Record<string, unknown>): Promise<string>
 }
 
@@ -82,7 +84,7 @@ export class Hands {
           protocolVersion: VERSIONS.includes(asked) ? asked : VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'lunchbox', version: '1' },
-          instructions: 'Tools from the Lunchbox room you are working in: your crewmates, their abilities and the room\'s shared memory.',
+          instructions: 'Tools from the Lunchbox room you are working in: your crewmates, their abilities, the room\'s shared memory, the Lunchbox browser the person can watch, and any tools they connected.',
         })
       }
       case 'ping':
@@ -92,7 +94,7 @@ export class Hands {
           tools: tools.map((t) => ({
             name: t.name,
             description: t.description,
-            inputSchema: { type: 'object', properties: t.input, required: t.required ?? Object.keys(t.input) },
+            inputSchema: t.schema ?? { type: 'object', properties: t.input, required: t.required ?? Object.keys(t.input) },
           })),
         })
       case 'tools/call': {

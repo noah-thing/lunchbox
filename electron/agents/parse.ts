@@ -1,3 +1,4 @@
+import { cacheSaving } from '../../shared/prices'
 import type { Act, Usage } from '../../shared/types'
 
 // Each CLI prints one JSON object per line. A parser folds those lines into a Turn and reports
@@ -15,6 +16,23 @@ export type Turn = {
 }
 
 export type Update = { delta?: string; acts?: Act[]; working?: string }
+
+// Claude Code reports cache reads and writes per model, so the saving is priced per model at API
+// rates. A subscription pays nothing per token; this is what the same work would have cost.
+function claudeSaved(models: Record<string, any> | undefined) {
+  const rows = Object.entries(models ?? {})
+  const parts = rows.length
+    ? rows.map(([m, r]) => {
+        // Claude Code reports writes by lifetime; an hour entry costs twice the input price, not 1.25.
+        const all = r.cacheCreationInputTokens ?? 0
+        const hour = r.cacheCreationEphemeral1hInputTokens ?? 0
+        const prompt = (r.inputTokens ?? 0) + (r.cacheReadInputTokens ?? 0) + all
+        return cacheSaving(m, r.cacheReadInputTokens ?? 0, { short: Math.max(0, all - hour), hour }, prompt)
+      })
+    : []
+  const known = parts.filter((x): x is number => x !== null)
+  return known.length ? known.reduce((a, b) => a + b, 0) : undefined
+}
 
 export const newTurn = (): Turn => ({ text: '', final: '', acts: [], usage: { input: 0, output: 0, cached: 0, cost: 0 }, denied: [] })
 
@@ -66,6 +84,11 @@ export function claudeLike() {
         return null
       case 'stream_event': {
         const d = o.event?.delta
+        // A turn that writes, uses a tool, then writes again: keep the parts as paragraphs.
+        if (o.event?.type === 'content_block_start' && o.event.content_block?.type === 'text' && turn.text.trim() && !turn.text.endsWith('\n\n')) {
+          turn.text += '\n\n'
+          return { delta: '\n\n' }
+        }
         if (o.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
           streamed = true
           turn.text += d.text
@@ -104,6 +127,8 @@ export function claudeLike() {
           output: u.output_tokens ?? 0,
           cached: u.cache_read_input_tokens ?? 0,
           cost: o.total_cost_usd ?? Object.values(o.modelUsage ?? {}).reduce((n: number, m: any) => n + (m.costUSD ?? 0), 0),
+          written: u.cache_creation_input_tokens ?? 0,
+          saved: claudeSaved(o.modelUsage),
         }
         if (typeof o.result === 'string') turn.final = o.result
         if (o.session_id) turn.session = o.session_id
@@ -129,7 +154,7 @@ export function codex() {
         turn.session = o.thread_id
         return null
       case 'item.started':
-        if (o.item?.type === 'command_execution') return { working: unwrap(o.item.command) }
+        if (o.item?.type === 'command_execution') return { working: `$ ${unwrap(o.item.command)}` }
         return null
       case 'item.completed': {
         const it = o.item ?? {}
@@ -196,7 +221,9 @@ export function gemini() {
         return null
       case 'result': {
         const s = o.stats ?? {}
-        turn.usage = { input: s.input_tokens ?? s.input ?? 0, output: s.output_tokens ?? 0, cached: s.cached ?? s.cached_tokens ?? 0, cost: 0 }
+        // input_tokens counts the cached part too; `input` is what was billed in full.
+        const cached = s.cached ?? s.cached_tokens ?? 0
+        turn.usage = { input: s.input ?? Math.max(0, (s.input_tokens ?? 0) - cached), output: s.output_tokens ?? 0, cached, cost: 0 }
         if (o.status && o.status !== 'success') turn.error ??= o.error?.message ?? 'Gemini stopped'
         return null
       }
@@ -232,5 +259,20 @@ export function limitOf(text: string): { until: number } | null {
 export function reason(stderr: string) {
   const lines = stderr.split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/^at\s|node:internal|^\s*\^/.test(l))
   const hit = lines.find((l) => /not supported|no longer supported|migrate|sign ?in|log ?in|auth|api key|quota|limit|not found|permission|denied|error/i.test(l))
-  return (hit ?? lines.pop() ?? '').replace(/^(error|fatal):\s*/i, '').slice(0, 300)
+  return plain((hit ?? lines.pop() ?? '').replace(/^(error|fatal):\s*/i, '')).slice(0, 300)
+}
+
+// CLIs often pass the provider's JSON error straight through. Keep the sentence a person needs.
+export function plain(text: string) {
+  const start = text.indexOf('{')
+  let message = text
+  if (start >= 0) {
+    try {
+      const o = JSON.parse(text.slice(start))
+      message = o.error?.message ?? o.message ?? (typeof o.error === 'string' ? o.error : text)
+    } catch {}
+  }
+  const model = message.match(/['"`]([\w.:-]+)['"`] model is not supported when using Codex with a ChatGPT account/)
+  if (model) return `its model ${model[1]} is not available on a ChatGPT plan. Pick another model for Codex in Agents, or change model in ~/.codex/config.toml`
+  return message.replace(/\s+/g, ' ').trim()
 }

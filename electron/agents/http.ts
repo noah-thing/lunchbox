@@ -1,4 +1,5 @@
 import type { Usage } from '../../shared/types'
+import { cacheSaving, claudeCost } from '../../shared/prices'
 
 type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp }
 
@@ -9,11 +10,13 @@ export const PROVIDERS: Record<string, Provider> = {
   openrouter: { base: 'https://openrouter.ai/api/v1', style: 'openai', prefer: /^openrouter\/auto$/ },
   google: { base: 'https://generativelanguage.googleapis.com/v1beta', style: 'google', prefer: /flash/ },
   ollama: { base: 'http://127.0.0.1:11434/api', style: 'ollama', prefer: /./ },
+  lmstudio: { base: 'http://127.0.0.1:1234/v1', style: 'openai', prefer: /./ },
+  llamacpp: { base: 'http://127.0.0.1:8080/v1', style: 'openai', prefer: /./ },
 }
 
 function headers(style: Provider['style'], key: string): Record<string, string> {
   if (style === 'anthropic') return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
-  if (style === 'openai') return { authorization: `Bearer ${key}`, 'content-type': 'application/json' }
+  if (style === 'openai' && key) return { authorization: `Bearer ${key}`, 'content-type': 'application/json' }
   return { 'content-type': 'application/json' }
 }
 
@@ -29,7 +32,7 @@ async function failure(res: Response) {
 
 export async function listModels(name: string, key: string): Promise<string[]> {
   const p = PROVIDERS[name]
-  const signal = AbortSignal.timeout(name === 'ollama' ? 1500 : 8000)
+  const signal = AbortSignal.timeout(p.base.startsWith('http://127.') ? 1500 : 8000)
   if (p.style === 'ollama') {
     const res = await fetch(`${p.base}/tags`, { signal })
     if (!res.ok) throw await failure(res)
@@ -74,13 +77,20 @@ async function* lines(res: Response) {
   if (buf.trim()) yield buf.trim()
 }
 
+// The conversation as one user message ahead of the task, so its text is an unchanged prefix.
+const turnsOf = (history: string[]) => (history.length ? [{ role: 'user', content: history.join('\n\n') }] : [])
+
 const data = (line: string) => {
   const raw = line.startsWith('data:') ? line.slice(5).trim() : line
   if (!raw || raw === '[DONE]' || line.startsWith('event:')) return null
   try { return JSON.parse(raw) } catch { return null }
 }
 
-export async function chat(name: string, key: string, model: string, system: string, prompt: string, signal: AbortSignal, onDelta: (d: string) => void) {
+// history is the conversation, which only grows at the end; prompt is what changes every turn.
+// Keeping them apart lets every provider cache the history as a prefix: Anthropic through an
+// explicit breakpoint on its last block, OpenAI, xAI and Gemini automatically, Ollama by keeping
+// the model and its prompt cache loaded between turns.
+export async function chat(name: string, key: string, model: string, system: string, prompt: string, signal: AbortSignal, onDelta: (d: string) => void, history: string[] = [], cacheKey = '') {
   const p = PROVIDERS[name]
   const id = await pick(name, key, model)
   const usage: Usage = { input: 0, output: 0, cached: 0, cost: 0 }
@@ -89,14 +99,18 @@ export async function chat(name: string, key: string, model: string, system: str
   let res: Response
 
   if (p.style === 'anthropic') {
-    // The room protocol rarely changes between turns, so it is marked for caching; repeat turns
-    // then pay for it at the cached rate.
+    let start: { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number } } = {}
+    // One block per message of the conversation and a breakpoint on the last one. The next turn
+    // finds that breakpoint again within the 20 block lookback and reads everything before it
+    // from cache; only the new messages, the memory and the task are billed in full.
+    const blocks: { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[] = history.map((text) => ({ type: 'text', text }))
+    if (blocks.length) blocks[blocks.length - 1].cache_control = { type: 'ephemeral' }
     res = await fetch(`${p.base}/messages`, {
       method: 'POST', signal, headers: headers(p.style, key),
       body: JSON.stringify({
         model: id, max_tokens: 8192, stream: true,
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
       }),
     })
     if (!res.ok) throw await failure(res)
@@ -105,17 +119,28 @@ export async function chat(name: string, key: string, model: string, system: str
       if (!o) continue
       if (o.type === 'content_block_delta') push(o.delta?.text)
       if (o.type === 'message_start') {
-        const u = o.message?.usage ?? {}
-        usage.input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
-        usage.cached = u.cache_read_input_tokens ?? 0
+        start = o.message?.usage ?? {}
+        usage.input = (start.input_tokens ?? 0) + (start.cache_creation_input_tokens ?? 0)
+        usage.cached = start.cache_read_input_tokens ?? 0
+        usage.written = start.cache_creation_input_tokens ?? 0
       }
       if (o.type === 'message_delta') usage.output = o.usage?.output_tokens ?? usage.output
       if (o.type === 'error') throw new Error(o.error?.message ?? 'Anthropic stream error')
     }
+    // The API reports tokens, not dollars, so price the call here once the output is known.
+    const hour = start.cache_creation?.ephemeral_1h_input_tokens ?? 0
+    const writes = { short: Math.max(0, (usage.written ?? 0) - hour), hour }
+    usage.cost = claudeCost(id, { input: start.input_tokens ?? 0, read: usage.cached, output: usage.output, ...writes }) ?? 0
+    usage.saved = cacheSaving(id, usage.cached, writes, usage.input + usage.cached) ?? undefined
   } else if (p.style === 'openai') {
     res = await fetch(`${p.base}/chat/completions`, {
       method: 'POST', signal, headers: headers(p.style, key),
-      body: JSON.stringify({ model: id, stream: true, stream_options: { include_usage: true }, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
+      body: JSON.stringify({
+        model: id, stream: true, stream_options: { include_usage: true },
+        messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }],
+        // OpenAI routes requests with the same key to the same cache; other compatible APIs ignore it.
+        ...(name === 'openai' && cacheKey ? { prompt_cache_key: cacheKey } : {}),
+      }),
     })
     if (!res.ok) throw await failure(res)
     for await (const line of lines(res)) {
@@ -131,7 +156,7 @@ export async function chat(name: string, key: string, model: string, system: str
   } else if (p.style === 'google') {
     res = await fetch(`${p.base}/models/${id}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`, {
       method: 'POST', signal, headers: headers(p.style, key),
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [...history.map((text) => ({ text })), { text: prompt }] }] }),
     })
     if (!res.ok) throw await failure(res)
     for await (const line of lines(res)) {
@@ -144,7 +169,7 @@ export async function chat(name: string, key: string, model: string, system: str
   } else {
     res = await fetch(`${p.base}/chat`, {
       method: 'POST', signal, headers: headers(p.style, key),
-      body: JSON.stringify({ model: id, stream: true, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
+      body: JSON.stringify({ model: id, stream: true, keep_alive: '30m', messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }] }),
     })
     if (!res.ok) throw await failure(res)
     for await (const line of lines(res)) {

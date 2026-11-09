@@ -1,12 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
 import { plan } from '../../shared/plan'
-import { Loader, Mark, Meter, Strip } from '../ui/bits'
+import { searchOf, stepOf, type Search } from '../../shared/steps'
+import { Loader, Mark, Meter, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
-import { IconCopy, IconFolder, IconFork, IconMore, IconPanel, IconPin, IconSplit } from '../ui/icons'
-import { agentOf, clock, desk, KIND_LABEL, money, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
+import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
+import { agentOf, clock, desk, KIND_LABEL, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
+import { Changes } from './Changes'
 import { Composer } from './Composer'
 
 type Data = { meta: RoomMeta; events: Event[]; live: Live }
@@ -18,6 +20,10 @@ type Actions = {
   kill(run: string): void
   pin(ev: string): void
   fork(ev: string): void
+  checkpoint(ev: string): boolean
+  changed(ev: string): Promise<string[]>
+  rewind(target: { event?: string; ref?: string }): void
+  review(ev: string): void
 }
 
 const remembered = (key: string, fallback: boolean) => {
@@ -28,10 +34,13 @@ const remembered = (key: string, fallback: boolean) => {
 export function RoomView({ id, access, setAccess, open, focus, say }: {
   id: string; access: Access; setAccess: (a: Access) => void; open: (room: string) => void; focus?: string; say: (t: string) => void
 }) {
+  // Shown as stopped the moment the button is pressed; the engine confirms a few ms later.
+  const [stopping, setStopping] = useState(false)
   const [data, setData] = useState<Data | null>(null)
   const [panel, setPanel] = useState(() => remembered('panel', innerWidth >= 1280))
   const [replay, setReplay] = useState<number | null>(null)
   const [arena, setArena] = useState(false)
+  const [review, setReview] = useState<string | null>(null)
   const early = useRef<Event[]>([])
   const agents = useApp((s) => s.agents)
 
@@ -70,15 +79,22 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel() }
-      if (e.key === 'Escape' && data?.live.turns.length && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') desk.call('room:stop', id)
+      if (e.key === 'Escape' && data?.live.turns.length && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
   })
 
+  const turning = data?.live.turns.length ?? 0
+  useEffect(() => { if (!turning) setStopping(false) }, [turning])
+  function stop() {
+    setStopping(true)
+    desk.call('room:stop', id)
+  }
+
   if (!data) return <div className="room loading"><Loader size={14} /></div>
   const { meta, events, live } = data
-  const busy = live.turns.length > 0 || live.runs.length > 0
+  const busy = !stopping && (live.turns.length > 0 || live.runs.length > 0)
 
   const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
   const actions: Actions = {
@@ -88,13 +104,23 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     kill: (run) => desk.call('run:kill', run),
     pin: (ev) => { desk.call('room:pin', id, ev); say('Pinned to shared memory') },
     fork: async (ev) => { const copy = await desk.call('room:fork', id, ev); if (copy) open(copy.id) },
+    checkpoint: (ev) => !!meta.checkpoints?.some((c) => c.event === ev),
+    changed: async (ev) => (await desk.call('room:changed', id, ev).catch(() => [])) ?? [],
+    rewind: async (target) => {
+      try {
+        const r = await desk.call('room:rewind', id, target)
+        say(target.ref ? 'Rewind undone' : `Folder rewound${r?.removed ? `, ${r.removed} new file${r.removed > 1 ? 's' : ''} removed` : ''}`)
+      } catch (e) { say(reason(e)) }
+    },
+    review: (ev) => setReview(ev),
   }
-  const send = (text: string) => desk.call('room:send', id, text, access, arena)
+  const reviewed = review ? events.find((e) => e.id === review) : undefined
+  const send = (text: string, files?: string[]) => desk.call('room:send', id, text, access, arena, files)
   const pick = async () => { const p = await desk.call('pick'); if (p) desk.call('room:workspace', id, p) }
   const shown = replay === null ? events : events.slice(0, replay)
 
   return (
-    <div className={`room${panel ? ' withdetails' : ''}`}>
+    <div className={`room${panel ? ' withdetails' : ''}${stopping ? ' stopping' : ''}`}>
       <section className="convo">
         <header className="roomhead">
           <Title name={meta.name} rename={(n) => desk.call('room:rename', id, n)} />
@@ -115,12 +141,16 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
         <div className="dock">
           <Composer
             crew={meta.crew} setCrew={(c) => desk.call('room:crew', id, c)} onSend={send} access={access} setAccess={setAccess}
-            busy={busy} onStop={() => desk.call('room:stop', id)} arena={arena} setArena={setArena} pack={meta.pack}
+            busy={busy} onStop={stop} arena={arena} setArena={setArena} pack={meta.pack} folder={meta.workspace}
             placeholder={meta.crew.length > 1 ? 'Message the room. @ to address one agent, ! to run a command.' : 'Message the room. Start with ! to run a command.'}
           />
         </div>
       </section>
       {panel && <Panel meta={meta} events={events} live={live} agents={agents} />}
+      {review && (
+        <Changes room={id} event={review} title={reviewed?.kind === 'you' ? reviewed.text.split('\n')[0].slice(0, 80) : 'this message'}
+          close={() => setReview(null)} rewind={() => actions.rewind({ event: review })} />
+      )}
     </div>
   )
 }
@@ -156,6 +186,23 @@ function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta
             <span className="grow"><b>Open folder</b><span>{short(meta.workspace)}</span></span>
           </button>
           <div className="sep" />
+          <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'html')) say('Replay saved. Open it in any browser and press Play.') }}>
+            <span className="grow"><b>Export replay</b><span>One HTML file that plays the room back</span></span>
+          </button>
+          <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'md')) say('Saved as Markdown') }}>
+            <span className="grow"><b>Export as Markdown</b><span>The conversation as plain text</span></span>
+          </button>
+          <button className="item" onClick={async () => {
+            close()
+            try {
+              const written: string[] = await desk.call('room:project', id, !meta.project)
+              say(meta.project ? 'Stopped writing memory to the project' : `Room memory is now kept in ${written.join(', ')}`)
+            } catch (e) { say(reason(e)) }
+          }}>
+            <span className="grow"><b>{meta.project ? 'Stop writing to AGENTS.md' : 'Keep memory in AGENTS.md'}</b><span>{meta.project ? 'Removes the section Lunchbox added' : 'So the same agents know it outside Lunchbox too'}</span></span>
+            {meta.project && <i className="check" />}
+          </button>
+          <div className="sep" />
           <button className={`item danger${sure ? ' sure' : ''}`} onClick={() => { if (!sure) return setSure(true); desk.call('room:remove', id); close() }} onMouseLeave={() => setSure(false)}>
             <span className="grow"><b>{sure ? 'Click again to delete' : 'Delete room'}</b><span>The folder and its files stay where they are</span></span>
           </button>
@@ -165,16 +212,62 @@ function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta
   )
 }
 
+// The saved event a live row turns into when its turn ends.
+const replaces = (e: Event, t: LiveTurn) => e.at >= t.started && (e.kind === 'say' ? e.who === t.who : e.kind === 'hands' ? e.to === t.who : e.kind === 'image' && !!t.image && e.by === t.who)
+
 // The transcript is a timeline. Agent turns hang off a thin thread in the gutter so a chain of
 // handoffs reads as one piece of work; your messages sit on the right and break the thread.
 function Transcript({ events, live, agents, actions, focus, empty }: { events: Event[]; live: Live | null; agents: AgentInfo[]; actions: Actions; focus?: string; empty: boolean }) {
   const box = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
   const size = events.length + (live ? live.turns.reduce((n, t) => n + t.text.length + t.acts.length, 0) + live.runs.reduce((n, r) => n + r.out.length + r.state.length, 0) : 0)
+  // Opening a room lands at the bottom at once. After that the view eases after new content
+  // instead of jumping to it, for as long as you stay at the bottom.
+  const opened = useRef(false)
   useLayoutEffect(() => {
     const el = box.current
-    if (el && stick.current) el.scrollTop = el.scrollHeight
+    if (!el || !stick.current) return
+    if (!opened.current) { el.scrollTop = el.scrollHeight; opened.current = events.length > 0; return }
   }, [size])
+  const working = !!live?.turns.length || !!live?.runs.length
+  useEffect(() => {
+    let raf = 0
+    const follow = () => {
+      const el = box.current
+      if (el && stick.current) {
+        const gap = el.scrollHeight - el.clientHeight - el.scrollTop
+        if (gap > 0.5) el.scrollTop += Math.max(1, gap * 0.16)
+      }
+      raf = requestAnimationFrame(follow)
+    }
+    raf = requestAnimationFrame(follow)
+    const stop = setTimeout(() => cancelAnimationFrame(raf), working ? 1e9 : 1500)
+    return () => { cancelAnimationFrame(raf); clearTimeout(stop) }
+  }, [working, size])
+  // A turn that finishes swaps its live row for the saved event. The swap must not play the
+  // arrival again, so events that replace a live row are marked settled and never animate in.
+  const settled = useRef(new Set<string>())
+  // When a live row becomes its saved event the column can come out a few pixels shorter, which
+  // would pull the view up. The column keeps the tallest height it has reached, and the next
+  // thing written fills the difference. Removing events, by a rewind or a fork, lets it go.
+  const column = useRef<HTMLDivElement>(null)
+  const tallest = useRef({ h: 0, n: 0 })
+  useEffect(() => {
+    const el = column.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight
+      if (h > tallest.current.h) { tallest.current.h = h; el.style.minHeight = `${h}px` }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  useLayoutEffect(() => {
+    if (events.length < tallest.current.n && column.current) { tallest.current.h = 0; column.current.style.minHeight = '' }
+    tallest.current.n = events.length
+  }, [events.length])
+  const seen = useRef(new Map<string, LiveTurn>())
+  for (const t of live?.turns ?? []) seen.current.set(t.id, t)
   useEffect(() => {
     if (!focus) return
     const el = box.current?.querySelector(`[data-id="${focus}"]`)
@@ -201,24 +294,28 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       continue
     }
     const speaker = e.kind === 'say' ? e.who : e.kind
-    rows.push(<Row key={e.id} e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} />)
+    if (!settled.current.has(e.id) && [...seen.current.values()].some((t) => replaces(e, t))) settled.current.add(e.id)
+    rows.push(<Settled.Provider key={e.id} value={settled.current.has(e.id)}><Row e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} /></Settled.Provider>)
     last = speaker
   }
-  const landed = (t: LiveTurn) => events.some((e) => e.at >= t.started && (e.kind === 'say' ? e.who === t.who : e.kind === 'hands' && e.to === t.who))
+  const landed = (t: LiveTurn) => events.some((e) => replaces(e, t))
   for (const t of live?.turns ?? []) {
     if (landed(t)) continue
     if (t.arena) {
       if (!arenas.has(t.arena)) { arenas.add(t.arena); rows.push(<Arena key={t.id} id={t.arena} done={[]} going={live!.turns.filter((x) => x.arena === t.arena)} agents={agents} pick={actions.pick} />) }
       continue
     }
-    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} />)
+    const helper = live!.turns.find((x) => x.from === t.who && x.id !== t.id)
+    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} />)
     last = t.who
   }
   for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} /></Ev>)
 
   return (
-    <div className="transcript" ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
-      <div className="column">
+    <div className="transcript" ref={box}
+      onWheel={(e) => { if (e.deltaY < 0) stick.current = false }}
+      onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) stick.current = true }}>
+      <div className="column" ref={column}>
         {empty && !live?.turns.length && <div className="roomempty">Nothing here yet. Say what you need and the crew takes it from there.</div>}
         {rows}
         <div className="tail" />
@@ -227,9 +324,12 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   )
 }
 
+const Settled = createContext(false)
+
 function Ev({ mark, grouped = false, className = '', id, children }: { mark: ReactNode; grouped?: boolean; className?: string; id?: string; children: ReactNode }) {
+  const settled = useContext(Settled)
   return (
-    <div className={`ev ${className}${grouped ? ' grouped' : ''}`} data-id={id}>
+    <div className={`ev ${className}${grouped ? ' grouped' : ''}${settled ? ' settled' : ''}`} data-id={id}>
       <div className="gut">{!grouped && mark}</div>
       <div className="evbody">{children}</div>
     </div>
@@ -239,7 +339,7 @@ function Ev({ mark, grouped = false, className = '', id, children }: { mark: Rea
 function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
   const from = agentOf(e.from, agents).short
   const why = /^(is |hit )/.test(e.reason) ? `${from} ${e.reason}` : `${from} could not start: ${e.reason}`
-  const next = e.to ? `${agentOf(e.to, agents).short} took over with the same memory.` : 'Nobody else in the crew could take over.'
+  const next = e.to ? `${agentOf(e.to, agents).short} took over with the same memory.` : e.arena ? 'The others answered without it.' : 'Nobody else in the crew could take over.'
   return `${why}. ${next}${e.until && e.until > Date.now() ? ` Back at ${clock(e.until)}.` : ''}`
 }
 
@@ -248,9 +348,14 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
     case 'you':
       return (
         <div className="mine" data-id={e.id}>
+          {e.from && <span className="to">{e.from === 'flow' ? <><IconClock />from a flow</> : <><IconPhone />from your phone</>}</span>}
           {e.to && <span className="to">to {e.to.map((w) => agentOf(w, agents).short).join(', ')}</span>}
           {e.arena && <span className="to"><IconSplit />side by side</span>}
-          <div className="bubble"><Rich text={e.text} /></div>
+          <div className="bubble">
+            <Rich text={e.text} />
+            {e.files && <div className="attached">{e.files.map((f) => <span key={f} className="file" title={f}><Thumb path={f} /><span>{f.split(/[\\/]/).pop()}</span></span>)}</div>}
+          </div>
+          {actions.checkpoint(e.id) && <Rewind id={e.id} actions={actions} />}
         </div>
       )
     case 'say': {
@@ -273,7 +378,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
       return (
         <Ev id={e.id} mark={<Mark seed={by.mark} size={16} />} className="hands">
           <div className="handhead"><b className="name">{by.short}</b><span>made an image for</span><Mark seed={agentOf(e.for, agents).mark} size={12} /><span>{agentOf(e.for, agents).short}</span><span className="when">{clock(e.at)}</span></div>
-          <Picture path={e.path} prompt={e.prompt} />
+          <Picture path={e.path} prompt={e.prompt} size={e.size} />
         </Ev>
       )
     }
@@ -326,7 +431,12 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
     case 'pick':
       return <Ev id={e.id} mark={<span className="gutdot" />} className="note"><span>You kept {agentOf(e.who, agents).short}’s answer. It is in the room’s memory as a decision.</span></Ev>
     case 'note':
-      return <Ev id={e.id} mark={<span className={`gutdot${e.tone === 'bad' ? ' bad' : e.tone === 'warn' ? ' warn' : ''}`} />} className={`note${e.tone ? ' ' + e.tone : ''}`}><span><Rich text={e.text} /></span></Ev>
+      return (
+        <Ev id={e.id} mark={<span className={`gutdot${e.tone === 'bad' ? ' bad' : e.tone === 'warn' ? ' warn' : ''}`} />} className={`note${e.tone ? ' ' + e.tone : ''}`}>
+          <span><Rich text={e.text} /></span>
+          {e.undo && <button className="btn small quiet" onClick={() => actions.rewind({ ref: e.undo })}>Undo</button>}
+        </Ev>
+      )
     case 'crew':
       return (
         <Ev id={e.id} mark={<span className="gutdot" />} className="note">
@@ -339,19 +449,33 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
   }
 }
 
-function LiveRow({ t, agents, doing, grouped }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean }) {
+function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean; helper?: AgentInfo }) {
   const a = agentOf(t.who, agents)
-  const quiet = !t.text.trim()
-  const working = <div className="busyline"><span className="shimmer">{doing || `${a.short} is thinking`}</span><Strip alphabet={a.alphabet} length={14} /></div>
+  // A line that hands work to a crewmate ("@grok: ...") becomes its own handoff block when the
+  // turn ends, so it is never typed out here first.
+  const said = t.kind === 'say' ? t.text.replace(/(^|\n)@[\w.-]+:[^\n]*(?=\n|$)/g, '').replace(/(^|\n)@[\w.-]*:?[^\n]*$/, '').trimEnd() : t.text
+  const shown = useSmooth(said)
+  const quiet = !said.trim()
+  const working = <Working t={t} a={a} fallback={doing} waiting={helper} />
+  if (t.image) {
+    const from = agentOf(t.from ?? '', agents)
+    return (
+      <Ev mark={<Mark seed={a.mark} size={16} active />} className="hands live">
+        <div className="handhead"><b className="name">{a.short}</b><span>is drawing an image for</span><Mark seed={from.mark} size={12} /><span>{from.short}</span></div>
+        <Developing t={t} a={a} />
+      </Ev>
+    )
+  }
   if (t.kind === 'hands') {
     const from = agentOf(t.from ?? '', agents)
     return (
       <Ev mark={<Mark seed={a.mark} size={16} active />} className="hands live">
-        <div className="handhead"><Mark seed={from.mark} size={12} /><span>{from.short} asked</span><b className="name">{a.short}</b></div>
+        <div className="handhead"><b className="name">{from.short}</b><span>asked</span><Mark seed={a.mark} size={12} /><b className="name">{a.short}</b></div>
         <div className="exchange">
           <p className="asked">{t.ask}</p>
-          {quiet ? working : <div className="got"><Rich text={t.text} caret /></div>}
+          {!quiet && <div className="got"><Rich text={shown} caret /></div>}
           <Acts acts={t.acts} live />
+          {quiet && working}
         </div>
       </Ev>
     )
@@ -359,14 +483,159 @@ function LiveRow({ t, agents, doing, grouped }: { t: LiveTurn; agents: AgentInfo
   return (
     <Ev mark={<Mark seed={a.mark} size={16} active />} grouped={grouped} className="turn live">
       {!grouped && <div className="who"><b className="name">{a.short}</b></div>}
-      {!quiet && <Rich text={t.text} caret />}
+      {!quiet && <Rich text={shown} caret />}
       <Acts acts={t.acts} live />
-      {(quiet || doing.includes(':')) && working}
+      {(quiet || !!t.now) && working}
     </Ev>
   )
 }
 
-function Picture({ path, prompt }: { path: string; prompt: string }) {
+// Text as it streams in, let out at an even reading pace. Agents send words in bursts; shown
+// as they come, the line stutters. This keeps a steady speed and only hurries when far behind,
+// so it never trails the agent by more than a moment.
+function useSmooth(text: string) {
+  const target = useRef(text)
+  target.current = text
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    let raf = 0
+    let shown = 0
+    let last = performance.now()
+    const tick = (now: number) => {
+      const dt = Math.min(50, now - last)
+      last = now
+      const left = target.current.length - shown
+      if (left > 0) {
+        shown = Math.min(target.current.length, shown + Math.max(70, left * 4.5) * dt / 1000)
+        setN(Math.floor(shown))
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [])
+  return n >= text.length ? text : text.slice(0, n)
+}
+
+// Seconds since a live turn started, ticking while it runs.
+function useElapsed(since: number) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(t)
+  }, [])
+  const s = Math.max(0, Math.floor((now - since) / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+// What an agent is doing right now, in words: the verb, the command or tool, and how long it
+// has taken so far.
+function Working({ t, a, fallback, waiting }: { t: LiveTurn; a: AgentInfo; fallback: string; waiting?: AgentInfo }) {
+  const elapsed = useElapsed(t.started)
+  // Mid-turn help: the crewmate's own row below shows the work, this line says who has it.
+  if (waiting) return <div className="workline"><Loader size={10} /><span className="shimmer">Waiting for {waiting.short}</span><time>{elapsed}</time></div>
+  const search = t.now ? searchOf(t.now) : null
+  if (search) return <SearchLive search={search} elapsed={elapsed} />
+  const step = t.now ? stepOf(t.now) : null
+  return (
+    <div className="workline">
+      <Loader size={10} />
+      {step ? <><span className="shimmer">{step.verb}</span>{step.text && <code>{step.text}</code>}</> : <span className="shimmer">{fallback.startsWith(a.short + ' ') ? fallback : `${a.short} is thinking`}</span>}
+      <time>{elapsed}</time>
+    </div>
+  )
+}
+
+// While the search runs: where it looks, for what, and a field of dots with light moving across
+// it, the same field an image develops on.
+function SearchLive({ search, elapsed }: { search: Search; elapsed: string }) {
+  return (
+    <div className="xsearch live">
+      <header>
+        <SourceIcon search={search} />
+        <span className="shimmer">Searching {search.source}</span><span>for</span><span className="query">“{search.query}”</span>
+        <span className="meta">{[...search.filters, elapsed].join(' · ')}</span>
+      </header>
+      <div className="dotfield" aria-hidden><i className="dots" /><i className="dots lit" /></div>
+    </div>
+  )
+}
+
+const SourceIcon = ({ search }: { search: Search }) => <span className="src">{search.source === 'X' ? <IconX /> : <IconGlobe />}</span>
+
+// What a search found, read from the command's own output: one line per post as
+// "@handle · text · likes", with the total on the first line.
+type Post = { handle: string; text: string; likes: string }
+function postsOf(out = ''): { total?: string; posts: Post[] } {
+  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean)
+  const posts = lines.map((l) => l.match(/^@(\S+)\s+·\s+(.+?)\s+·\s+([\d.,]+k?)$/)).filter((m): m is RegExpMatchArray => !!m).map((m) => ({ handle: m[1], text: m[2], likes: m[3] }))
+  const total = lines.find((l) => /^\d[\d,]*\s+(posts|results)$/.test(l))
+  return { total, posts }
+}
+
+// A face for a handle that has none here: a mirrored five by five pattern from the handle itself,
+// so the same person always looks the same.
+function Ident({ seed }: { seed: string }) {
+  let h = 2166136261
+  for (const c of seed) h = Math.imul(h ^ c.charCodeAt(0), 16777619)
+  const cells: ReactNode[] = []
+  for (let y = 0; y < 5; y++) for (let x = 0; x < 3; x++) {
+    if (!((h >>> (y * 3 + x)) & 1)) continue
+    cells.push(<rect key={`${x}${y}`} x={x * 4 + 2} y={y * 4 + 2} width="3.4" height="3.4" rx=".6" />)
+    if (x < 2) cells.push(<rect key={`m${x}${y}`} x={(4 - x) * 4 + 2} y={y * 4 + 2} width="3.4" height="3.4" rx=".6" />)
+  }
+  return <svg className="ident" viewBox="0 0 24 24" aria-hidden>{cells}</svg>
+}
+
+function Sources({ search, out }: { search: Search; out?: string }) {
+  const { total, posts } = postsOf(out)
+  if (!posts.length) return null
+  const shown = posts.slice(0, 4)
+  return (
+    <div className="xsearch done">
+      <header>
+        <SourceIcon search={search} />
+        <b>Searched {search.source}</b><span>for</span><span className="query">“{search.query}”</span>
+        {search.filters.length > 0 && <span className="meta">{search.filters.join(' · ')}</span>}
+      </header>
+      <div className="posts">
+        {shown.map((p, i) => (
+          <article key={p.handle + i} className="post" style={{ '--i': i } as CSSProperties}>
+            <div className="by"><Ident seed={p.handle} /><b>@{p.handle}</b><small><IconHeart />{p.likes}</small></div>
+            <p>{p.text}</p>
+          </article>
+        ))}
+      </div>
+      {total && <footer>Top {shown.length} of {total}</footer>}
+    </div>
+  )
+}
+
+const IconChevron = () => <svg className="chev" width="10" height="10" viewBox="0 0 16 16" aria-hidden><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+
+const IconHeart = () => <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.3C.9 8.2 3 4.5 6.7 4.5c2.1 0 3.6 1.1 4.4 2.5h1.8c.8-1.4 2.3-2.5 4.4-2.5 3.7 0 5.8 3.7 4.3 7.2C19.5 16.4 12 21 12 21z" /></svg>
+
+// An image on its way, at the size it will arrive. Light passes over a field of dots until the
+// picture lands in the same place.
+function Developing({ t, a }: { t: LiveTurn; a: AgentInfo }) {
+  const elapsed = useElapsed(t.started)
+  const [w, h] = (t.size?.match(/^(\d+)x(\d+)$/)?.slice(1).map(Number)) ?? [1024, 1024]
+  return (
+    <figure className="developing" style={{ '--ar': `${w} / ${h}` } as CSSProperties}>
+      <div className="canvas" role="img" aria-label={`${a.short} is drawing an image`}>
+        <i className="dots" /><i className="dots lit" />
+      </div>
+      <figcaption><span>{t.label}</span><small>{w} × {h} · {elapsed}</small></figcaption>
+    </figure>
+  )
+}
+
+function Picture({ path, prompt, size }: { path: string; prompt: string; size?: string }) {
+  // Known size: the frame takes its final shape before the file has loaded, so nothing moves.
+  const asked = size?.match(/^(\d+)x(\d+)$/)?.slice(1).join(' / ')
+  // The file has the last word: a provider can return a slightly different shape than asked.
+  const [real, setReal] = useState<string | null>(null)
+  const ratio = real ?? asked
   const [src, setSrc] = useState<string | null>(null)
   const [missing, setMissing] = useState(false)
   useEffect(() => {
@@ -376,8 +645,8 @@ function Picture({ path, prompt }: { path: string; prompt: string }) {
   }, [path])
   return (
     <figure className="picture">
-      <button className={`frame${src ? ' loaded' : ''}`} onClick={() => desk.call('reveal', path)} title="Open">
-        {src ? <img src={src} alt={prompt} /> : missing ? <span className="err soft">The file is no longer there</span> : <Loader size={12} />}
+      <button className={`frame${src ? ' loaded' : ''}${ratio ? ' sized' : ''}`} style={ratio ? { aspectRatio: ratio } : undefined} onClick={() => desk.call('reveal', path)} title="Open">
+        {src ? <img src={src} alt={prompt} onLoad={(e) => setReal(`${e.currentTarget.naturalWidth} / ${e.currentTarget.naturalHeight}`)} /> : missing ? <span className="err soft">The file is no longer there</span> : <Loader size={12} />}
       </button>
       <figcaption><span>{prompt}</span><code>{short(path)}</code></figcaption>
     </figure>
@@ -396,24 +665,50 @@ function actLabel(a: Act) {
 function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   const [open, setOpen] = useState(false)
   if (!acts.length) return null
+  const shown = (a: Act) => (a.t === 'cmd' && !!searchOf(a.command) && postsOf(a.out).posts.length > 0) || (a.t === 'tool' && /make_image$/.test(a.name))
+  const found = acts.flatMap((a) => (a.t === 'cmd' && shown(a) ? [<Sources key={a.command} search={searchOf(a.command)!} out={a.out} />] : []))
+  acts = acts.filter((a) => !shown(a))
+  if (!acts.length) return <>{found}</>
   const cmds = acts.filter((a) => a.t === 'cmd').length
   const files = new Set(acts.flatMap((a) => (a.t === 'edit' ? [a.path] : []))).size
   const other = acts.filter((a) => a.t === 'tool').length
   const failed = acts.filter((a) => actLabel(a).bad).length
   const parts = [cmds && `${cmds} command${cmds > 1 ? 's' : ''}`, files && `${files} file${files > 1 ? 's' : ''} changed`, other && `${other} tool call${other > 1 ? 's' : ''}`].filter(Boolean)
-  const list = live && !open ? acts.slice(-4) : acts
   return (
-    <div className={`acts${open || live ? ' open' : ''}`}>
+    <>
+    {found}
+    <div className={`acts${open ? ' open' : ''}`}>
       <button className="actsum" onClick={() => setOpen(!open)} aria-expanded={open}>
-        <i className="tick" />{parts.join(' · ')}{failed > 0 && <span className="bad">{failed} failed</span>}
+        {parts.join(', ')}{failed > 0 && <span className="bad">{failed} failed</span>}<IconChevron />
       </button>
-      {(open || live) && (
+      {open && (
         <div className="actlist">
-          {list.map((a, i) => {
+          {acts.map((a, i) => {
             const l = actLabel(a)
-            return <div key={i} className={`act${l.bad ? ' bad' : ''}`}><code>{a.t === 'cmd' && <span>$</span>}{l.code}</code><small>{l.tail}</small></div>
+            return <div key={i} className={`act${l.bad ? ' bad' : ''}`}><code>{live && !l.bad && <span className="ok">✓</span>}{a.t === 'cmd' && <span>$</span>}{l.code}</code><small>{l.tail}</small></div>
           })}
         </div>
+      )}
+    </div>
+    </>
+  )
+}
+
+// Under your message: which files changed since it was sent, and a way back to before it.
+function Rewind({ id, actions }: { id: string; actions: Actions }) {
+  const [files, setFiles] = useState<string[] | null>(null)
+  const [sure, setSure] = useState(false)
+  const look = () => { if (files === null) actions.changed(id).then(setFiles) }
+  return (
+    <div className="rewind" onMouseEnter={look} onFocus={look} onMouseLeave={() => setSure(false)}>
+      <button className={sure ? 'sure' : ''} onClick={() => { if (!sure) return setSure(true); setSure(false); setFiles(null); actions.rewind({ event: id }) }}
+        title="Put the folder back the way it was before this message">
+        <IconRewind />{sure ? `Rewind ${files?.length ? `${files.length} file${files.length > 1 ? 's' : ''}` : 'the folder'}?` : 'Rewind'}
+      </button>
+      {!sure && (
+        <button onClick={() => actions.review(id)} title="Files changed in answer to this message, with diffs">
+          <IconDiff />{files && files.length > 0 ? `${files.length} changed since` : 'Changes'}
+        </button>
       )}
     </div>
   )
@@ -423,7 +718,7 @@ function Tools({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; a
   const text = e.kind === 'say' ? e.text : e.answer
   const u = e.usage
   return (
-    <div className="tools">
+    <div className="msgtools">
       {e.ms ? <span>{(e.ms / 1000).toFixed(1)} s</span> : null}
       {u && u.input + u.output > 0 ? <span>{tokens(u.input + u.output + u.cached)} tokens{u.cached ? `, ${Math.round((u.cached / (u.input + u.cached)) * 100)}% cached` : ''}</span> : null}
       {u && u.cost > 0 ? <span>{money(u.cost)}</span> : null}
@@ -566,7 +861,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
       {steps.length > 0 && (
         <section>
           <h2>Progress<small>{done} of {steps.length}</small></h2>
-          <div className="steps">{steps.map((s, i) => <i key={i} className={s.done ? 'done' : ''} />)}</div>
+          <div className="stepbar">{steps.map((s, i) => <i key={i} className={s.done ? 'done' : ''} />)}</div>
           {steps.map((s, i) => (
             <div key={i} className={`task${s.done ? ' done' : ''}`}><i /><span className="grow">{s.text}</span><small>{agentOf(s.who, agents).short}</small></div>
           ))}
@@ -574,7 +869,50 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
       )}
 
       <Memory meta={meta} crew={crew} />
+      <Receipt meta={meta} events={events} agents={agents} />
     </aside>
+  )
+}
+
+// What this room cost, who spent it, and what the shared memory saved.
+function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; agents: AgentInfo[] }) {
+  const rows = useMemo(() => {
+    const by = new Map<string, { cost: number; tokens: number; turns: number; ms: number }>()
+    for (const e of events) {
+      if (e.kind !== 'say' && e.kind !== 'hands') continue
+      const who = e.kind === 'say' ? e.who : e.to
+      const r = by.get(who) ?? { cost: 0, tokens: 0, turns: 0, ms: 0 }
+      r.cost += e.usage?.cost ?? 0
+      r.tokens += (e.usage?.input ?? 0) + (e.usage?.output ?? 0) + (e.usage?.cached ?? 0)
+      r.turns += 1
+      r.ms += e.ms ?? 0
+      by.set(who, r)
+    }
+    return [...by.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].tokens - a[1].tokens)
+  }, [events])
+  if (!rows.length) return null
+  const total = rows.reduce((n, [, r]) => n + r.cost, 0)
+  const saved = Math.max(0, meta.saved.full - meta.saved.sent) / 4
+  const checks = meta.checkpoints?.length ?? 0
+  return (
+    <section>
+      <h2>Receipt<small>{money(total) || 'free'}</small></h2>
+      {rows.map(([who, r]) => {
+        const a = agentOf(who, agents)
+        return (
+          <div key={who} className="receipt">
+            <Mark seed={a.mark} size={12} />
+            <span className="grow">{a.short}<small>{r.turns} turn{r.turns > 1 ? 's' : ''} · {(r.ms / 1000).toFixed(0)} s</small></span>
+            <span className="mono">{tokens(r.tokens)}</span>
+            <span className="mono amount">{r.cost ? money(r.cost) : a.via === 'cli' ? 'plan' : 'free'}</span>
+          </div>
+        )
+      })}
+      <div className="memfoot">
+        {saved > 0 && `Shared memory kept ${tokens(saved)} tokens from being sent again. `}
+        {checks > 0 ? `${checks} checkpoint${checks > 1 ? 's' : ''} of the folder; hover your message to rewind.` : ''}
+      </div>
+    </section>
   )
 }
 

@@ -29,7 +29,7 @@
 
 /* Corners: 3 px for controls, 4 px for containers */
 [data-look=neyra] :is(.btn,.btn.big,.btn.small,.iconbtn,.ghostbtn,.pill,.item,.seg,.seg button,.plist button,.toast,.files code,.handhead code,.folderpick,.ideas button,.send,.check){border-radius:3px}
-[data-look=neyra] :is(.composer,.menu,.palette,.term,.decide,.agents,.settings,.mine p){border-radius:4px}
+[data-look=neyra] :is(.composer,.menu,.pbody,.term,.decide,.agents,.settings,.mine p){border-radius:4px}
 [data-look=neyra] .btn{height:32px;padding:0 13px}
 [data-look=neyra] .btn.big{height:36px;padding:0 16px}
 [data-look=neyra] .btn.small{height:26px;padding:0 9px}
@@ -77,4 +77,6 @@
 [data-look=neyra] .page>.btn{align-self:flex-start}
 [data-look=neyra] .pagehead h1{font-size:24px;letter-spacing:-.025em}
 [data-look=neyra] .pagehead p{margin-top:5px}
-[data-look=neyra] .palette{box-shadow:0 0 0 1px var(--line2),0 20px 50px rgba(0,0,0,.4)}
+[data-look=neyra] .pglow{box-shadow:0 20px 50px rgba(0,0,0,.4)}
+[data-look=neyra] .sheetdrag{height:22px}
+[data-look=neyra] .libbar{top:-6px}

@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { sentence } from '../../shared/steps'
 import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
 import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
 import { classify, route, type Category } from '../../shared/route'
 import { detect, run } from '../agents'
-import type { Hands } from '../hands'
+import { plain } from '../agents/parse'
+import type { Hands, Tool } from '../hands'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
 import { clearMemory, writeMemory } from './project'
@@ -17,13 +19,16 @@ import { check, suggest } from './proof'
 
 type Hooks = {
   emit(channel: string, payload: unknown): void
+  turned?(agent: string, usage: Usage): void
   notify(title: string, body: string, room: string): void
   packs(): Pack[]
+  // Tools from outside the room: the built-in browser and any MCP servers the person connected.
+  tools?(who: string, workspace: string, access: Access): Tool[]
 }
 
 type Task =
   | { kind: 'reply' }
-  | { kind: 'answer'; from: string; ask: string; via?: 'tool' }
+  | { kind: 'answer'; from: string; ask: string; via?: 'tool'; quiet?: boolean; label?: string; size?: string }
   | { kind: 'continue' }
   | { kind: 'retry'; tools: string[] }
 
@@ -43,6 +48,7 @@ export class Engine {
   private procs = new Map<string, Set<{ stop(): void }>>()
   private queues = new Map<string, Promise<unknown>>()
   private gens = new Map<string, number>()
+  private flushed = new Set<string>()
   private allowed = new Map<string, Set<string>>()
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
@@ -113,7 +119,7 @@ export class Engine {
   summaries(): RoomSummary[] {
     return this.store.list().map((m) => {
       const l = this.live(m.id)
-      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
+      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, flow: m.flow, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
     })
   }
 
@@ -176,6 +182,16 @@ export class Engine {
     const cp = meta?.checkpoints?.find((c) => c.event === event)
     if (!meta || !cp || !this.snaps) return []
     return this.snaps.changed(meta.workspace, cp.ref)
+  }
+
+  // What the crew changed in answer to one message: from its checkpoint to the next message's,
+  // or to the folder as it is now when it is the latest.
+  async changesFor(room: string, event: string) {
+    const meta = this.store.room(room)
+    const list = meta?.checkpoints ?? []
+    const i = list.findIndex((c) => c.event === event)
+    if (!meta || i < 0 || !this.snaps) return []
+    return this.snaps.diff(meta.workspace, list[i].ref, list[i + 1]?.ref)
   }
 
   async rewind(room: string, target: { event?: string; ref?: string }) {
@@ -254,10 +270,22 @@ export class Engine {
     return copy
   }
 
+  // Stopping is instant from the user's side: what each agent wrote so far lands in the room now
+  // and the live turns clear, while the processes are killed and exit in their own time.
   stop(room: string) {
     this.gens.set(room, (this.gens.get(room) ?? 0) + 1)
     for (const p of this.procs.get(room) ?? []) p.stop()
     this.procs.get(room)?.clear()
+    const live = this.live(room)
+    for (const lt of live.turns) {
+      this.flushed.add(lt.id)
+      if (lt.text.trim()) this.add(room, { kind: 'say', who: lt.who, text: lt.text.trim(), acts: lt.acts, error: 'Stopped' })
+    }
+    live.turns = []
+    live.doing = ''
+    live.active = null
+    this.hooks.emit('room:live', { room, live })
+    this.list()
   }
 
   pin(room: string, eventId: string) {
@@ -414,9 +442,9 @@ export class Engine {
     }
   }
 
-  private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>) {
+  private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>, quiet = false, label?: string, size?: string) {
     if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
-    const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool' }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
+    const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool', quiet, label, size }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
     if (!r?.text) throw new Error(`${this.name(to)} could not answer right now.`)
     return r.text
   }
@@ -438,10 +466,11 @@ export class Engine {
       this.hooks.emit('ledger', this.ledger())
     } else {
       const ask = `Generate this image with your image tool and save it as ${path}${size ? ` at ${size}` : ''}. Reply with the path only.\n\nImage: ${prompt}`
-      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }).catch((e: Error) => e.message)
+      // Quiet: the image itself is what the room shows, not the instruction that produced it.
+      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }, true, prompt, size).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
-    this.add(room, { kind: 'image', by, for: from, prompt, path, usage })
+    this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage })
     return `Saved ${relative(meta.workspace, path)}`
   }
 
@@ -450,8 +479,8 @@ export class Engine {
     if (!meta || (this.gens.get(room) ?? 0) !== ctx.gen) return null
     const blocked = this.why(who)
     if (blocked) {
-      const next = this.fallback(meta, who)
-      this.add(room, { kind: 'wall', from: who, to: next ?? '', reason: blocked, until: this.store.spent[who]?.until })
+      const next = ctx.arena ? null : this.fallback(meta, who)
+      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until })
       if (!next || ++ctx.hops.n > MAX_HOPS) return null
       return this.turn(room, next, task, access, ctx)
     }
@@ -470,22 +499,25 @@ export class Engine {
     })
 
     const live = this.live(room)
-    const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now() }
+    const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now(), image: task.kind === 'answer' && task.quiet ? true : undefined, label: task.kind === 'answer' ? task.label : undefined, size: task.kind === 'answer' ? task.size : undefined }
     live.turns.push(lt)
     live.active = who
     live.doing = task.kind === 'answer' ? `${me.short} is answering ${this.name(task.from)}` : task.kind === 'continue' ? `${me.short} is reading the answers` : `${me.short} is working`
     if (task.kind === 'answer') live.cable = { from: task.from, to: who, at: Date.now() }
     this.changed(room)
 
-    const tools = this.hands && me.via === 'cli' && BORROWS.has(who) ? kit(this.host(room, me, crew, access, ctx)) : []
+    const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
+      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? [])]
+      : []
     const grant = tools.length ? this.hands!.grant(tools) : null
+    const http = me.via !== 'cli'
     const running = run(who, {
-      prompt: p.text, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name)), cwd: meta.workspace, access,
+      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name)), cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
-      if (u.acts) lt.acts.push(...u.acts)
-      if (u.working) live.doing = `${me.short}: ${u.working.slice(0, 90)}`
+      if (u.acts) { lt.acts.push(...u.acts); lt.now = undefined; live.doing = `${me.short} is thinking` }
+      if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
       this.changed(room)
     })
     const procs = this.procs.get(room) ?? new Set()
@@ -499,8 +531,11 @@ export class Engine {
     this.changed(room)
 
     if (r.usage.input + r.usage.output + r.usage.cached > 0) {
-      this.store.record(who, room, r.usage)
+      // Memory the agent already had and was not sent again, in tokens at about four characters each.
+      const kept = Math.round((p.full - p.sent) / 4)
+      this.store.record(who, room, kept > 0 ? { ...r.usage, kept } : r.usage)
       this.hooks.emit('ledger', this.ledger())
+      this.hooks.turned?.(who, r.usage)
     }
     if (resumed && r.error && !r.text && !r.limit && /session|resume|conversation|thread|not found|unexpected|no such|invalid/i.test(r.error)) {
       this.store.update(room, (m) => { delete m.sessions[who] })
@@ -508,19 +543,22 @@ export class Engine {
     }
     const stopped = (this.gens.get(room) ?? 0) !== ctx.gen || r.error === 'Stopped'
     if (stopped) {
-      if (lt.text.trim()) this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts, error: 'Stopped' })
+      const already = this.flushed.delete(lt.id)
+      if (lt.text.trim() && !already) this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts, error: 'Stopped' })
       return null
     }
     if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
 
     if (!r.text && (r.limit || r.error)) {
+      if (r.error) r.error = plain(r.error)
       if (r.limit) this.store.spent[who] = { until: r.limit.until, reason: r.error ?? 'limit' }
       else this.store.health[who] = r.error!
       this.store.saveState()
       if (r.limit) this.hooks.emit('ledger', this.ledger())
       else this.refresh()
-      const next = this.fallback(meta, who)
-      this.add(room, { kind: 'wall', from: who, to: next ?? '', until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
+      // In side by side everyone is already answering, so a failed slot stays empty and says why.
+      const next = ctx.arena ? null : this.fallback(meta, who)
+      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
       if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
       return null
     }
@@ -534,8 +572,12 @@ export class Engine {
     const parsed = task.kind === 'answer' || ctx.arena ? { asks: [], text: r.text } : asks(r.text, handles)
     let event: Event
     if (task.kind === 'answer') {
-      event = this.add(room, { kind: 'hands', from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via })
-      this.block(room, `answer-${event.id}`, `${me.short} for ${this.name(task.from)}: ${task.ask.slice(0, 60)}`, r.text, who)
+      const hands = { kind: 'hands' as const, from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via }
+      if (task.quiet) event = { ...hands, id: uid(), at: Date.now() }
+      else {
+        event = this.add(room, hands)
+        this.block(room, `answer-${event.id}`, `${me.short} for ${this.name(task.from)}: ${task.ask.slice(0, 60)}`, r.text, who)
+      }
     } else {
       const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms }
       const proof = check(draft.text, [...events, { ...draft, id: '', at: 0 }])

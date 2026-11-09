@@ -1,28 +1,72 @@
 import { useEffect, useState, type MouseEvent } from 'react'
-import { Mark } from '../ui/bits'
-import { agentOf, desk, reload, short, unavailable, useApp } from '../lib/desk'
+import { Loader, Mark } from '../ui/bits'
+import { ACCESS, desk, reason, reload, short, unavailable, useApp, type RemoteStatus } from '../lib/desk'
 import type { Look } from '../App'
+import { Toggle } from './Flows'
+
+// Lunchbox from a phone through a Telegram bot: make one with @BotFather, paste its token, then
+// send the bot the code shown here. Only that chat is listened to.
+function Phone({ say }: { say: (t: string) => void }) {
+  const [s, setS] = useState<RemoteStatus | null>(null)
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState(false)
+  const access = useApp((x) => x.settings.remote?.access ?? 'workspace')
+  useEffect(() => {
+    desk.call('remote').then(setS)
+    return desk.on('remote', setS)
+  }, [])
+  const set = async (patch: Record<string, unknown>) => {
+    setBusy(true)
+    try { setS(await desk.call('remote:set', patch)); await reload.settings({}) } catch (e) { say(reason(e)) } finally { setBusy(false) }
+  }
+  if (!s) return null
+  return (
+    <section className="group">
+      <h2>Phone<span className="quiet">talk to your rooms from Telegram</span></h2>
+      <div className="settings">
+        <div className="setting">
+          <div className="grow"><b>Telegram bot</b><span>{s.token ? s.bot ? `Connected as @${s.bot}` : s.error ?? 'Token saved' : 'Make a bot with @BotFather in Telegram and paste its token.'}</span></div>
+          {s.token && <Toggle on={s.on} set={(on) => set({ on })} label="Phone remote" />}
+        </div>
+        {(!s.token || !s.on) && (
+          <div className="setting">
+            <input className="grow input mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={s.token ? 'Saved. Paste to replace' : '123456789:AA…'} />
+            <button className="btn small" disabled={!token.trim() || busy} onClick={async () => { await set({ token, on: true }); setToken('') }}>{busy ? <Loader size={10} /> : 'Connect'}</button>
+          </div>
+        )}
+        {s.on && s.bot && !s.paired && (
+          <div className="setting pair">
+            <div className="grow"><b>Pair your phone</b><span>Open @{s.bot} in Telegram and send this code.</span></div>
+            <code className="code">{s.code}</code>
+          </div>
+        )}
+        {s.paired && (
+          <>
+            <div className="setting">
+              <div className="grow"><b>Paired with {s.name ?? 'your chat'}</b><span>Write to continue your latest room, /new to start one, /rooms to switch, /stop to stop. Decisions arrive as buttons.</span></div>
+              <button className="btn small quiet" onClick={async () => setS(await desk.call('remote:unpair'))}>Unpair</button>
+            </div>
+            <div className="setting">
+              <div className="grow"><b>Mode for messages from the phone</b><span>{ACCESS.find((a) => a.id === access)?.line}</span></div>
+              <div className="seg">{ACCESS.filter((a) => a.id !== 'full').map((a) => <button key={a.id} className={access === a.id ? 'on' : ''} onClick={() => set({ access: a.id })}>{a.name}</button>)}</div>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  )
+}
 
 export function Settings({ theme, setTheme, look, setLook, restart, say }: {
   theme: 'dark' | 'light'; setTheme: (t: 'dark' | 'light', e?: MouseEvent) => void; look: Look; setLook: (l: Look) => void; restart: () => void; say: (t: string) => void
 }) {
   const settings = useApp((s) => s.settings)
   const agents = useApp((s) => s.agents)
-  const packs = useApp((s) => s.packs)
-  const skills = useApp((s) => s.skills)
   const env = useApp((s) => s.env)
   const [secure, setSecure] = useState(true)
   useEffect(() => { desk.call('keys:secure').then((v: boolean | null) => setSecure(v !== false)) }, [])
   const usable = agents.filter((a) => !unavailable(a))
   const crew = settings.defaultCrew
-  const importPack = async () => {
-    try {
-      const p = await desk.call('packs:import')
-      if (p) { await reload.packs(); say(`Added the ${p.name} pack`) }
-    } catch (e) {
-      say(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : 'That pack could not be read')
-    }
-  }
 
   return (
     <div className="page">
@@ -61,43 +105,30 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
           </div>
           <div className="setting">
             <div className="grow"><b>Notifications</b><span>When a room needs you or finishes while Lunchbox is in the background.</span></div>
-            <div className="seg">{[true, false].map((v) => <button key={String(v)} className={settings.notify === v ? 'on' : ''} onClick={() => reload.settings({ notify: v })}>{v ? 'On' : 'Off'}</button>)}</div>
+            <Toggle on={settings.notify} set={(v) => reload.settings({ notify: v })} label="Notifications" />
+          </div>
+          <div className="setting">
+            <div className="grow"><b>Plan limits</b><span>Read how much of each plan is left from the login its own tool already has. The login only ever goes to the company that issued it.</span></div>
+            <Toggle on={settings.planLimits !== false} set={(v) => reload.settings({ planLimits: v })} label="Plan limits" />
+          </div>
+          <div className="setting">
+            <div className="grow"><b>Checkpoints</b><span>Save the folder before every message so any change can be rewound. Kept outside the project, in its own history.</span></div>
+            <Toggle on={settings.snapshots !== false} set={(v) => reload.settings({ snapshots: v })} label="Checkpoints" />
+          </div>
+          <div className="setting">
+            <div className="grow"><b>Who leads</b><span>Best for the job picks by kind of work, ratings and what is left today. Crew order always starts with the first agent.</span></div>
+            <div className="seg">{(['best', 'order'] as const).map((r) => <button key={r} className={(settings.route ?? 'best') === r ? 'on' : ''} onClick={() => reload.settings({ route: r })}>{r === 'best' ? 'Best for the job' : 'Crew order'}</button>)}</div>
           </div>
         </div>
       </section>
 
-      <section className="group">
-        <h2>Packs<button className="btn small quiet" onClick={importPack}>Import pack</button></h2>
-        <div className="settings">
-          {packs.map((p) => (
-            <div key={p.id} className="setting">
-              <div className="grow"><b>{p.name}</b><span>{p.line || p.brief.slice(0, 120)}</span></div>
-              <small className="mono quiet">{p.source === 'user' ? 'imported' : 'built in'}</small>
-            </div>
-          ))}
-        </div>
-        <p className="hint">A pack is a JSON file with an id, a name, a brief for the crew, ideas and optional checks. Share them like any other file.</p>
-      </section>
-
-      {skills.length > 0 && (
-        <section className="group">
-          <h2>Skills</h2>
-          <div className="settings">
-            {skills.map((s) => (
-              <div key={s.id} className="setting">
-                <div className="grow"><b>{s.name}</b><span>{s.steps.length} steps · {s.crew.map((c) => agentOf(c, agents).short).join(', ')}</span></div>
-                <button className="btn small quiet" onClick={async () => { await desk.call('skills:remove', s.id); say('Skill removed') }}>Remove</button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      <Phone say={say} />
 
       <section className="group">
         <h2>Data</h2>
         <div className="settings">
           <div className="setting">
-            <div className="grow"><b>Stored on this computer</b><span className="mono">{short(env.data) || '—'}</span></div>
+            <div className="grow"><b>Stored on this computer</b><span className="mono">{short(env.data) || 'not set'}</span></div>
             <button className="btn small quiet" onClick={() => desk.call('reveal', env.data)}>Open</button>
           </div>
           {!secure && (

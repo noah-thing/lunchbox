@@ -6,10 +6,14 @@ import type { Access, AgentInfo, Act, Usage } from '../../shared/types'
 import { env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, type Turn, type Update } from './parse'
 import { chat, listModels, PROVIDERS } from './http'
+import { localSetup } from '../local'
 
 export type Input = {
   prompt: string
   system: string
+  // For HTTP agents: the conversation as cacheable blocks, with prompt then holding only the rest.
+  history?: string[]
+  cacheKey?: string
   cwd: string
   access: Access
   model?: string
@@ -40,7 +44,10 @@ type Spec = {
   parser: { turn: Turn; line: (o: any) => Update | null }
 }
 
-type Def = Omit<AgentInfo, 'found' | 'ready' | 'version' | 'note' | 'models' | 'model'> & { spawn?: (i: Input, file: string) => Spec; key?: string }
+type Def = Omit<AgentInfo, 'found' | 'ready' | 'version' | 'note' | 'models' | 'model'> & { spawn?: (i: Input, file: string) => Spec; key?: string; provider?: string }
+
+// The provider an HTTP agent talks to: its own local server, or the key it is billed to.
+export const providerOf = (d: Def) => d.provider ?? d.key!
 
 const prompt = (i: Input) => `${i.system}\n\n${i.prompt}`
 
@@ -124,12 +131,14 @@ export const CATALOG: Def[] = [
       parser: gemini(),
     }),
   },
-  { id: 'ollama', name: 'Ollama', short: 'Local', maker: 'On this computer', via: 'local', bin: 'ollama', tools: false, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
+  { id: 'ollama', name: 'Ollama', short: 'Ollama', maker: 'On this computer', via: 'local', bin: 'ollama', provider: 'ollama', tools: false, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
+  { id: 'lmstudio', name: 'LM Studio', short: 'LM Studio', maker: 'On this computer', via: 'local', bin: 'lms', provider: 'lmstudio', tools: false, mark: 'lmstudio', good: 'Any model you load in LM Studio, served locally', alphabet: '.-=≡#' },
+  { id: 'llamacpp', name: 'llama.cpp', short: 'llama.cpp', maker: 'On this computer', via: 'local', bin: 'llama-server', provider: 'llamacpp', tools: false, mark: 'llamacpp', good: 'A llama-server on port 8080, or any server that speaks the OpenAI API there', alphabet: '.,:;+*' },
   { id: 'claude-api', name: 'Claude API', short: 'Claude API', maker: 'Anthropic', via: 'api', key: 'anthropic', tools: false, mark: 'claude', good: 'Pay per token, with prompt caching', alphabet: '.:-=+*#%@' },
-  { id: 'openai-api', name: 'OpenAI API', short: 'GPT', maker: 'OpenAI', via: 'api', key: 'openai', tools: false, mark: 'codex', good: 'Pay per token', alphabet: '.-01' },
+  { id: 'openai-api', name: 'OpenAI API', short: 'GPT', maker: 'OpenAI', via: 'api', key: 'openai', tools: false, mark: 'openai', good: 'Pay per token', alphabet: '.-01' },
   { id: 'grok-api', name: 'xAI API', short: 'Grok API', maker: 'xAI', via: 'api', key: 'xai', tools: false, mark: 'grok', good: 'Pay per token', alphabet: '.:/\\|X#' },
   { id: 'gemini-api', name: 'Gemini API', short: 'Gemini API', maker: 'Google', via: 'api', key: 'google', tools: false, mark: 'gemini', good: 'Pay per token, generous free tier', alphabet: '.,oO0@' },
-  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: false, mark: 'lunchbox', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
+  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: false, mark: 'openrouter', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
 ]
 
 export const def = (id: string) => CATALOG.find((d) => d.id === id)
@@ -146,13 +155,10 @@ export async function detect(keys: Record<string, string>, models: Record<string
         return { ...base, found: !!path, ready: !!path, version: path ? await version(path) : undefined }
       }
       if (d.via === 'local') {
-        const list = await listModels('ollama', '').catch(() => null)
-        if (!list) return { ...base, found: false, ready: false }
-        const chatty = list.filter((m) => !/embed/i.test(m))
-        return {
-          ...base, found: true, ready: chatty.length > 0, models: chatty, model: models[d.id] || chatty[0],
-          note: chatty.length ? base.note : 'Only embedding models are installed. Pull a chat model first, for example: ollama pull qwen3',
-        }
+        const [list, setup] = await Promise.all([listModels(providerOf(d), '').catch(() => null), localSetup(d.id, d.bin!)])
+        const chatty = (list ?? []).filter((m) => !/embed/i.test(m))
+        setup.running = !!list
+        return { ...base, found: setup.installed || !!list, ready: chatty.length > 0, models: chatty, model: models[d.id] || chatty[0], setup }
       }
       const key = keys[d.key!]
       return { ...base, found: !!key, ready: !!key }
@@ -163,17 +169,18 @@ export async function detect(keys: Record<string, string>, models: Record<string
 export async function modelsFor(id: string, keys: Record<string, string>) {
   const d = def(id)
   if (!d || d.via === 'cli') return []
-  return listModels(d.via === 'local' ? 'ollama' : d.key!, keys[d.key!] ?? '')
+  const all = await listModels(providerOf(d), keys[d.key!] ?? '')
+  return d.via === 'local' ? all.filter((m) => !/embed/i.test(m)) : all
 }
 
 export function run(id: string, input: Input, keys: Record<string, string>, onUpdate: (u: Update) => void): Running {
   const d = def(id)
   if (!d) return { done: Promise.resolve(failed(`Unknown agent ${id}`)), stop() {} }
   if (d.via !== 'cli') {
-    const provider = d.via === 'local' ? 'ollama' : d.key!
+    const provider = providerOf(d)
     const ctl = new AbortController()
     const t0 = Date.now()
-    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }))
+    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey)
       .then((r) => ({ text: r.text, acts: [], usage: r.usage, denied: [], ms: Date.now() - t0 }))
       .catch((e: Error) => {
         const error = ctl.signal.aborted ? 'Stopped' : e.message
@@ -211,7 +218,8 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     if (spec.file) rmSync(file, { force: true })
     for (const x of spec.extra ?? []) rmSync(x.path, { force: true })
     const turn = spec.parser.turn
-    const text = (turn.final || turn.text).trim()
+    // The CLI's final answer is only its last message. When the turn wrote before that too, keep it all.
+    const text = (turn.final && turn.text.trim().endsWith(turn.final.trim()) ? turn.text : turn.final || turn.text).trim()
     let error = turn.error
     if (stopped) error = 'Stopped'
     else if (code !== 0 && !error && !text) error = reason(stderr) || `${d.name} exited with code ${code}`

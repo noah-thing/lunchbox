@@ -1,5 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react'
-import type { AgentInfo } from '../../shared/types'
+import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import type { AgentInfo, Pull } from '../../shared/types'
 import { Loader, Mark, Meter } from '../ui/bits'
 import { clock, desk, money, reload, tokens, unavailable, useApp } from '../lib/desk'
 
@@ -49,7 +49,8 @@ function AgentRow({ a, i, open, toggle, say }: { a: AgentInfo; i: number; open: 
   const wins = ledger?.arena[a.id] ?? 0
   const budget = settings.budgets[a.id] ?? 0
   const spent = ledger?.spent[a.id]
-  const state = !a.found ? (a.via === 'api' ? 'No key' : 'Not installed') : why ? 'Unavailable' : 'Ready'
+  const s = a.setup
+  const state = !a.found ? (a.via === 'api' ? 'No key' : 'Not installed') : s && !s.running ? 'Not running' : s && !a.ready ? 'No chat model' : why ? 'Unavailable' : 'Ready'
   return (
     <div className={`agent${open ? ' open' : ''}${a.found ? '' : ' missing'}`} style={{ '--i': i } as CSSProperties}>
       <button className="agenthead" onClick={toggle} aria-expanded={open}>
@@ -64,9 +65,10 @@ function AgentRow({ a, i, open, toggle, say }: { a: AgentInfo; i: number; open: 
       {open && (
         <div className="agentbody">
           {a.note && <p className="anote">{a.note}</p>}
+          {a.setup && <LocalSetupBox a={a} say={say} />}
           {a.via === 'api' && <KeyField a={a} say={say} />}
-          {a.found && <ModelField a={a} />}
-          {a.found && (
+          {a.found && (!a.setup || a.ready) && <ModelField a={a} />}
+          {a.found && a.via !== 'local' && (
             <label className="field">
               <span>Daily budget</span>
               <input type="number" min={0} step={0.5} placeholder="No limit" defaultValue={budget || ''}
@@ -148,5 +150,90 @@ function ModelField({ a }: { a: AgentInfo }) {
       <datalist id={`models-${a.id}`}>{models.slice(0, 200).map((m) => <option key={m} value={m} />)}</datalist>
       <small>{error || (a.via === 'cli' ? 'Leave empty to use what you set up in the tool itself.' : `${models.length} available`)}</small>
     </label>
+  )
+}
+
+// Pull progress lives outside the page so leaving Agents mid download keeps the bar where it was.
+const pulls = new Map<string, Pull>()
+const watchers = new Set<() => void>()
+let snapshot: Pull[] = []
+desk.on('local:pull', (p: Pull) => {
+  pulls.set(p.model, p)
+  if (p.finished) setTimeout(() => { pulls.delete(p.model); snapshot = [...pulls.values()]; watchers.forEach((w) => w()) }, 1600)
+  snapshot = [...pulls.values()]
+  watchers.forEach((w) => w())
+})
+export const usePulls = () => useSyncExternalStore((w) => { watchers.add(w); return () => watchers.delete(w) }, () => snapshot)
+
+const gb = (n: number) => (n / 2 ** 30).toFixed(n >= 10 * 2 ** 30 ? 0 : 1)
+
+// Text progress, the way a terminal draws it: [#######.......]  48%  2.5 of 5.2 GB
+export function PullBar({ p }: { p: Pull }) {
+  const share = p.total ? p.done / p.total : 0
+  const W = 28
+  const lit = Math.round(share * W)
+  return (
+    <div className={`pullbar${p.error ? ' failed' : p.finished ? ' done' : ''}`} role="progressbar" aria-valuenow={Math.round(share * 100)} aria-valuemin={0} aria-valuemax={100}>
+      <span className="bar">[<b>{'#'.repeat(lit)}</b>{'.'.repeat(W - lit)}]</span>
+      <span>{p.error ? p.error : p.finished ? 'ready' : p.total ? `${String(Math.round(share * 100)).padStart(3)}%  ${gb(p.done)} of ${gb(p.total)} GB` : p.status.toLowerCase()}</span>
+    </div>
+  )
+}
+
+export function LocalSetupBox({ a, say }: { a: AgentInfo; say: (t: string) => void }) {
+  const s = a.setup!
+  const [starting, setStarting] = useState(false)
+  const [custom, setCustom] = useState('')
+  const all = usePulls()
+  const mine = all.filter((p) => p.agent === a.id)
+  const begin = async () => {
+    setStarting(true)
+    const r = await desk.call('local:start', a.id)
+    setStarting(false)
+    say(r.ok ? `${a.name} is running` : r.error)
+  }
+  const get = (model: string) => { if (model.trim()) desk.call('local:pull', model.trim()) }
+  const open = () => window.open(s.download, '_blank')
+
+  if (!s.installed && !s.running) return (
+    <div className="localbox">
+      <p>{a.id === 'llamacpp' ? 'Nothing is listening on port 8080. Start llama-server, or any server that speaks the OpenAI API, and press Check again.' : `${a.name} is not on this computer yet. It is free; once it is installed, come back and Lunchbox finds it on its own.`}</p>
+      <div className="row"><button className="btn small" onClick={open}>{a.id === 'llamacpp' ? 'llama.cpp on GitHub' : `Get ${a.name}`}</button></div>
+    </div>
+  )
+  if (!s.running) return (
+    <div className="localbox">
+      <p>{a.id === 'llamacpp' ? 'llama-server is installed but not running. Start it with a model, for example: llama-server -hf ggml-org/gemma-3-4b-it-GGUF' : `${a.name} is installed but its server is off.`}</p>
+      {a.id !== 'llamacpp' && <div className="row"><button className="btn small" disabled={starting} onClick={begin}>{starting ? <><Loader size={10} />Starting</> : `Start ${a.name}`}</button></div>}
+    </div>
+  )
+  if (a.id !== 'ollama') return a.ready ? null : (
+    <div className="localbox"><p>The server is running with no chat model loaded. Load one in {a.name} and press Check again.</p></div>
+  )
+  return (
+    <div className="localbox">
+      {!a.ready && s.suggest && !mine.length && (
+        <>
+          <p>Ollama is running with no chat model yet. This one fits the memory on this computer.</p>
+          <div className="row"><button className="btn small" onClick={() => get(s.suggest!.model)}>Download {s.suggest.model}<span className="quiet">{s.suggest.size}</span></button></div>
+        </>
+      )}
+      {mine.map((p) => (
+        <div key={p.model} className="pullrow">
+          <span className="mono">{p.model}</span>
+          <PullBar p={p} />
+          {!p.finished && !p.error && <button className="btn small quiet" onClick={() => desk.call('local:cancel', p.model)}>Stop</button>}
+        </div>
+      ))}
+      {a.ready && (
+        <label className="field">
+          <span>Add a model</span>
+          <div className="row">
+            <input placeholder="Any name from ollama.com/library, like gemma3 or qwen3:14b" value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { get(custom); setCustom('') } }} />
+            <button className="btn small" disabled={!custom.trim()} onClick={() => { get(custom); setCustom('') }}>Download</button>
+          </div>
+        </label>
+      )}
+    </div>
   )
 }

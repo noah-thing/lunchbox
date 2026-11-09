@@ -4,3 +4,5 @@ release/
 test/shots/
 *.log
 .DS_Store
+.claude/worktrees/
+node_modules

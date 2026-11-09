@@ -24,12 +24,21 @@ export type AgentInfo = {
   model?: string
   models?: string[]
   note?: string
+  setup?: LocalSetup
   good: string
   alphabet: string
   mark: string
 }
 
-export type Usage = { input: number; output: number; cached: number; cost: number }
+// cached: input tokens served from a provider's prompt cache. written: tokens stored into it.
+// saved: dollars the cache saved where the price is known. kept: shared memory tokens Lunchbox
+// did not need to send again because the agent already had them.
+export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; kept?: number }
+
+// What a local model server needs before it can take work. app is set when there is a desktop
+// app to open; suggest is the chat model that fits this computer's memory.
+export type LocalSetup = { installed: boolean; running: boolean; app?: boolean; download: string; suggest?: { model: string; size: string } }
+export type Pull = { agent: string; model: string; status: string; done: number; total: number; error?: string; finished?: boolean }
 
 export type Act =
   | { t: 'cmd'; command: string; exit: number | null; out?: string }
@@ -48,8 +57,8 @@ export type Event = { id: string; at: number } & (
   | { kind: 'you'; text: string; to?: string[]; arena?: boolean; cat?: Category; lead?: string; files?: string[]; from?: 'flow' | 'phone' }
   | { kind: 'say'; who: string; text: string; acts: Act[]; usage?: Usage; proof?: Proof[]; arena?: string; reply?: string; error?: string; ms?: number }
   | { kind: 'hands'; from: string; to: string; ask: string; answer: string; acts: Act[]; usage?: Usage; error?: string; ms?: number; via?: 'tool' }
-  | { kind: 'image'; by: string; for: string; prompt: string; path: string; usage?: Usage }
-  | { kind: 'wall'; from: string; to: string; until?: number; reason: string }
+  | { kind: 'image'; by: string; for: string; prompt: string; path: string; size?: string; usage?: Usage }
+  | { kind: 'wall'; from: string; to: string; until?: number; reason: string; arena?: string }
   | { kind: 'decide'; text: string; options: { label: string; action: DecideAction }[] }
   | { kind: 'chose'; ref: string; label: string }
   | { kind: 'run'; who: string; command: string; cwd: string; verdict: Verdict; code: number | null; ms: number; out: string; how: string }
@@ -82,7 +91,7 @@ export type RoomMeta = {
 // The folder as it was just before a message was handled, kept in a shadow git repository.
 export type Checkpoint = { ref: string; event: string; at: number; files?: number }
 
-export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack'> & { busy: boolean; waiting: boolean }
+export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack' | 'flow'> & { busy: boolean; waiting: boolean }
 
 export type LiveTurn = {
   id: string
@@ -94,6 +103,12 @@ export type LiveTurn = {
   text: string
   acts: Act[]
   started: number
+  // What the agent is doing this moment, such as a command it is running.
+  now?: string
+  // Set when the turn is drawing an image for a crewmate; label is the image's description.
+  image?: boolean
+  label?: string
+  size?: string
 }
 
 export type LiveRun = {
@@ -117,6 +132,20 @@ export type Live = {
 }
 
 export type Spent = { until: number; reason: string }
+
+// One limit window of a plan as its provider reports it. used is 0 to 1. tokens is Lunchbox's
+// measured estimate of how many tokens the whole window holds, once it has enough samples.
+export type PlanWindow = {
+  id: string; label: string; used: number; resets?: number; start?: number
+  // How big the window is: requests where the provider publishes a count, otherwise fresh tokens
+  // measured from this computer's own logs.
+  total?: number; unit?: 'tokens' | 'requests'
+  // Grok's pool is shared with Grok's other products; this is Grok Build's part of what is used.
+  share?: number
+  // The size in what the provider actually spends: dollars at list price, or Codex credits.
+  allowance?: number; currency?: 'usd' | 'credits'
+}
+export type PlanLimits = { agent: string; plan?: string; windows: PlanWindow[]; at: number; error?: string; reached?: boolean; stale?: boolean }
 
 export type Pack = {
   id: string
@@ -149,7 +178,10 @@ export type Settings = {
   imageModel?: string
   route?: 'best' | 'order'
   snapshots?: boolean
+  tools?: Record<string, { on: boolean; input?: string }>
+  browser?: boolean
   remote?: { on: boolean; chat?: number; name?: string; access?: Access }
+  planLimits?: boolean
 }
 
 export type FlowStep = { text: string; to?: string }
@@ -174,7 +206,8 @@ export type Flow = {
 
 export type FlowState = { flow: string; room: string; step: number; of: number }
 
-export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: { day: string; cost: number; tokens: number }[] }
+export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: Day[]; rooms: Record<string, Usage> }
+export type Day = { day: string; cost: number; tokens: number; input: number; cached: number; saved: number; kept: number }
 
 export type Hit = { room: string; roomName: string; event?: string; text: string }
 

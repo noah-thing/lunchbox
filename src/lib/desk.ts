@@ -1,25 +1,32 @@
 import { useSyncExternalStore } from 'react'
-import type { Access, AgentInfo, Env, Kind, Ledger, Pack, RoomSummary, Settings, Skill, Spent } from '../../shared/types'
+import type { Access, AgentInfo, Env, Flow, FlowState, Kind, Ledger, Pack, RoomSummary, Settings, Skill, Spent, PlanLimits } from '../../shared/types'
 
 export type { Access, Kind }
 export type LedgerView = Ledger & { spent: Record<string, Spent>; budgets: Record<string, number> }
 
+export type RemoteStatus = { on: boolean; token: boolean; paired: boolean; name?: string; bot?: string; code: string; error?: string }
+
 type Bridge = {
   call(channel: string, ...args: unknown[]): Promise<any>
   on(channel: string, fn: (value: any) => void): () => void
+  pathOf?(file: File): string
 }
 
 declare global { interface Window { lb?: Bridge } }
 
 const EMPTY: Record<string, unknown> = {
   env: { home: '', platform: 'web', version: '0.0.0', cwd: '', data: '' },
-  agents: [], 'agents:refresh': [], rooms: [], ledger: null, settings: null, skills: [], packs: [], keys: {}, search: [],
+  agents: [], 'agents:refresh': [], rooms: [], ledger: null, settings: null, skills: [], packs: [], keys: {}, search: [], flows: { flows: [], running: [] },
 }
 
 const browser: Bridge = {
   call: async (channel) => EMPTY[channel] ?? null,
   on: () => () => {},
 }
+
+// Unwraps the message Electron puts around errors thrown in the main process.
+export const reason = (e: unknown, fallback = 'That did not work') =>
+  e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : fallback
 
 export const desk: Bridge = window.lb ?? browser
 export const isDesktop = !!window.lb
@@ -30,14 +37,17 @@ type State = {
   rooms: RoomSummary[]
   settings: Settings
   ledger: LedgerView | null
+  limits: Record<string, PlanLimits>
   skills: Skill[]
   packs: Pack[]
+  flows: Flow[]
+  running: FlowState[]
   loaded: boolean
 }
 
 let state: State = {
   env: EMPTY.env as Env,
-  agents: [], rooms: [], ledger: null, skills: [], packs: [], loaded: false,
+  agents: [], rooms: [], ledger: null, limits: {}, skills: [], packs: [], flows: [], running: [], loaded: false,
   settings: { models: {}, budgets: {}, disabled: [], notify: true, defaultCrew: [] },
 }
 const subs = new Set<() => void>()
@@ -61,11 +71,14 @@ export function boot() {
     desk.on('agents', (agents) => set({ agents }))
     desk.on('rooms', (rooms) => set({ rooms }))
     desk.on('ledger', (ledger) => set({ ledger }))
+    desk.on('limits', (limits) => set({ limits }))
+    desk.call('limits').then((limits) => limits && set({ limits }))
     desk.on('skills', (skills) => set({ skills }))
-    const [env, agents, rooms, settings, ledger, skills, packs] = await Promise.all(
-      ['env', 'agents', 'rooms', 'settings', 'ledger', 'skills', 'packs'].map((c) => desk.call(c)),
+    desk.on('flows', (f) => set({ flows: f.flows, running: f.running }))
+    const [env, agents, rooms, settings, ledger, skills, packs, flows] = await Promise.all(
+      ['env', 'agents', 'rooms', 'settings', 'ledger', 'skills', 'packs', 'flows'].map((c) => desk.call(c)),
     )
-    set({ env, agents, rooms, settings: settings ?? state.settings, ledger, skills, packs, loaded: true })
+    set({ env, agents, rooms, settings: settings ?? state.settings, ledger, skills, packs, flows: flows?.flows ?? [], running: flows?.running ?? [], loaded: true })
   })()
   return booted
 }
@@ -107,6 +120,20 @@ export function ago(t: number) {
 
 export const clock = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 
+// "in 3h", "tomorrow 08:00", "Fri 09:00": when something scheduled happens next.
+export function upcoming(t: number) {
+  const s = (t - Date.now()) / 1000
+  if (s < 60) return 'now'
+  if (s < 3600) return `in ${Math.round(s / 60)}m`
+  const d = new Date(t)
+  const today = new Date()
+  const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - new Date(today).setHours(0, 0, 0, 0)) / 86400e3)
+  if (days === 0) return `today ${clock(t)}`
+  if (days === 1) return `tomorrow ${clock(t)}`
+  if (days < 7) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${clock(t)}`
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
 export function tokens(n: number) {
   if (n < 1000) return String(Math.round(n))
   if (n < 1e6) return `${(n / 1000).toFixed(n < 1e4 ? 1 : 0)}k`
@@ -118,6 +145,7 @@ export const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `${Ma
 // Why an agent cannot take work right now, in the words the panel shows. Mirrors Engine.why.
 export function unavailable(a: AgentInfo, s: State = state): string | null {
   if (s.settings.disabled.includes(a.id)) return 'Turned off'
+  if (!a.ready && a.setup && a.found) return !a.setup.running ? 'Installed, server is off' : a.setup.suggest ? 'No chat model yet, one click to get one' : 'No model loaded'
   if (!a.ready) return a.found ? a.note ?? 'Not ready' : 'Not set up'
   const spent = s.ledger?.spent[a.id]
   if (spent && spent.until > Date.now()) return `Out until ${clock(spent.until)}`

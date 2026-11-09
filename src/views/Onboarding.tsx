@@ -5,6 +5,7 @@ import { Band } from '../ui/Band'
 import { IconFolder } from '../ui/icons'
 import { flow } from '../App'
 import { desk, isDesktop, machine, short, useApp } from '../lib/desk'
+import { LocalSetupBox } from './Agents'
 
 const STEPS = 4
 const r = (i: number) => ({ '--i': i }) as CSSProperties
@@ -89,6 +90,12 @@ function Agents({ onNext, setLabel, setBusy }: { onNext: () => void; setLabel: (
     })
     return () => { alive = false }
   }, [])
+  const rescan = () => desk.call('agents:refresh').then((all: AgentInfo[]) => {
+    setList(all.filter((a) => a.via !== 'api').sort((x, y) => Number(y.found) - Number(x.found)))
+    setShown(all.length)
+  })
+  // A model finishing its download or a server starting refreshes the agents; follow along.
+  useEffect(() => { if (list) setList(cached.filter((a) => a.via !== 'api').sort((x, y) => Number(y.found) - Number(x.found))) }, [cached])
   const found = list?.filter((a) => a.found) ?? []
   const missing = list?.filter((a) => !a.found) ?? []
   useEffect(() => { if (list) setLabel(found.length ? found.map((a) => a.bin ?? a.short.toLowerCase()).join(' + ') : 'no agents found') }, [list])
@@ -101,20 +108,32 @@ function Agents({ onNext, setLabel, setBusy }: { onNext: () => void; setLabel: (
   useEnter(onNext, settled)
   return (
     <div className="obpage">
-      <h1 className="rise" style={r(0)}>{!list ? 'Looking for your agents' : found.length ? `${found.length} ${found.length === 1 ? 'agent' : 'agents'} found` : 'No agents found yet'}</h1>
+      <h1 className="rise" style={r(0)}>{!list ? 'Looking for your agents' : found.length ? `${found.filter((a) => a.ready).length} of ${found.length} agents ready` : 'No agents found yet'}</h1>
       <p className="rise" style={r(1)}>Each keeps its own login and plan. Lunchbox runs the real tool, with nothing in between.</p>
       <div className="agentlist">
         {!list && Array.from({ length: 3 }, (_, i) => <div key={i} className="arow ghost" style={r(i)}><i /><b /><span className="spacer" /><code /></div>)}
-        {found.slice(0, shown).map((a) => (
-          <div key={a.id} className="arow">
-            <Mark seed={a.mark} size={18} blink={1} />
-            <b>{a.name}</b>
-            {a.note && <span className="anote">{a.note}</span>}
-            <span className="spacer" />
-            <code>{a.bin ?? a.via} {a.version}</code>
+        {found.slice(0, shown).map((a) => {
+          const step = a.setup && !a.ready ? (!a.setup.running ? 'server off' : 'no chat model') : ''
+          return [
+            <div key={a.id} className="arow">
+              <Mark seed={a.mark} size={18} blink={1} />
+              <b>{a.name}</b>
+              <span className="spacer" />
+              <code className={step ? 'todo' : ''}>{step || `${a.bin ?? a.via} ${a.version ?? ''}`}</code>
+            </div>,
+            settled && step && a.id !== 'llamacpp' ? <div key={a.id + 'fix'} className="obfix"><LocalSetupBox a={a} say={() => rescan()} /></div> : null,
+          ]
+        })}
+        {settled && missing.length > 0 && (
+          <div className="obmissing">
+            <small>Not on {machine()} yet</small>
+            {missing.map((m) => <Missing key={m.id} a={m} />)}
+            <div className="row">
+              <button className="btn small quiet" onClick={rescan}>Check again</button>
+              <span className="quiet">API keys can be added any time in Agents.</span>
+            </div>
           </div>
-        ))}
-        {settled && missing.length > 0 && <div className="amissing">Not installed: {missing.map((m) => m.name).join(', ')}. API keys can be added later in Agents.</div>}
+        )}
       </div>
       {!isDesktop && settled && <span className="obnote">Browser preview. Open the desktop app to find real agents.</span>}
       <button className="btn big" disabled={!settled} onClick={onNext}>Continue <kbd>↵</kbd></button>
@@ -156,6 +175,31 @@ function Folder({ folder, pick, onDone }: { folder: string; pick: () => void; on
         <span>Change</span>
       </button>
       <button className="btn big rise" style={r(3)} onClick={onDone}>Open Lunchbox <kbd>↵</kbd></button>
+    </div>
+  )
+}
+
+// The one line each tool's makers publish for installing it. Agents without one link to their page.
+const INSTALL: Record<string, { cmd?: string; url: string }> = {
+  claude: { cmd: 'npm install -g @anthropic-ai/claude-code', url: 'https://claude.com/claude-code' },
+  codex: { cmd: 'npm install -g @openai/codex', url: 'https://github.com/openai/codex' },
+  gemini: { cmd: 'npm install -g @google/gemini-cli', url: 'https://github.com/google-gemini/gemini-cli' },
+  grok: { url: 'https://x.ai' },
+  ollama: { url: 'https://ollama.com/download' },
+  lmstudio: { url: 'https://lmstudio.ai' },
+  llamacpp: { cmd: 'brew install llama.cpp', url: 'https://github.com/ggml-org/llama.cpp' },
+}
+
+function Missing({ a }: { a: AgentInfo }) {
+  const how = INSTALL[a.id]
+  const [copied, setCopied] = useState(false)
+  if (!how) return null
+  const copy = () => { navigator.clipboard.writeText(how.cmd!); setCopied(true); setTimeout(() => setCopied(false), 1400) }
+  return (
+    <div className="obmiss">
+      <Mark seed={a.mark} size={14} />
+      <span className="name">{a.name}</span>
+      {how.cmd ? <button className="cmd" onClick={copy} title="Copy">{copied ? 'copied' : `$ ${how.cmd}`}</button> : <a className="cmd" href={how.url} target="_blank" rel="noreferrer">{how.url.replace('https://', '')}</a>}
     </div>
   )
 }

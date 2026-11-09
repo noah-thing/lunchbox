@@ -67,6 +67,11 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .mark circle{transform-box:fill-box;transform-origin:center}
 .mark.blink .on{animation:pop 420ms var(--out) both;animation-delay:var(--d)}
 .mark.active .on{animation:glow 1.4s ease-in-out infinite;animation-delay:var(--d)}
+.mark.brand{fill:var(--ink);transform-origin:center}
+.mark.brand.blink{animation:markin 420ms var(--out) both}
+.mark.brand.active{animation:markbreathe 1.6s ease-in-out infinite}
+@keyframes markin{from{opacity:0;transform:scale(.8)}}
+@keyframes markbreathe{50%{opacity:.45}}
 @keyframes pop{from{transform:scale(.2);opacity:0}}
 @keyframes glow{0%,100%{opacity:1}50%{opacity:.25}}
 .loader{flex:none}
@@ -80,10 +85,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .resolve{white-space:pre-wrap}
 .resolve .ghost{visibility:hidden}
 .field{display:block;width:100%}
-.ladder{display:inline-flex;gap:2px;flex:none}
-.ladder i{width:4px;height:10px;border-radius:1px;background:var(--cell)}
-.ladder i.on{background:var(--ink)}
-.ladder.l3 i.on:nth-child(3){background:var(--bad)}
+.modeicon{flex:none;color:var(--ink)}
+.modeicon.full{color:var(--bad)}
 .stack{display:inline-flex}
 .stack>span{display:flex;padding:2px;border-radius:4px;background:var(--sheet);margin-left:-4px;transition:transform 200ms var(--out)}
 .stack>span:first-child{margin-left:0}
@@ -98,22 +101,23 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .sbitem svg{flex:none}
 .sbitem small,.sbroom small{font:11px var(--mono);color:var(--faint)}
 .sbitem.on,.sbroom.on{color:var(--ink)}
-.sbitem>.sbsel,.sbroom>.sbsel{position:absolute;inset:0;border-radius:6px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);view-transition-name:sbsel;pointer-events:none}
+.sbitem>.sbsel,.sbroom>.sbsel{position:absolute;inset:0;border-radius:6px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);pointer-events:none;will-change:transform}
 @media (hover:hover){.sbitem:hover,.sbroom:hover{color:var(--ink);background:var(--hover)}.sbitem.on:hover,.sbroom.on:hover{background:none}}
 .sbitem:active,.sbroom:active{transform:scale(.985)}
-.waitdot{width:6px;height:6px;border-radius:1.5px;background:var(--warn);flex:none;animation:breathe 1.6s ease-in-out infinite}
+.waitdot{width:6px;height:6px;border-radius:1.5px;background:var(--warn);flex:none;animation:markbreathe 1.6s ease-in-out infinite}
 .sbempty{padding:6px 8px;font-size:12px;color:var(--faint)}
 .sbroom .grow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sblabel{padding:20px 8px 6px;font:11px var(--mono);color:var(--faint)}
 .sbrooms{flex:1;overflow:auto;display:flex;flex-direction:column;gap:1px}
 .sbfoot{display:flex;flex-direction:column;gap:1px;padding-top:8px}
+.sheet>*{animation:pagein 320ms var(--out) both}
+@keyframes pagein{from{opacity:0;transform:translateY(6px)}}
 .sheet{margin:8px 8px 8px 0;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line);overflow:hidden;min-width:0;position:relative;view-transition-name:sheet}
 .app.arriving .sidebar{animation:rise 700ms var(--out) both}
 .app.arriving .sheet{animation:rise 700ms var(--out) 80ms both}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}}
 ::view-transition-old(sheet){animation:90ms var(--out) both fadeout}
 ::view-transition-new(sheet){animation:240ms var(--out) both fadein}
-::view-transition-group(sbsel){animation-duration:340ms;animation-timing-function:cubic-bezier(.3,.9,.2,1)}
 ::view-transition-old(root),::view-transition-new(root){animation-duration:200ms}
 .revealing *{view-transition-name:none!important}
 .revealing::view-transition-old(root),.revealing::view-transition-new(root){animation:none;mix-blend-mode:normal}
@@ -170,15 +174,22 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .handhead .name{color:var(--ink)}
 .handhead code{margin-left:4px;padding:0 6px;border-radius:4px;background:var(--hover);color:var(--faint);line-height:18px}
 .exchange{position:relative;display:flex;flex-direction:column;gap:6px;padding-left:14px;border-left:1px solid var(--line2)}
-.hands.live .exchange::before{content:"";position:absolute;left:-2px;top:0;width:3px;height:14px;border-radius:2px;background:var(--ink);animation:travel 900ms var(--move) both}
-@keyframes travel{from{transform:translateY(0);opacity:1}to{transform:translateY(calc(100% + 40px));opacity:0}}
-.exchange .asked{font-size:12.5px;color:var(--faint);line-height:1.5}
-.exchange .asked::before{content:"asked  ";font:11px var(--mono);white-space:pre}
+/* A handoff arriving: the header first, then the thread draws down, then the ask and the work.
+   While the crewmate works, light runs down the thread, the same light as the search card. */
+.ev.settled,.ev.settled :is(.xsearch,.post,.exchange,.exchange>*,.workline code,.acts,.proof){animation:none}
+.hands.live{animation:land 320ms var(--out) both}
+.hands.live .exchange{animation:handrule 520ms 90ms cubic-bezier(.65,0,.35,1) both}
+@keyframes handrule{from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0 0 0 0)}}
+.hands.live .exchange>*{animation:land 420ms var(--out) both;animation-delay:200ms}
+.hands.live .exchange>*+*{animation-delay:320ms}
+.hands.live .exchange::before{content:"";position:absolute;left:-1px;top:0;bottom:0;width:1px;background:linear-gradient(transparent,var(--ink),transparent) no-repeat;background-size:1px 56px;background-position:0 -56px;animation:handlight 1.8s 600ms cubic-bezier(.45,0,.55,1) infinite}
+@keyframes handlight{from{background-position:0 -56px}to{background-position:0 calc(100% + 56px)}}
+.exchange .asked{font-size:13px;color:var(--dim);line-height:1.5}
 .exchange .got{font-size:13.5px;line-height:1.55}
 .handhead .tag{margin-left:4px;line-height:20px}
 .picture{display:flex;flex-direction:column;gap:8px;margin-top:4px;max-width:440px}
 .picture .frame{display:grid;place-items:center;min-height:160px;padding:0;border-radius:12px;overflow:hidden;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);cursor:zoom-in;transition:box-shadow 160ms var(--out)}
-.picture .frame.loaded{min-height:0}
+.picture .frame.loaded,.picture .frame.sized{min-height:0}
 @media (hover:hover){.picture .frame:hover{box-shadow:inset 0 0 0 1px var(--line2)}}
 .picture img{display:block;width:100%;height:auto;animation:fadein 480ms var(--out) both}
 .picture figcaption{display:flex;flex-direction:column;gap:2px;font-size:12.5px;color:var(--dim);line-height:1.45}
@@ -252,7 +263,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
 .item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px;border-radius:8px;transition:background-color 120ms var(--out)}
-.item>.ladder,.item>.mark{margin-top:3px}
+.item>.modeicon,.item>.mark{margin-top:2px}
 .item .grow{display:flex;flex-direction:column}
 .item b{font-weight:500}
 .item .grow span{font-size:12px;color:var(--dim)}
@@ -284,10 +295,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .crew.on small{color:var(--dim)}
 .crew.spent{opacity:.45}
 .crew .meter i{width:2px;height:8px}
-.steps{display:grid;grid-auto-flow:column;gap:2px;margin:4px 0 10px}
-.steps i{height:3px;border-radius:1px;background:var(--cell);transition:background-color 400ms var(--out)}
-.steps i.done{background:var(--ink)}
-.steps i.you{background:var(--warn)}
+.stepbar{display:grid;grid-auto-flow:column;gap:2px;margin:4px 0 10px}
+.stepbar i{height:3px;border-radius:1px;background:var(--cell);transition:background-color 400ms var(--out)}
+.stepbar i.done{background:var(--ink)}
+.stepbar i.you{background:var(--warn)}
 .task{display:flex;align-items:center;gap:10px;height:28px;font-size:12.5px;color:var(--dim)}
 .task>i{width:8px;height:8px;border-radius:2px;box-shadow:inset 0 0 0 1.25px var(--faint);flex:none;transition:background-color 300ms var(--out),box-shadow 300ms var(--out)}
 .task.done>i{background:var(--dim);box-shadow:none}
@@ -306,7 +317,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .memfoot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:12px;line-height:1.45;color:var(--faint)}
 
 /* New room: the code band, labelled with the crew, above the question. */
-.newroom{height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 24px 12vh;-webkit-app-region:drag}
+.newroom{height:100%;display:flex;flex-direction:column;justify-content:center;padding:4vh 24px 2vh;-webkit-app-region:drag}
 .newroom>*{-webkit-app-region:no-drag}
 .newbody{width:100%;max-width:var(--col);margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .newbody .band{margin-bottom:16px}
@@ -316,8 +327,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 @media (hover:hover){.ideas button:hover{color:var(--ink);background:var(--hover)}}
 
 /* Pages */
-.page{height:100%;overflow:auto;padding:72px 24px 48px;display:flex;flex-direction:column;align-items:center;gap:24px;-webkit-app-region:drag}
-.page>*{width:100%;max-width:var(--col);-webkit-app-region:no-drag}
+.page{height:100%;overflow:auto;padding:72px 24px 48px;display:flex;flex-direction:column;align-items:center;gap:24px}
+.page>*{width:100%;max-width:var(--col)}
+.sheetdrag{position:absolute;top:0;left:0;right:14px;height:40px;z-index:5;-webkit-app-region:drag}
 .page>.btn{width:auto;align-self:center}
 .pagehead h1{font-size:22px;font-weight:500;letter-spacing:-.01em}
 .pagehead p{color:var(--dim);margin-top:4px}
@@ -389,8 +401,12 @@ textarea:focus-visible,input:focus-visible{outline:0}
 /* Palette and toast */
 .scrim{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.32);display:flex;justify-content:center;padding-top:15vh;animation:fadein 220ms var(--out) both}
 [data-theme=light] .scrim{background:rgba(20,20,18,.14)}
-.palette{width:600px;max-height:460px;display:flex;flex-direction:column;border-radius:14px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 32px 80px -12px rgba(0,0,0,.55);overflow:hidden;view-transition-name:search;align-self:flex-start}
-[data-theme=light] .palette{box-shadow:0 0 0 1px var(--line2),0 32px 80px -16px rgba(0,0,0,.22)}
+.palette{position:relative;width:600px;align-self:flex-start}
+.pglow{position:absolute;inset:0;border-radius:14px;box-shadow:0 32px 80px -12px rgba(0,0,0,.6);pointer-events:none}
+.pbody{position:relative;max-height:460px;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;background:var(--sheet);box-shadow:inset 0 0 0 1px var(--line2);will-change:transform,clip-path}
+.scrim.leaving{animation:dimout 280ms var(--out) both;pointer-events:none}
+@keyframes dimout{to{background-color:transparent}}
+[data-theme=light] .pglow{box-shadow:0 32px 80px -16px rgba(0,0,0,.22)}
 .pinput{display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;border-bottom:1px solid var(--line);color:var(--faint);flex:none}
 .pinput input{flex:1;height:100%;font-size:14.5px;color:var(--ink)}
 .pinput input::placeholder{color:var(--faint)}
@@ -404,9 +420,6 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .plist button.on{background:var(--hover);color:var(--ink)}
 .plist small{margin-left:auto;flex:none;max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:11px var(--mono);color:var(--faint)}
 .plist .empty{padding:20px 12px;color:var(--faint);text-align:center}
-::view-transition-group(search){animation-duration:420ms;animation-timing-function:cubic-bezier(.2,.9,.1,1)}
-::view-transition-old(search){animation:90ms var(--out) both fadeout}
-::view-transition-new(search){block-size:100%;object-fit:cover;object-position:left top;animation:300ms var(--out) 40ms both fadein}
 .toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:var(--ink);color:var(--ground);font-size:12.5px;animation:toast 2.6s var(--out) both}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,6px)}8%,88%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
 
@@ -445,23 +458,25 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .rich li.todo{display:flex;align-items:flex-start;gap:10px}
 .rich ul>li.todo{margin-left:-16px}
 .rich li.todo::before{display:none}
-.rich li.todo>i{flex:none;width:12px;height:12px;margin-top:5px;border-radius:3px;box-shadow:inset 0 0 0 1px var(--line2)}
+.rich li.todo>i{position:relative;flex:none;width:14px;height:14px;margin-top:4px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2)}
 .rich li.todo.done>i{background:var(--ink);box-shadow:none}
-.rich li.todo.done>span{color:var(--faint);text-decoration:line-through;text-decoration-color:var(--line2)}
+.rich li.todo.done>i::after{content:"";position:absolute;left:4.5px;top:2px;width:3.5px;height:7px;border:solid var(--ground);border-width:0 1.6px 1.6px 0;transform:rotate(42deg)}
+.rich li.todo.done>span{color:var(--dim)}
 .rich code{font:12.5px var(--mono);padding:1px 5px;border-radius:4px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
 .rich a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px;transition:text-decoration-color 140ms var(--out)}
 .rich a:hover{text-decoration-color:var(--ink)}
 .codeblock{position:relative;padding:12px 14px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:12px/1.6 var(--mono);color:var(--dim);overflow-x:auto;white-space:pre}
 .codeblock[data-lang]::after{content:attr(data-lang);position:absolute;top:8px;right:10px;font-size:10px;color:var(--faint)}
-.caret{display:inline-block;width:7px;height:1.05em;margin-left:2px;vertical-align:-.15em;background:var(--ink);animation:caret 1s steps(1) infinite}
+.caret{display:inline-block;width:2px;height:1.1em;margin-left:3px;border-radius:1px;vertical-align:-.18em;background:var(--ink);animation:caretsoft 1.1s ease-in-out infinite}
+@keyframes caretsoft{0%,100%{opacity:.9}50%{opacity:.15}}
 
 .busyline{display:flex;align-items:center;gap:12px;height:22px;font-size:12.5px}
 .busyline .strip{color:var(--faint);font-size:11px}
 .acts{display:flex;flex-direction:column;gap:6px;margin-top:2px}
-.actsum{align-self:flex-start;display:inline-flex;align-items:center;gap:8px;height:24px;padding:0 10px 0 8px;border-radius:12px;font:11px var(--mono);color:var(--faint);box-shadow:inset 0 0 0 1px var(--line);transition:color 140ms var(--out),box-shadow 140ms var(--out)}
-@media (hover:hover){.actsum:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--line2)}}
-.actsum .tick{width:5px;height:5px;border-radius:1px;background:currentColor;transition:transform 200ms var(--out)}
-.acts.open .actsum .tick{transform:rotate(45deg)}
+.actsum{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0;font-size:12.5px;color:var(--faint);font-feature-settings:"tnum";transition:color 140ms var(--out)}
+@media (hover:hover){.actsum:hover{color:var(--dim)}}
+.actsum .chev{transition:transform 200ms var(--out)}
+.acts.open .actsum .chev{transform:rotate(90deg)}
 .actsum .bad{color:var(--bad)}
 .actlist{display:flex;flex-direction:column;padding:4px 0;border-left:1px solid var(--line2);margin-left:10px;animation:fadein 200ms var(--out) both}
 .act{display:flex;align-items:center;gap:12px;min-height:24px;padding-left:12px;animation:land 260ms var(--out) both}
@@ -473,12 +488,12 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .proof i{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink);transform:translateY(-1px)}
 .proof.bad i{background:var(--warn)}
 .proof span{font:11px var(--mono);color:var(--faint)}
-.tools{display:flex;align-items:center;gap:12px;height:24px;margin-top:-2px;font:10.5px var(--mono);color:var(--faint);opacity:0;transition:opacity 160ms var(--out)}
-.ev:hover>.evbody>.tools,.tools:focus-within{opacity:1}
-.tools button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--faint);transition:color 120ms var(--out),background-color 120ms var(--out),transform 120ms var(--out)}
-.tools button:hover{color:var(--ink);background:var(--hover)}
-.tools button:active{transform:scale(.92)}
-.tools svg{width:14px;height:14px}
+.msgtools{display:flex;align-items:center;gap:12px;height:24px;margin-top:-2px;font:10.5px var(--mono);color:var(--faint);opacity:0;transition:opacity 160ms var(--out)}
+.ev:hover>.evbody>.msgtools,.msgtools:focus-within{opacity:1}
+.msgtools button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--faint);transition:color 120ms var(--out),background-color 120ms var(--out),transform 120ms var(--out)}
+.msgtools button:hover{color:var(--ink);background:var(--hover)}
+.msgtools button:active{transform:scale(.92)}
+.msgtools svg{width:14px;height:14px}
 
 .arena{margin-top:24px;display:flex;flex-direction:column;gap:12px;animation:land 380ms var(--out) both}
 .arenahead{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
@@ -579,3 +594,89 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .onboard.leaving{opacity:0;transform:translateY(-8px) scale(.995)}
 
 @media (prefers-reduced-motion:reduce){*,::before,::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}}
+
+/* Local model setup */
+.localbox{display:flex;flex-direction:column;gap:10px}
+.localbox p{margin:0;font-size:12.5px;line-height:1.55;color:var(--dim);max-width:60ch}
+.localbox .btn .quiet{margin-left:10px;font:11px var(--mono);color:inherit;opacity:.55}
+.pullrow{display:flex;align-items:center;gap:14px;min-height:30px}
+.pullrow>.mono{font-size:12px;width:120px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pullbar{display:flex;gap:14px;align-items:center;font:11.5px var(--mono);color:var(--faint);white-space:pre;flex:1;min-width:0}
+.pullbar .bar b{font-weight:400;color:var(--ink)}
+.pullbar.done,.pullbar.done .bar b{color:var(--ink)}
+.pullbar.failed{color:var(--bad)}
+
+/* Onboarding: fixes and installs */
+.obfix{padding:12px 14px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--line);margin-top:10px;animation:land 360ms var(--out) both}
+.obmissing{display:flex;flex-direction:column;gap:2px;margin-top:16px;animation:land 360ms var(--out) both;animation-delay:120ms}
+.obmissing>small{font:11px var(--mono);color:var(--faint);padding-bottom:6px}
+.obmissing .row{margin-top:10px;gap:12px;font-size:12px}
+.obmiss{display:flex;align-items:center;gap:10px;height:30px;font-size:12.5px;color:var(--dim)}
+.obmiss .mark{opacity:.6}
+.obmiss .name{width:110px;flex:none}
+.obmiss .cmd{font:11.5px var(--mono);color:var(--faint);text-align:left;padding:3px 8px;border-radius:6px;transition:background-color 140ms var(--out),color 140ms var(--out);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (hover:hover){.obmiss .cmd:hover{background:var(--hover);color:var(--ink)}}
+.arow code.todo{color:var(--warn)}
+.obfix{margin:0 0 8px 30px}
+.seg button:has(.modeicon){display:inline-flex;align-items:center;gap:6px}
+.seg button.on .modeicon:not(.full){color:inherit}
+/* The beat between pressing stop and the engine confirming: motion halts and the text settles. */
+.room.stopping .caret,.room.stopping .strip{display:none}
+.room.stopping .shimmer{animation:none;color:var(--faint)}
+/* The folder picker on the new room page sits with the chips, so it wears their shape. */
+.foldermenu .pill{height:28px;padding:0 10px 0 12px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--line)}
+.foldermenu .pill svg:first-child{width:14px;height:14px}
+.foldermenu .pill .mono{font:11.5px var(--mono)}
+.foldermenu .menu{top:calc(100% + 6px);bottom:auto;transform-origin:top left;width:340px}
+.foldermenu .item b.mono{font:500 12px var(--mono)}
+.newmeta{position:relative;z-index:3}
+.foldermenu .item .grow{min-width:0}
+.foldermenu .item .grow>span,.foldermenu .item b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Live work: what an agent is doing, said plainly, with the time so far */
+.workline{display:flex;align-items:center;gap:9px;min-height:26px;margin-top:6px;font-size:13px;color:var(--dim)}
+.workline .loader{flex:none;opacity:.85}
+.workline .shimmer{flex:none}
+.workline code{min-width:0;font:12px var(--mono);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:land 260ms var(--out) both}
+.workline time{flex:none;font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
+.workline time::before{content:"·";margin-right:9px;color:var(--faint)}
+.act .ok{color:var(--faint);margin-right:6px}
+
+/* The field of dots that live work happens on. A dim grid, and the same grid lit inside a band of
+   light that travels across it. Search and image share it, so waiting looks the same everywhere. */
+.dotfield,.developing .canvas{--pitch:8px}
+.dotfield .dots,.developing .dots{position:absolute;inset:0;background-image:radial-gradient(circle at center,var(--ink) .9px,transparent 1.25px);background-size:var(--pitch) var(--pitch);background-position:center;opacity:.09}
+.dotfield .dots.lit,.developing .dots.lit{opacity:.85;
+  -webkit-mask-image:linear-gradient(100deg,transparent 34%,rgba(0,0,0,.3) 43%,#000 50%,rgba(0,0,0,.3) 57%,transparent 66%);mask-image:linear-gradient(100deg,transparent 34%,rgba(0,0,0,.3) 43%,#000 50%,rgba(0,0,0,.3) 57%,transparent 66%);
+  -webkit-mask-size:220% 100%;mask-size:220% 100%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;animation:dotpass 2.2s cubic-bezier(.45,0,.55,1) infinite alternate}
+@keyframes dotpass{from{-webkit-mask-position:100% 0;mask-position:100% 0}to{-webkit-mask-position:0% 0;mask-position:0% 0}}
+.room.stopping .dots.lit{animation-play-state:paused}
+
+/* Search: one card from the moment it starts to what it found */
+.xsearch{margin:8px 0 2px;max-width:600px;border-radius:12px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);overflow:hidden;animation:land 320ms var(--out) both}
+.xsearch header{display:flex;align-items:center;gap:7px;height:40px;padding:0 14px;font-size:12.5px;color:var(--dim);white-space:nowrap}
+.xsearch .src{display:grid;place-items:center;width:14px;color:var(--dim);flex:none}
+.xsearch .src svg{width:12px;height:12px}
+.xsearch header b{font-weight:500;color:var(--ink)}
+.xsearch header .shimmer{font-size:12.5px;flex:none}
+.xsearch .query{color:var(--ink);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.xsearch .meta{margin-left:auto;padding-left:12px;color:var(--faint);font-feature-settings:"tnum"}
+.xsearch .dotfield{position:relative;height:52px;border-top:1px solid var(--line)}
+.xsearch .posts{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.xsearch .post{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px 14px 13px;background:var(--well);animation:land 520ms var(--out) both;animation-delay:calc(var(--i) * 140ms)}
+.xsearch .post .by{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px}
+.xsearch .post .by b{font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xsearch .post .by small{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:11.5px;color:var(--faint);font-feature-settings:"tnum"}
+.xsearch .post p{margin:0;font-size:12.5px;line-height:1.45;color:var(--dim);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.xsearch footer{height:34px;display:flex;align-items:center;padding:0 14px;font-size:12px;color:var(--faint);font-feature-settings:"tnum"}
+.ident{flex:none;width:18px;height:18px;border-radius:50%;background:var(--sheet);box-shadow:inset 0 0 0 1px var(--line);fill:var(--dim)}
+
+/* An image on its way, at its own size. When it lands, the picture opens over the same spot. */
+.developing{margin:8px 0 0;max-width:560px}
+.developing .canvas{position:relative;aspect-ratio:var(--ar,3/2);border-radius:12px;overflow:hidden;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
+.developing figcaption{display:flex;align-items:baseline;gap:16px;margin-top:8px;font-size:12.5px;line-height:1.45;color:var(--faint)}
+.developing figcaption span{flex:1;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.developing figcaption small{flex:none;font:11px var(--mono);font-feature-settings:"tnum"}
+.picture{max-width:560px}
+.picture .frame.loaded img{animation:reveal 900ms cubic-bezier(.22,1,.36,1) both}
+@keyframes reveal{from{clip-path:inset(0 100% 0 0 round 12px);filter:blur(6px)}to{clip-path:inset(0 0 0 0 round 12px);filter:blur(0)}}

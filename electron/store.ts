@@ -25,6 +25,9 @@ export function addUsage(a: Usage, b: Partial<Usage>) {
   a.output += b.output ?? 0
   a.cached += b.cached ?? 0
   a.cost += b.cost ?? 0
+  if (b.written) a.written = (a.written ?? 0) + b.written
+  if (b.saved) a.saved = (a.saved ?? 0) + b.saved
+  if (b.kept) a.kept = (a.kept ?? 0) + b.kept
   return a
 }
 
@@ -35,6 +38,7 @@ export class Store {
   private flushTimer: NodeJS.Timeout | null = null
   settings: Settings
   spent: Record<string, Spent>
+  calib: Record<string, { at: number; pct: number; units: number; start: number }[]>
   health: Record<string, string>
   skills: Skill[]
   flows: Flow[]
@@ -47,8 +51,10 @@ export class Store {
     mkdirSync(join(dir, 'packs'), { recursive: true })
     for (const meta of readJson<RoomMeta[]>(join(dir, 'rooms.json'), [])) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
-    const state = readJson<{ spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
+    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
+    // Older builds stored a different shape here; only lists are kept.
+    this.calib = Object.fromEntries(Object.entries(state.calib ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.filter((r) => r && 'start' in r) : []]))
     this.health = state.health ?? {}
     this.arena = state.arena ?? {}
     this.ratings = state.ratings ?? {}
@@ -134,7 +140,7 @@ export class Store {
   }
 
   saveState() {
-    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings })
+    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings, calib: this.calib })
   }
 
   saveSkills() {
@@ -179,19 +185,26 @@ export class Store {
     const week = Date.now() - 7 * 86400e3
     const days = Array.from({ length: DAYS }, (_, i) => {
       const d = new Date(day.getTime() - (DAYS - 1 - i) * 86400e3)
-      return { day: d.toISOString().slice(0, 10), start: d.getTime(), cost: 0, tokens: 0 }
+      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, kept: 0 }
     })
-    const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [] }
+    const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
     for (const row of this.ledger) {
-      if (row.at >= week) addUsage((out.week[row.agent] ??= zero()), row.usage)
+      if (row.at >= week) {
+        addUsage((out.week[row.agent] ??= zero()), row.usage)
+        addUsage((out.rooms[row.room] ??= zero()), row.usage)
+      }
       if (row.at >= day.getTime()) addUsage((out.today[row.agent] ??= zero()), row.usage)
       const slot = days.findLast((d) => row.at >= d.start)
       if (slot) {
         slot.cost += row.usage.cost
         slot.tokens += row.usage.input + row.usage.output + row.usage.cached
+        slot.input += row.usage.input
+        slot.cached += row.usage.cached
+        slot.saved += row.usage.saved ?? 0
+        slot.kept += row.usage.kept ?? 0
       }
     }
-    out.days = days.map(({ day, cost, tokens }) => ({ day, cost, tokens }))
+    out.days = days.map(({ start: _, ...d }) => d)
     return out
   }
 
@@ -201,3 +214,6 @@ export class Store {
     return readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => join(dir, f))
   }
 }
+
+// The calendar date where the user is, not in UTC: local midnight in Stockholm is the day before in UTC.
+const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
