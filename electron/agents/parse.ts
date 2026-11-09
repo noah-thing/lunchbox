@@ -22,7 +22,13 @@ export type Update = { delta?: string; acts?: Act[]; working?: string }
 function claudeSaved(models: Record<string, any> | undefined) {
   const rows = Object.entries(models ?? {})
   const parts = rows.length
-    ? rows.map(([m, r]) => cacheSaving(m, r.cacheReadInputTokens ?? 0, r.cacheCreationInputTokens ?? 0))
+    ? rows.map(([m, r]) => {
+        // Claude Code reports writes by lifetime; an hour entry costs twice the input price, not 1.25.
+        const all = r.cacheCreationInputTokens ?? 0
+        const hour = r.cacheCreationEphemeral1hInputTokens ?? 0
+        const prompt = (r.inputTokens ?? 0) + (r.cacheReadInputTokens ?? 0) + all
+        return cacheSaving(m, r.cacheReadInputTokens ?? 0, { short: Math.max(0, all - hour), hour }, prompt)
+      })
     : []
   const known = parts.filter((x): x is number => x !== null)
   return known.length ? known.reduce((a, b) => a + b, 0) : undefined
@@ -210,7 +216,9 @@ export function gemini() {
         return null
       case 'result': {
         const s = o.stats ?? {}
-        turn.usage = { input: s.input_tokens ?? s.input ?? 0, output: s.output_tokens ?? 0, cached: s.cached ?? s.cached_tokens ?? 0, cost: 0 }
+        // input_tokens counts the cached part too; `input` is what was billed in full.
+        const cached = s.cached ?? s.cached_tokens ?? 0
+        turn.usage = { input: s.input ?? Math.max(0, (s.input_tokens ?? 0) - cached), output: s.output_tokens ?? 0, cached, cost: 0 }
         if (o.status && o.status !== 'success') turn.error ??= o.error?.message ?? 'Gemini stopped'
         return null
       }

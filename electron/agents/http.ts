@@ -1,5 +1,5 @@
 import type { Usage } from '../../shared/types'
-import { cacheSaving } from '../../shared/prices'
+import { cacheSaving, claudeCost } from '../../shared/prices'
 
 type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp }
 
@@ -99,6 +99,7 @@ export async function chat(name: string, key: string, model: string, system: str
   let res: Response
 
   if (p.style === 'anthropic') {
+    let start: { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number } } = {}
     // One block per message of the conversation and a breakpoint on the last one. The next turn
     // finds that breakpoint again within the 20 block lookback and reads everything before it
     // from cache; only the new messages, the memory and the task are billed in full.
@@ -118,16 +119,19 @@ export async function chat(name: string, key: string, model: string, system: str
       if (!o) continue
       if (o.type === 'content_block_delta') push(o.delta?.text)
       if (o.type === 'message_start') {
-        const u = o.message?.usage ?? {}
-        usage.input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
-        usage.cached = u.cache_read_input_tokens ?? 0
-        const written = u.cache_creation_input_tokens ?? 0
-        usage.written = written
-        usage.saved = cacheSaving(id, usage.cached, written) ?? undefined
+        start = o.message?.usage ?? {}
+        usage.input = (start.input_tokens ?? 0) + (start.cache_creation_input_tokens ?? 0)
+        usage.cached = start.cache_read_input_tokens ?? 0
+        usage.written = start.cache_creation_input_tokens ?? 0
       }
       if (o.type === 'message_delta') usage.output = o.usage?.output_tokens ?? usage.output
       if (o.type === 'error') throw new Error(o.error?.message ?? 'Anthropic stream error')
     }
+    // The API reports tokens, not dollars, so price the call here once the output is known.
+    const hour = start.cache_creation?.ephemeral_1h_input_tokens ?? 0
+    const writes = { short: Math.max(0, (usage.written ?? 0) - hour), hour }
+    usage.cost = claudeCost(id, { input: start.input_tokens ?? 0, read: usage.cached, output: usage.output, ...writes }) ?? 0
+    usage.saved = cacheSaving(id, usage.cached, writes, usage.input + usage.cached) ?? undefined
   } else if (p.style === 'openai') {
     res = await fetch(`${p.base}/chat/completions`, {
       method: 'POST', signal, headers: headers(p.style, key),

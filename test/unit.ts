@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { claudeLike, codex, limitOf, plain, reason } from '../electron/agents/parse'
+import { claudeLike, codex, gemini, limitOf, plain, reason } from '../electron/agents/parse'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
 import { chat, PROVIDERS } from '../electron/agents/http'
-import { cacheSaving } from '../shared/prices'
+import { cacheSaving, claudeCost } from '../shared/prices'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
@@ -289,4 +289,55 @@ test('provider JSON errors read as a sentence', () => {
   assert.match(plain(raw), /^its model gpt-6\.1-terra is not available on a ChatGPT plan/)
   assert.equal(plain('{"error":{"message":"Overloaded"}}'), 'Overloaded')
   assert.equal(plain('plain words stay'), 'plain words stay')
+})
+
+// The Savings page is only as true as these numbers, so they are checked against a real turn.
+test('savings: Claude Code turn is priced exactly like Anthropic bills it', () => {
+  const { turn } = feed(claudeLike(), fixture('claude'))
+  const u = turn.usage
+  assert.equal(u.cached, 51804)
+  assert.equal(u.written, 29259)
+  assert.equal(u.input, 4 + 29259, 'input counts what was billed in full, writes included')
+  // Our price table rebuilds Claude Code's own cost for the call to the cent fraction.
+  const ours = claudeCost('claude-haiku-5-5', { input: 4, read: 51804, output: 398, short: 29259 })!
+  assert.ok(Math.abs(ours - u.cost) < 1e-6, `${ours} vs ${u.cost}`)
+  // Saved: 51804 reads at $0.09 off each million, minus a quarter of $0.10 on 29259 writes.
+  assert.ok(Math.abs((u.saved ?? 0) - (51804 * 0.09 - 29259 * 0.025) / 1e6) < 1e-9)
+})
+
+test('savings: hour long cache writes cost double, not a quarter extra', () => {
+  const short = cacheSaving('claude-sonnet-5-5', 100000, { short: 20000 })!
+  const hour = cacheSaving('claude-sonnet-5-5', 100000, { short: 0, hour: 20000 })!
+  assert.ok(Math.abs(short - (100000 * 1.8 - 20000 * 0.5) / 1e6) < 1e-9)
+  assert.ok(Math.abs(hour - (100000 * 1.8 - 20000 * 2) / 1e6) < 1e-9)
+  assert.equal(cacheSaving('gpt-6', 100000, 0), null, 'unknown prices stay in tokens')
+})
+
+test('savings: Gemini CLI cached tokens are not counted twice', () => {
+  const p = gemini()
+  p.line({ type: 'result', status: 'success', stats: { total_tokens: 1300, input_tokens: 1200, output_tokens: 100, cached: 800, input: 400 } })
+  assert.deepEqual([p.turn.usage.input, p.turn.usage.cached], [400, 800])
+  const q = gemini()
+  q.line({ type: 'result', status: 'success', stats: { input_tokens: 1200, output_tokens: 100, cached: 800 } })
+  assert.equal(q.turn.usage.input, 400)
+})
+
+test('savings: the ledger sums per day, per agent and per room', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const store = new Store(mkdtempSync(join(tmpdir(), 'lb-ledger-')), { seal: (t: string) => t, open: (t: string) => t })
+  store.record('claude', 'r1', { input: 1000, output: 50, cached: 9000, cost: 0.01, written: 1000, saved: 0.02, kept: 300 })
+  store.record('claude', 'r2', { input: 500, output: 20, cached: 4000, cost: 0.005, saved: 0.01 })
+  store.record('grok', 'r1', { input: 700, output: 10, cached: 300, cost: 0.002 })
+  const t = store.totals()
+  const today = t.days[t.days.length - 1]
+  assert.equal(t.days.length, 14)
+  const now = new Date()
+  assert.equal(today.day, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`, 'days are local dates')
+  assert.deepEqual([today.input, today.cached, today.kept], [2200, 13300, 300])
+  assert.ok(Math.abs(today.saved - 0.03) < 1e-12)
+  assert.deepEqual([t.week.claude.cached, t.week.claude.kept, t.week.grok.cached], [13000, 300, 300])
+  assert.ok(Math.abs((t.rooms.r1.saved ?? 0) - 0.02) < 1e-12)
+  assert.equal(t.rooms.r1.input, 1700)
 })

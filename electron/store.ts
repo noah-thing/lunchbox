@@ -182,7 +182,7 @@ export class Store {
     const week = Date.now() - 7 * 86400e3
     const days = Array.from({ length: DAYS }, (_, i) => {
       const d = new Date(day.getTime() - (DAYS - 1 - i) * 86400e3)
-      return { day: d.toISOString().slice(0, 10), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, kept: 0 }
+      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, kept: 0 }
     })
     const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
     for (const row of this.ledger) {
@@ -211,3 +211,6 @@ export class Store {
     return readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => join(dir, f))
   }
 }
+
+// The calendar date where the user is, not in UTC: local midnight in Stockholm is the day before in UTC.
+const localDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`

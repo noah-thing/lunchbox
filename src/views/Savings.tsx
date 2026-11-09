@@ -43,7 +43,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
         <header className="pagehead row rise">
           <div className="grow">
             <h1>Savings</h1>
-            <p>What Lunchbox’s prompt caching saved you. Your agents still read the whole room, nothing is cut.</p>
+            <p>What prompt caching saved across your rooms. Your agents still read the whole room, nothing is cut.</p>
           </div>
           <span className="sv-range">Last 7 days</span>
         </header>
