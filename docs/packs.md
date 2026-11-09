@@ -1,6 +1,6 @@
 # Packs
 
-A pack focuses a room on one kind of work. It gives the crew a brief, offers starting ideas, and can add checks that show up under `/` in the composer. Software, Research, SEO, Writing, Data, Design, Growth, Security and Learning are built in.
+A pack sets a room up for one kind of work. It adds a brief to each agent's instructions and suggests ideas to start from, and it can add checks you run from `/` in the composer. Lunchbox comes with packs for Software, Research, SEO, Writing, Data, Design, Growth, Security and Learning.
 
 A pack is a small JSON file:
 
