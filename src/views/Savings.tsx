@@ -1,5 +1,5 @@
-import type { CSSProperties } from 'react'
-import type { AgentInfo, Day, Usage } from '../../shared/types'
+import { useId, type CSSProperties, type ReactNode } from 'react'
+import type { Day, Usage } from '../../shared/types'
 import { Mark } from '../ui/bits'
 import { money, tokens, useApp } from '../lib/desk'
 import type { View } from '../App'
@@ -10,20 +10,20 @@ const add = (a: Usage, u: Usage): Usage => ({
   saved: (a.saved ?? 0) + (u.saved ?? 0), kept: (a.kept ?? 0) + (u.kept ?? 0),
 })
 const total = (r: Record<string, Usage> | undefined) => Object.values(r ?? {}).reduce(add, zero())
-// Everything an agent read in a turn: what it was billed for in full, what came from the
-// provider's cache, and what it never had to be sent because it already had it.
-const read = (u: Usage) => u.input + u.cached + (u.kept ?? 0)
-const reused = (u: Usage) => u.cached + (u.kept ?? 0)
-const pct = (n: number) => (n > 0 && n < 0.005 ? '<1%' : `${Math.round(n * 100)}%`)
-const share = (u: Usage) => (read(u) ? reused(u) / read(u) : 0)
+// Everything an agent read: billed in full, read from the provider's cache, or never sent
+// because the agent's own session already had it.
+const read = (u: { input: number; cached: number; kept?: number }) => u.input + u.cached + (u.kept ?? 0)
+const reused = (u: { cached: number; kept?: number }) => u.cached + (u.kept ?? 0)
+const ratio = (u: { input: number; cached: number; kept?: number }) => (read(u) ? reused(u) / read(u) : 0)
+const pct = (n: number) => (n > 0 && n < 0.005 ? '<1%' : `${(n * 100).toFixed(n >= 0.995 || n === 0 ? 0 : 1)}%`)
 
 export function Savings({ go }: { go: (v: View) => void }) {
   const ledger = useApp((s) => s.ledger)
   const agents = useApp((s) => s.agents)
   const rooms = useApp((s) => s.rooms)
   const week = total(ledger?.week)
-  const saved = week.saved ?? 0
-  const empty = read(week) === 0
+  const days = ledger?.days ?? []
+  const last7 = days.slice(-7)
 
   const crew = Object.entries(ledger?.week ?? {})
     .map(([id, u]) => ({ a: agents.find((x) => x.id === id), id, u }))
@@ -31,174 +31,175 @@ export function Savings({ go }: { go: (v: View) => void }) {
     .sort((x, y) => (y.u.saved ?? 0) - (x.u.saved ?? 0) || reused(y.u) - reused(x.u))
   const top = Object.entries(ledger?.rooms ?? {})
     .map(([id, u]) => ({ room: rooms.find((r) => r.id === id), id, u }))
-    .filter((x) => x.room && reused(x.u) > 0)
+    .filter((x) => x.room && read(x.u) > 0)
     .sort((x, y) => (y.u.saved ?? 0) - (x.u.saved ?? 0) || reused(y.u) - reused(x.u))
-    .slice(0, 5)
+    .slice(0, 6)
 
   return (
     <div className="page">
       <div className="pagebody wide savings">
-        <header className="pagehead rise">
-          <h1>Savings</h1>
-          <p>Agents reread the whole room on every turn. Lunchbox arranges each request so that text they have already seen costs a fraction, or is not sent at all. They still read everything.</p>
+        <header className="pagehead row rise">
+          <div className="grow">
+            <h1>Savings</h1>
+            <p>What Lunchbox’s prompt caching saved you. Your agents still read the whole room, nothing is cut.</p>
+          </div>
+          <span className="range">Last 7 days</span>
         </header>
 
-        {empty ? (
-          <section className="savehero rise" style={{ '--i': 1 } as CSSProperties}>
-            <small>Last 7 days</small>
-            <b>Nothing to count yet</b>
-            <p>Start a room and come back after a few turns. Longer rooms save the most, because every turn rereads everything before it.</p>
-            <button className="btn small" onClick={() => go({ name: 'new' })}>Start a room</button>
-          </section>
-        ) : (
-          <>
-            <Hero week={week} saved={saved} />
+        <div className="kpis rise" style={{ '--i': 1 } as CSSProperties}>
+          <Kpi label="Saved with prompt caching" value={money(week.saved ?? 0)} series={last7.map((d) => d.saved)}
+            info="Money taken off your bill at each provider's list price. Agents on a plan or running locally save tokens instead, shown next to this." />
+          <Kpi label="Tokens saved" value={tokens(reused(week))} series={last7.map(reused)}
+            info="Tokens your agents read without paying full price: either the provider had them cached and charged about a tenth, or the agent already had them and Lunchbox skipped sending them." />
+          <Kpi label="Savings rate" value={pct(ratio(week))} series={last7.map(ratio)} unit
+            info="The share of everything your agents read that was saved by caching. Long rooms push this up." />
+          <Kpi label="You paid" value={money(week.cost)} series={last7.map((d) => d.cost)}
+            info={`With caching off, the same turns would have cost ${money(week.cost + (week.saved ?? 0))}.`} />
+        </div>
 
-            <section className="group rise" style={{ '--i': 2 } as CSSProperties}>
-              <h2>What your agents read<span className="quiet">last 7 days, {tokens(read(week))} tokens</span></h2>
-              <Split week={week} />
-            </section>
+        <Card title="Tokens per day" info="Each bar is one day of everything your agents read: the part caching saved, and the part paid in full." className="rise" style={{ '--i': 2 } as CSSProperties}
+          right={<Legend items={[['reuse', 'Saved by caching'], ['fresh', 'Paid in full']]} />}>
+          <Chart days={days} />
+        </Card>
 
-            <section className="group rise" style={{ '--i': 3 } as CSSProperties}>
-              <h2>Day by day<span className="quiet">bright is reused, dim is read at full price</span></h2>
-              <Days days={ledger?.days ?? []} />
-            </section>
-
-            <section className="group rise" style={{ '--i': 4 } as CSSProperties}>
-              <h2>By agent<span className="quiet">last 7 days</span></h2>
-              <div className="settings">
-                {crew.map(({ a, id, u }) => <AgentRow key={id} a={a} id={id} u={u} />)}
-              </div>
-            </section>
-
-            {top.length > 0 && (
-              <section className="group rise" style={{ '--i': 5 } as CSSProperties}>
-                <h2>Rooms that saved the most</h2>
-                <div className="settings">
-                  {top.map(({ room, id, u }) => (
-                    <button key={id} className="setting saveroom" onClick={() => go({ name: 'room', id })}>
-                      <span className="grow">{room!.name}</span>
-                      <span className="quiet">{pct(share(u))} reused</span>
-                      <span className="amount">{u.saved ? `${money(u.saved)} saved` : `${tokens(reused(u))} tokens`}</span>
-                    </button>
-                  ))}
+        <Card title="By agent" info="Last 7 days. The savings rate is the share of what each agent read that caching saved." className="rise" style={{ '--i': 3 } as CSSProperties}>
+          {crew.length ? (
+            <Table head={['Agent', 'Tokens saved', 'Paid in full', 'Savings rate', 'Saved']}>
+              {crew.map(({ a, id, u }) => (
+                <div className="trow" key={id}>
+                  <span className="who">{a ? <Mark seed={a.mark} size={16} /> : <i className="markgap" />}{a?.name ?? id}</span>
+                  <span className="n">{tokens(reused(u))}</span>
+                  <span className="n dim">{tokens(u.input)}</span>
+                  <span className="ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
+                  <span className="n">{u.saved ? money(u.saved) : <em>{a?.via === 'local' ? 'free' : a?.via === 'cli' ? 'plan' : 'n/a'}</em>}</span>
                 </div>
-              </section>
-            )}
-          </>
-        )}
+              ))}
+            </Table>
+          ) : <Empty go={go} />}
+        </Card>
 
-        <section className="group rise" style={{ '--i': 6 } as CSSProperties}>
-          <h2>How Lunchbox saves</h2>
-          <div className="how">
-            {HOW.map(([title, line], i) => (
-              <div key={title} style={{ '--i': i } as CSSProperties}>
-                <code>{String(i + 1).padStart(2, '0')}</code>
-                <span><b>{title}</b>{line}</span>
-              </div>
-            ))}
-          </div>
-        </section>
+        {top.length > 0 && (
+          <Card title="By room" info="Rooms that saved the most. Long rooms save more, because every turn rereads everything before it." className="rise" style={{ '--i': 4 } as CSSProperties}>
+            <Table head={['Room', 'Tokens saved', 'Paid in full', 'Savings rate', 'Saved']}>
+              {top.map(({ room, id, u }) => (
+                <button className="trow link" key={id} onClick={() => go({ name: 'room', id })}>
+                  <span className="who">{room!.name}</span>
+                  <span className="n">{tokens(reused(u))}</span>
+                  <span className="n dim">{tokens(u.input)}</span>
+                  <span className="ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
+                  <span className="n">{u.saved ? money(u.saved) : <em>plan</em>}</span>
+                </button>
+              ))}
+            </Table>
+          </Card>
+        )}
       </div>
     </div>
   )
 }
 
-const HOW: [string, string][] = [
-  ['Same start every time', 'Each request begins with the parts that do not change: the instructions, then the conversation so far. Providers keep that start for a few minutes and charge about a tenth for it on the next turn.'],
-  ['Only what is new', 'Agents that keep their own session, like the Claude and Codex apps, already remember the room. They get only the messages since their last turn.'],
-  ['Each room its own cache', 'Rooms never push each other out of the provider’s cache, so switching between two rooms keeps both cheap.'],
-  ['Nothing is cut', 'No summaries, no trimming. Every agent reads the same room it would read with all of this turned off.'],
-]
+function Info({ text }: { text: string }) {
+  return <span className="info" tabIndex={0} aria-label={text}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 7.25v3.75" strokeLinecap="round" /><circle cx="8" cy="5.1" r=".2" strokeWidth="1.4" /></svg><span className="bubble" role="tooltip">{text}</span></span>
+}
 
-function Hero({ week, saved }: { week: Usage; saved: number }) {
-  const would = week.cost + saved
+function Card({ title, info, right, children, className = '', style }: { title: string; info: string; right?: ReactNode; children: ReactNode; className?: string; style?: CSSProperties }) {
   return (
-    <section className="savehero rise" style={{ '--i': 1 } as CSSProperties}>
-      <small>Last 7 days</small>
-      {saved > 0 ? (
-        <>
-          <b>{money(saved)} saved</b>
-          <p>Without Lunchbox arranging the requests, these turns would have cost {money(would)}. You paid {money(week.cost)}.</p>
-          <div className="costbar" aria-hidden="true">
-            <i className="paid" style={{ flex: `${Math.max(2, (week.cost / would) * 100)} 1 0` }} />
-            <i className="kept" style={{ flex: `${(saved / would) * 100} 1 0` }} />
-          </div>
-          <div className="costkey"><span><i className="paid" />You paid {money(week.cost)}</span><span><i className="kept" />Saved {money(saved)}</span></div>
-        </>
-      ) : (
-        <>
-          <b>{pct(share(week))} of what they read was reused</b>
-          <p>{tokens(reused(week))} of {tokens(read(week))} tokens came from cache or never had to be sent. Your agents run on plans or local models, so this shows up as more room before a limit instead of money.</p>
-        </>
-      )}
+    <section className={`scard ${className}`} style={style}>
+      <header><h2>{title}</h2><Info text={info} /><span className="grow" />{right}</header>
+      {children}
     </section>
   )
 }
 
-// One bar for everything read, in three parts that say where each token came from.
-function Split({ week }: { week: Usage }) {
-  const r = read(week) || 1
-  const parts = [
-    { key: 'cached', n: week.cached, name: 'Reused from cache', line: 'The provider had seen it a moment ago and charged about a tenth.' },
-    { key: 'kept', n: week.kept ?? 0, name: 'Not sent again', line: 'The agent already had it in its own session.' },
-    { key: 'fresh', n: week.input, name: 'Read at full price', line: 'New messages, files and tool results.' },
-  ].filter((p) => p.n > 0)
+function Kpi({ label, value, series, info, unit = false }: { label: string; value: string; series: number[]; info: string; unit?: boolean }) {
   return (
-    <div className="split">
-      <div className="splitbar" aria-hidden="true">{parts.map((p) => <i key={p.key} className={p.key} style={{ flex: `${Math.max(0.6, (p.n / r) * 100)} 1 0` }} />)}</div>
-      <div className="splitkey">
-        {parts.map((p) => (
-          <div key={p.key}>
-            <i className={p.key} />
-            <span className="grow"><b>{p.name}</b><span>{p.line}</span></span>
-            <span className="num">{tokens(p.n)}</span>
-            <span className="pct">{pct(p.n / r)}</span>
-          </div>
-        ))}
+    <div className="kpi">
+      <header><small>{label}</small><Info text={info} /></header>
+      <div className="kpibody">
+        <b>{value}</b>
+        <Spark values={series} max={unit ? 1 : undefined} />
       </div>
     </div>
   )
 }
 
-const H = 10
-function Days({ days }: { days: Day[] }) {
-  const max = Math.max(...days.map((d) => d.input + d.cached + d.kept), 1)
+// A week as a line with a faint fill under it. Flat zero stays a hairline on the floor.
+function Spark({ values, max }: { values: number[]; max?: number }) {
+  const id = useId()
+  const W = 96, H = 34
+  const top = max ?? Math.max(...values, 0)
+  if (values.length < 2) return <svg className="spark" width={W} height={H} />
+  const pts = values.map((v, i) => [(i / (values.length - 1)) * W, H - 2 - (top ? (v / top) * (H - 6) : 0)] as const)
+  const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
   return (
-    <div className="days savedays">
-      {days.map((d, i) => {
-        const all = d.input + d.cached + d.kept
-        const lit = all ? Math.max(1, Math.round((all / max) * H)) : 0
-        const bright = all ? Math.round(((d.cached + d.kept) / all) * lit) : 0
-        const date = new Date(d.day + 'T12:00:00')
-        const label = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-        return (
-          <div key={d.day} className="day" style={{ '--i': i } as CSSProperties} title={all ? `${label}: ${tokens(d.cached + d.kept)} reused, ${tokens(d.input)} at full price${d.saved ? `, ${money(d.saved)} saved` : ''}` : `${label}: no turns`}>
-            <div className="cells">{Array.from({ length: H }, (_, k) => {
-              const level = H - k
-              return <i key={k} className={level <= bright ? 'on' : level <= lit ? 'dim' : ''} />
-            })}</div>
-            <small>{i === days.length - 1 ? 'today' : date.toLocaleDateString(undefined, { weekday: 'narrow' })}</small>
-          </div>
-        )
-      })}
+    <svg className="spark" width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+      <defs><linearGradient id={id} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="currentColor" stopOpacity=".18" /><stop offset="1" stopColor="currentColor" stopOpacity="0" /></linearGradient></defs>
+      <path d={`${line} L${W} ${H} L0 ${H} Z`} fill={`url(#${id})`} />
+      <path d={line} fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function Legend({ items }: { items: [string, string][] }) {
+  return <span className="legend">{items.map(([k, label]) => <span key={k}><i className={k} />{label}</span>)}</span>
+}
+
+function Table({ head, children }: { head: string[]; children: ReactNode }) {
+  return (
+    <div className="stable">
+      <div className="thead">{head.map((h) => <span key={h}>{h}</span>)}</div>
+      {children}
     </div>
   )
 }
 
-function AgentRow({ a, id, u }: { a?: AgentInfo; id: string; u: Usage }) {
-  const s = share(u)
-  const note = u.saved ? `${money(u.saved)} saved` : a?.via === 'local' ? 'free, runs here' : a?.via === 'cli' ? 'on your plan' : 'price unknown'
+function Empty({ go }: { go: (v: View) => void }) {
   return (
-    <div className="setting saveagent">
-      {a ? <Mark seed={a.mark} size={20} /> : <span className="markgap" />}
-      <div className="grow">
-        <b>{a?.name ?? id}</b>
-        <span>{tokens(reused(u))} of {tokens(read(u))} tokens reused</span>
-      </div>
-      <div className="minibar" aria-hidden="true"><i style={{ width: pct(s) }} /></div>
-      <span className="pctlabel">{pct(s)}</span>
-      <span className="amount">{note}</span>
+    <div className="sempty">
+      <span>No turns in the last 7 days.</span>
+      <button className="btn small quiet" onClick={() => go({ name: 'new' })}>Start a room</button>
     </div>
   )
+}
+
+// Stacked bars on a light grid: what caching saved at the bottom, what was paid in full on top.
+function Chart({ days }: { days: Day[] }) {
+  const max = Math.max(...days.map((d) => read(d)), 0)
+  const step = nice(max / 2)
+  const top = Math.max(step * 2, 1)
+  return (
+    <div className="chart">
+      <div className="grid" aria-hidden="true">
+        {[2, 1, 0].map((k) => <div key={k}><span>{k ? tokens(step * k) : '0'}</span><i /></div>)}
+      </div>
+      <div className="bars">
+        {days.map((d, i) => {
+          const date = new Date(d.day + 'T12:00:00')
+          const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          const h = (n: number) => `${(n / top) * 100}%`
+          return (
+            <div key={d.day} className="bar" style={{ '--i': i } as CSSProperties}>
+              <div className="stack" tabIndex={0}>
+                <i className="fresh" style={{ height: h(d.input) }} />
+                <i className="reuse" style={{ height: h(reused(d)) }} />
+                <span className="bubble" role="tooltip">
+                  <b>{label}</b>
+                  <span><i className="reuse" />Saved by caching<em>{tokens(reused(d))}</em></span>
+                  <span><i className="fresh" />Paid in full<em>{tokens(d.input)}</em></span>
+                  {d.saved > 0 && <span className="saved">Saved<em>{money(d.saved)}</em></span>}
+                </span>
+              </div>
+              <small>{i === days.length - 1 ? 'Today' : i % 2 ? '' : label}</small>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function nice(n: number) {
+  if (n <= 0) return 1
+  const p = 10 ** Math.floor(Math.log10(n))
+  return [1, 2, 2.5, 5, 10].map((m) => m * p).find((v) => v >= n)!
 }
