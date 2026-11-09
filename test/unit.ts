@@ -7,6 +7,9 @@ import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
 import { asks, plan } from '../shared/plan'
 import { classify, rating, route, score } from '../shared/route'
+import { fill, nextRun } from '../shared/flow'
+import { merge, section, strip } from '../electron/room/project'
+import { markdown, replay } from '../electron/export'
 import type { Event, RoomMeta } from '../shared/types'
 
 const fixture = (name: string) =>
@@ -128,4 +131,51 @@ test('route: the best rated free agent leads, kept answers move ratings', () => 
   assert.ok(rating(r, 'code', 'claude').r > rating(r, 'code', 'codex').r)
   assert.equal(rating(r, 'code', 'claude').n, 3)
   assert.equal(route(r, 'code', [{ id: 'codex', paid: false }, { id: 'claude', paid: false }]), 'claude')
+})
+
+test('flows: schedules land on the next matching local time', () => {
+  const mon = new Date(2026, 10, 9, 10, 0).getTime()
+  const at = (t?: number) => (t ? new Date(t) : null)
+  assert.equal(at(nextRun({ every: 'day', at: '09:00' }, mon))?.getDate(), 10)
+  assert.equal(at(nextRun({ every: 'day', at: '11:30' }, mon))?.getHours(), 11)
+  const fri = new Date(2026, 10, 13, 18, 0).getTime()
+  assert.equal(at(nextRun({ every: 'weekday', at: '09:00' }, fri))?.getDay(), 1)
+  assert.equal(at(nextRun({ every: 'week', day: 3, at: '08:00' }, mon))?.getDay(), 3)
+  const hour = at(nextRun({ every: 'hour', at: '00:15' }, mon))!
+  assert.deepEqual([hour.getHours(), hour.getMinutes()], [10, 15])
+  assert.equal(nextRun({}, mon), undefined)
+  assert.equal(fill('On {{date}} after {{ last }}', { date: 'Monday' }), 'On Monday after nothing yet, this is the first run')
+})
+
+test('project memory: one section, rewritten in place and removable', () => {
+  const meta = {
+    id: 'r', name: 'Launch', created: 0, updated: 0, crew: [], workspace: '/tmp', sessions: {}, seen: {}, heard: {}, saved: { full: 0, sent: 0 },
+    blocks: [{ id: 'brief', title: 'Brief', text: 'Ship the launch page', v: 1, at: 1 }, { id: 'decisions', title: 'Decisions', text: '- Blue, not green', v: 1, at: 2 }],
+  } as RoomMeta
+  const own = '# Project\n\nRun npm test before pushing.\n'
+  const once = merge(own, section(meta))
+  assert.ok(once.startsWith(own.trim()) && once.includes('Ship the launch page') && once.includes('Blue, not green'))
+  meta.blocks[0].text = 'Ship the pricing page'
+  const twice = merge(once, section(meta))
+  assert.equal(twice.match(/<!-- lunchbox:memory -->/g)?.length, 1)
+  assert.ok(twice.includes('pricing') && !twice.includes('launch page'))
+  assert.equal(strip(twice), own)
+})
+
+test('export: markdown and a self contained replay', () => {
+  const meta = { id: 'r', name: 'Limits <check>', created: 0, updated: 0, crew: ['claude', 'grok'], workspace: '/tmp', sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 } } as RoomMeta
+  const events = [
+    { id: '1', at: 1000, kind: 'you', text: 'What do people say?' },
+    { id: '2', at: 5000, kind: 'hands', from: 'claude', to: 'grok', ask: 'search X', answer: '212 posts', acts: [], via: 'tool' },
+    { id: '3', at: 9000, kind: 'say', who: 'claude', text: 'Mostly **limits**. Run `npm test`.', acts: [{ t: 'cmd', command: 'npm test', exit: 0 }] },
+  ] as Event[]
+  const name = (id: string) => ({ claude: 'Claude', grok: 'Grok' })[id] ?? id
+  const md = markdown(meta, events, name)
+  assert.match(md, /\*\*Claude:\*\* Mostly/)
+  assert.match(md, /> \*\*Claude asked Grok:\*\* search X/)
+  const html = replay(meta, events, name)
+  assert.ok(html.includes('Limits &lt;check&gt;') && !html.includes('<check>'))
+  assert.ok(html.includes('<b>limits</b>') && html.includes('<code>npm test</code>'))
+  assert.equal(html.match(/<section /g)?.length, 3)
+  assert.ok(!/src="http|href="http[^"]*\.css/.test(html), 'nothing is fetched')
 })

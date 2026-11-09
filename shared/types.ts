@@ -45,7 +45,7 @@ export type DecideAction =
   | { type: 'accept' }
 
 export type Event = { id: string; at: number } & (
-  | { kind: 'you'; text: string; to?: string[]; arena?: boolean; cat?: Category; lead?: string }
+  | { kind: 'you'; text: string; to?: string[]; arena?: boolean; cat?: Category; lead?: string; files?: string[]; from?: 'flow' | 'phone' }
   | { kind: 'say'; who: string; text: string; acts: Act[]; usage?: Usage; proof?: Proof[]; arena?: string; reply?: string; error?: string; ms?: number }
   | { kind: 'hands'; from: string; to: string; ask: string; answer: string; acts: Act[]; usage?: Usage; error?: string; ms?: number; via?: 'tool' }
   | { kind: 'image'; by: string; for: string; prompt: string; path: string; usage?: Usage }
@@ -54,7 +54,7 @@ export type Event = { id: string; at: number } & (
   | { kind: 'chose'; ref: string; label: string }
   | { kind: 'run'; who: string; command: string; cwd: string; verdict: Verdict; code: number | null; ms: number; out: string; how: string }
   | { kind: 'pick'; arena: string; who: string }
-  | { kind: 'note'; text: string; tone?: 'bad' | 'warn' }
+  | { kind: 'note'; text: string; tone?: 'bad' | 'warn'; undo?: string }
   | { kind: 'crew'; crew: string[] }
 )
 
@@ -74,7 +74,13 @@ export type RoomMeta = {
   blocks: Block[]
   saved: { full: number; sent: number }
   forkedFrom?: { room: string; event: string }
+  checkpoints?: Checkpoint[]
+  project?: boolean
+  flow?: string
 }
+
+// The folder as it was just before a message was handled, kept in a shadow git repository.
+export type Checkpoint = { ref: string; event: string; at: number; files?: number }
 
 export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack'> & { busy: boolean; waiting: boolean }
 
@@ -142,7 +148,31 @@ export type Settings = {
   defaultCrew: string[]
   imageModel?: string
   route?: 'best' | 'order'
+  snapshots?: boolean
+  remote?: { on: boolean; chat?: number; name?: string; access?: Access }
 }
+
+export type FlowStep = { text: string; to?: string }
+export type Every = 'hour' | 'day' | 'weekday' | 'week'
+
+export type Flow = {
+  id: string
+  name: string
+  steps: FlowStep[]
+  crew: string[]
+  workspace: string
+  pack?: string
+  access: Access
+  every?: Every
+  at?: string
+  day?: number
+  on: boolean
+  created: number
+  next?: number
+  runs: { at: number; room: string; ok: boolean; ms: number }[]
+}
+
+export type FlowState = { flow: string; room: string; step: number; of: number }
 
 export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: { day: string; cost: number; tokens: number }[] }
 

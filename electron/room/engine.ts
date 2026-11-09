@@ -8,7 +8,9 @@ import { detect, run } from '../agents'
 import type { Hands } from '../hands'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
+import { clearMemory, writeMemory } from './project'
 import { execute, type Ran } from '../shell'
+import type { Snapshots } from '../snap'
 import type { Store } from '../store'
 import { prompt, protocol } from './context'
 import { check, suggest } from './proof'
@@ -44,8 +46,9 @@ export class Engine {
   private allowed = new Map<string, Set<string>>()
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
+  private projectTimers = new Map<string, NodeJS.Timeout>()
 
-  constructor(private store: Store, private hooks: Hooks, private hands?: Hands) {}
+  constructor(private store: Store, private hooks: Hooks, private hands?: Hands, private snaps?: Snapshots) {}
 
   async refresh() {
     this.agents = await detect(this.store.keys(), this.store.settings.models, this.store.health)
@@ -131,6 +134,61 @@ export class Engine {
       } else m.blocks.push({ id, title, text, v: 1, at: Date.now(), by } satisfies Block)
     })
     this.hooks.emit('room:meta', this.store.room(room))
+    this.syncProject(room)
+  }
+
+  // The room's memory, mirrored into AGENTS.md (and CLAUDE.md / GEMINI.md when the project has
+  // them) so the same agents opened outside Lunchbox know what the room decided.
+  private syncProject(room: string) {
+    if (!this.store.room(room)?.project) return
+    clearTimeout(this.projectTimers.get(room))
+    this.projectTimers.set(room, setTimeout(() => {
+      this.projectTimers.delete(room)
+      const meta = this.store.room(room)
+      if (meta?.project) try { writeMemory(meta) } catch (e) { this.add(room, { kind: 'note', text: `Could not update AGENTS.md: ${(e as Error).message}`, tone: 'warn' }) }
+    }, 600))
+  }
+
+  setProject(room: string, on: boolean) {
+    const meta = this.store.room(room)
+    if (!meta || !!meta.project === on) return []
+    this.store.update(room, (m) => { m.project = on || undefined })
+    this.hooks.emit('room:meta', this.store.room(room))
+    if (!on) { clearMemory(meta.workspace); return [] }
+    return writeMemory(meta)
+  }
+
+  private async checkpoint(room: string, event: string, access: Access) {
+    const meta = this.store.room(room)
+    if (!meta || !this.snaps || access === 'plan' || this.store.settings.snapshots === false) return
+    const live = this.live(room)
+    live.doing = 'Saving a checkpoint of the folder'
+    this.changed(room)
+    const text = this.store.events(room).find((e) => e.id === event)
+    const snap = await this.snaps.take(meta.workspace, `Before: ${text?.kind === 'you' ? text.text.slice(0, 120) : event}`)
+    if (!snap) return
+    this.store.update(room, (m) => { m.checkpoints = [...(m.checkpoints ?? []), { ref: snap.ref, event, at: Date.now() }].slice(-60) })
+    this.hooks.emit('room:meta', this.store.room(room))
+  }
+
+  async changedSince(room: string, event: string) {
+    const meta = this.store.room(room)
+    const cp = meta?.checkpoints?.find((c) => c.event === event)
+    if (!meta || !cp || !this.snaps) return []
+    return this.snaps.changed(meta.workspace, cp.ref)
+  }
+
+  async rewind(room: string, target: { event?: string; ref?: string }) {
+    const meta = this.store.room(room)
+    if (!meta || !this.snaps) throw new Error('Checkpoints are not available')
+    const ref = target.ref ?? meta.checkpoints?.find((c) => c.event === target.event)?.ref
+    if (!ref) throw new Error('There is no checkpoint for that message')
+    this.stop(room)
+    const r = await this.snaps.restore(meta.workspace, ref)
+    const said = this.store.events(room).find((e) => e.id === target.event)
+    const what = said?.kind === 'you' ? `before “${title(said.text)}”` : 'where it was before the rewind'
+    this.add(room, { kind: 'note', text: `Put the folder back ${what}.${r.removed ? ` ${r.removed} new file${r.removed > 1 ? 's were' : ' was'} removed.` : ''}`, undo: r.undo })
+    return r
   }
 
   private enqueue(room: string, job: (gen: number) => Promise<unknown>) {
@@ -146,9 +204,9 @@ export class Engine {
     return this.queues.get(room) ?? Promise.resolve()
   }
 
-  create(opts: { crew: string[]; workspace: string; pack?: string; name?: string }): RoomMeta {
+  create(opts: { crew: string[]; workspace: string; pack?: string; name?: string; flow?: string }): RoomMeta {
     const meta: RoomMeta = {
-      id: uid(), name: opts.name || 'New room', created: Date.now(), updated: Date.now(), crew: opts.crew, workspace: opts.workspace, pack: opts.pack,
+      id: uid(), name: opts.name || 'New room', created: Date.now(), updated: Date.now(), crew: opts.crew, workspace: opts.workspace, pack: opts.pack, flow: opts.flow,
       sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 },
     }
     this.store.create(meta)
@@ -189,7 +247,7 @@ export class Engine {
     const cut = events.findIndex((e) => e.id === at)
     const copy: RoomMeta = {
       ...structuredClone(meta), id: uid(), name: `${meta.name}, fork`, created: Date.now(), updated: Date.now(),
-      sessions: {}, seen: {}, heard: {}, forkedFrom: { room, event: at },
+      sessions: {}, seen: {}, heard: {}, forkedFrom: { room, event: at }, project: undefined, flow: undefined,
     }
     this.store.create(copy, events.slice(0, cut < 0 ? events.length : cut + 1))
     this.list()
@@ -220,9 +278,10 @@ export class Engine {
     this.hooks.emit('room:meta', this.store.room(room))
   }
 
-  send(room: string, text: string, access: Access, arena = false) {
+  send(room: string, text: string, access: Access, opts: boolean | { arena?: boolean; files?: string[]; from?: 'flow' | 'phone' } = {}) {
+    const { arena = false, files, from } = typeof opts === 'boolean' ? { arena: opts } : opts
     const meta = this.store.room(room)
-    if (!meta || !text.trim()) return
+    if (!meta || (!text.trim() && !files?.length)) return
     if (text.startsWith('!')) {
       const command = text.slice(1).trim()
       if (command) this.enqueue(room, () => this.shell(room, 'you', command, access))
@@ -233,12 +292,13 @@ export class Engine {
     const first = !this.store.events(room).some((e) => e.kind === 'you')
     const cat = classify(text)
     const lead = mentioned[0] ?? this.lead(meta, cat)
-    this.add(room, { kind: 'you', text, to: mentioned.length ? mentioned : undefined, arena: arena || undefined, cat, lead: arena ? undefined : lead })
+    const said = this.add(room, { kind: 'you', text, to: mentioned.length ? mentioned : undefined, arena: arena || undefined, cat, lead: arena ? undefined : lead, files: files?.length ? files : undefined, from })
     if (first) {
       this.block(room, 'brief', 'Brief', text, 'you')
       if (meta.name === 'New room') this.rename(room, title(text))
     }
-    this.enqueue(room, async (gen) => {
+    return this.enqueue(room, async (gen) => {
+      await this.checkpoint(room, said.id, access)
       const ctx: Ctx = { gen, hops: { n: 0 } }
       if (arena) {
         const id = uid()

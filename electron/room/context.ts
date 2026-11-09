@@ -44,7 +44,7 @@ function acts(list: Act[]) {
 
 export function line(e: Event, name: (id: string) => string): string | null {
   switch (e.kind) {
-    case 'you': return `Person: ${e.text}`
+    case 'you': return `Person: ${e.text}${e.files?.length ? `\n  [attached: ${e.files.join(', ')}. Read them before answering.]` : ''}`
     case 'say': return e.error && !e.text ? null : `${name(e.who)}: ${e.text}${acts(e.acts)}`
     case 'hands': return `${name(e.to)}, answering ${name(e.from)} ("${e.ask}"): ${e.answer}${acts(e.acts)}`
     case 'wall': return `[${name(e.from)} stopped (${e.reason}); ${e.to ? `${name(e.to)} took over` : 'nobody could take over'}]`

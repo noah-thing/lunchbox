@@ -1,6 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
-const EVENTS = new Set(['agents', 'rooms', 'room:event', 'room:live', 'room:meta', 'ledger', 'skills', 'open-room'])
+const EVENTS = new Set(['agents', 'rooms', 'room:event', 'room:live', 'room:meta', 'ledger', 'skills', 'flows', 'remote', 'open-room'])
 
 contextBridge.exposeInMainWorld('lb', {
   call: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args),
@@ -9,5 +9,8 @@ contextBridge.exposeInMainWorld('lb', {
     const listener = (_e: unknown, value: unknown) => fn(value)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
+  },
+  pathOf: (file: File) => {
+    try { return webUtils.getPathForFile(file) } catch { return '' }
   },
 })

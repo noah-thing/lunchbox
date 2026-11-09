@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { score } from '../shared/route'
-import type { Category, Event, Ledger, Ratings, RoomMeta, Settings, Skill, Spent, Usage } from '../shared/types'
+import type { Category, Event, Flow, Ledger, Ratings, RoomMeta, Settings, Skill, Spent, Usage } from '../shared/types'
 
 export type Cipher = { seal(text: string): string; open(sealed: string): string }
 
@@ -37,6 +37,7 @@ export class Store {
   spent: Record<string, Spent>
   health: Record<string, string>
   skills: Skill[]
+  flows: Flow[]
   private ledger: { at: number; agent: string; room: string; usage: Usage }[] = []
   private arena: Record<string, number>
   ratings: Ratings
@@ -52,6 +53,7 @@ export class Store {
     this.arena = state.arena ?? {}
     this.ratings = state.ratings ?? {}
     this.skills = readJson<Skill[]>(join(dir, 'skills.json'), [])
+    this.flows = readJson<Flow[]>(join(dir, 'flows.json'), [])
     const since = Date.now() - DAYS * 86400e3
     try {
       for (const line of readFileSync(join(dir, 'ledger.jsonl'), 'utf8').split('\n')) {
@@ -137,6 +139,10 @@ export class Store {
 
   saveSkills() {
     writeJson(join(this.dir, 'skills.json'), this.skills)
+  }
+
+  saveFlows() {
+    writeJson(join(this.dir, 'flows.json'), this.flows)
   }
 
   keys(): Record<string, string> {

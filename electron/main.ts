@@ -1,13 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { extname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
-import type { Access, Settings } from '../shared/types'
+import type { Access, Flow, Settings, Skill } from '../shared/types'
 import { modelsFor } from './agents'
-import { importPack, loadPacks } from './packs'
+import { markdown, replay } from './export'
+import { Flows } from './flows'
+import { fetchPack, importPack, loadPacks, packJson, removePack } from './packs'
 import { Hands } from './hands'
+import { Remote } from './remote'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
+import { Snapshots } from './snap'
 import { Store, type Cipher } from './store'
 
 app.setName('Lunchbox')
@@ -26,7 +31,25 @@ const cipher: Cipher = {
 
 let store: Store
 let engine: Engine
+let flows: Flows
+let remote: Remote
 const packs = () => loadPacks(store.packFiles())
+const name = (id: string) => engine.agents.find((a) => a.id === id)?.short ?? id
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'room'
+
+async function saveAs(title: string, file: string, ext: string, contents: string) {
+  if (!win) return null
+  const r = await dialog.showSaveDialog(win, { title, defaultPath: join(app.getPath('downloads'), file), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] })
+  if (r.canceled || !r.filePath) return null
+  writeFileSync(r.filePath, contents)
+  return r.filePath
+}
+
+function defaults() {
+  const ready = engine.agents.filter((a) => !engine.why(a.id)).map((a) => a.id)
+  const preferred = store.settings.defaultCrew.filter((id) => ready.includes(id))
+  return { crew: preferred.length ? preferred : ready.slice(0, 3), workspace: workspace() }
+}
 const workspace = () => process.env.LB_WORKSPACE || join(app.getPath('documents'), 'Lunchbox')
 
 function createWindow() {
@@ -55,6 +78,8 @@ function createWindow() {
 }
 
 function notify(title: string, body: string, room: string) {
+  const fromPhone = store.events(room).findLast((e) => e.kind === 'you')
+  if (!win?.isFocused() || (fromPhone?.kind === 'you' && fromPhone.from === 'phone')) remote?.forward(room, body)
   if (!store.settings.notify || !Notification.isSupported() || win?.isFocused()) return
   const n = new Notification({ title, body, silent: body === 'Done' })
   n.on('click', () => {
@@ -84,7 +109,46 @@ function wire() {
   h('room:fork', (id: string, at: string) => engine.fork(id, at))
   h('room:crew', (id: string, crew: string[]) => engine.setCrew(id, crew))
   h('room:workspace', (id: string, path: string) => engine.setWorkspace(id, path))
-  h('room:send', (id: string, text: string, access: Access, arena: boolean) => { engine.send(id, text, access, arena) })
+  h('room:send', (id: string, text: string, access: Access, arena: boolean, files?: string[]) => { engine.send(id, text, access, { arena, files }) })
+  h('room:project', (id: string, on: boolean) => engine.setProject(id, on))
+  h('room:rewind', (id: string, target: { event?: string; ref?: string }) => engine.rewind(id, target))
+  h('room:changed', (id: string, event: string) => engine.changedSince(id, event))
+  h('room:export', async (id: string, kind: 'md' | 'html') => {
+    const meta = store.room(id)
+    if (!meta) return null
+    const events = store.events(id)
+    return kind === 'md'
+      ? saveAs('Export as Markdown', `${slug(meta.name)}.md`, 'md', markdown(meta, events, name))
+      : saveAs('Export a replay', `${slug(meta.name)}.html`, 'html', replay(meta, events, name))
+  })
+  h('attach', async () => {
+    if (!win) return []
+    const r = await dialog.showOpenDialog(win, { title: 'Attach files', properties: ['openFile', 'multiSelections'] })
+    return r.canceled ? [] : r.filePaths
+  })
+  h('attach:data', (dataUrl: string, ext = 'png', folder?: string) => {
+    const m = dataUrl.match(/^data:[\w/+.-]+;base64,(.+)$/)
+    if (!m || m[1].length > 30e6) return null
+    const dir = folder && existsSync(folder) ? join(folder, '.lunchbox', 'attachments') : join(store.dir, 'attachments')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 8)}.${ext.replace(/\W/g, '') || 'png'}`)
+    writeFileSync(file, Buffer.from(m[1], 'base64'))
+    return file
+  })
+  h('flows', () => ({ flows: flows.list(), running: flows.states() }))
+  h('flows:put', (f: Partial<Flow> & Pick<Flow, 'name' | 'steps' | 'crew' | 'workspace' | 'access'>) => flows.put(f))
+  h('flows:remove', (id: string) => flows.remove(id))
+  h('flows:toggle', (id: string, on: boolean) => flows.toggle(id, on))
+  h('flows:run', (id: string) => flows.run(id).room)
+  h('remote', () => remote.status())
+  h('remote:set', async (patch: { on?: boolean; access?: Access; token?: string }) => {
+    if (patch.token !== undefined) store.setKey('telegram', patch.token.trim())
+    const cur = store.settings.remote ?? { on: false }
+    store.saveSettings({ remote: { ...cur, ...(patch.on !== undefined ? { on: patch.on } : {}), ...(patch.access ? { access: patch.access } : {}) } })
+    await remote.start()
+    return remote.status()
+  })
+  h('remote:unpair', () => { remote.unpair(); return remote.status() })
   h('room:stop', (id: string) => engine.stop(id))
   h('room:decide', (id: string, ref: string, index: number, access: Access) => { engine.decide(id, ref, index, access) })
   h('room:pick', (id: string, arena: string, who: string) => engine.pick(id, arena, who))
@@ -115,6 +179,28 @@ function wire() {
     if (r.canceled) return null
     return importPack(r.filePaths[0], join(store.dir, 'packs'))
   })
+  h('packs:link', (url: string) => fetchPack(url, join(store.dir, 'packs')))
+  h('packs:remove', (id: string) => removePack(id, join(store.dir, 'packs')))
+  h('packs:export', (id: string) => {
+    const p = packs().find((x) => x.id === id)
+    return p ? saveAs('Share a pack', `${p.id}.json`, 'json', packJson(p)) : null
+  })
+  h('skills:export', (id: string) => {
+    const s = store.skills.find((x) => x.id === id)
+    return s ? saveAs('Share a skill', `${slug(s.name)}.skill.json`, 'json', JSON.stringify({ kind: 'lunchbox-skill', ...s, from: undefined }, null, 2)) : null
+  })
+  h('skills:import', async () => {
+    if (!win) return null
+    const r = await dialog.showOpenDialog(win, { title: 'Import a skill', filters: [{ name: 'Lunchbox skill', extensions: ['json'] }], properties: ['openFile'] })
+    if (r.canceled) return null
+    const s = JSON.parse(readFileSync(r.filePaths[0], 'utf8')) as Partial<Skill>
+    if (typeof s.name !== 'string' || typeof s.brief !== 'string' || !Array.isArray(s.steps)) throw new Error('That file is not a Lunchbox skill')
+    const skill: Skill = { id: randomUUID().slice(0, 12), name: s.name.slice(0, 80), brief: s.brief, steps: s.steps.filter((x) => typeof x === 'string').slice(0, 20), crew: Array.isArray(s.crew) ? s.crew : [], pack: s.pack, from: '', created: Date.now() }
+    store.skills = [skill, ...store.skills]
+    store.saveSkills()
+    emit('skills', store.skills)
+    return skill
+  })
   h('skills', () => store.skills)
   h('skills:remove', (id: string) => {
     store.skills = store.skills.filter((s) => s.id !== id)
@@ -143,13 +229,17 @@ app.whenReady().then(async () => {
   store = new Store(join(app.getPath('userData'), 'data'), cipher)
   const hands = new Hands()
   await hands.start().catch(() => {})
-  engine = new Engine(store, { emit, notify, packs }, hands)
+  engine = new Engine(store, { emit, notify, packs }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
+  flows = new Flows(store, engine, { emit, notify })
+  remote = new Remote(store, engine, { emit, defaults })
   wire()
   const icon = join(__dirname, '../build/icon-1024.png')
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
   createWindow()
-  engine.refresh()
+  await engine.refresh()
+  flows.start()
+  remote.start()
 })
-app.on('before-quit', () => store?.flush())
+app.on('before-quit', () => { flows?.stop(); remote?.stop(); store?.flush() })
 app.on('window-all-closed', () => { if (!mac) app.quit() })
 app.on('activate', () => { if (!win) createWindow() })

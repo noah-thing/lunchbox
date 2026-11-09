@@ -108,3 +108,85 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   assert.equal(routed.lead, 'grok', 'live news goes to the agent built for it')
   store.flush()
 })
+
+// Checkpoints before each message, a rewind that puts files back, and an undo of the rewind.
+test('room: checkpoints, rewind and project memory', { skip: process.platform === 'win32' }, async () => {
+  const { writeFileSync, existsSync, readFileSync: read } = await import('node:fs')
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-snap-'))
+  const work = join(root, 'work')
+  require('node:fs').mkdirSync(work)
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  writeFileSync(join(work, 'page.html'), '<h1>v1</h1>')
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { Snapshots } = await import('../electron/snap')
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] }, undefined, new Snapshots(join(root, 'snaps')))
+  await engine.refresh()
+  const room = engine.create({ crew: ['claude'], workspace: work })
+
+  engine.send(room.id, 'Make the heading say hello', 'workspace', { files: [join(work, 'page.html')] })
+  await engine.idle(room.id)
+  const first = store.events(room.id)[0] as Extract<ReturnType<typeof store.events>[number], { kind: 'you' }>
+  assert.deepEqual(first.files, [join(work, 'page.html')])
+  assert.equal(store.room(room.id)!.checkpoints?.[0].event, first.id)
+
+  writeFileSync(join(work, 'page.html'), '<h1>hello</h1>')
+  writeFileSync(join(work, 'extra.css'), 'h1{}')
+  assert.deepEqual((await engine.changedSince(room.id, first.id)).sort(), ['extra.css', 'page.html'])
+
+  const r = await engine.rewind(room.id, { event: first.id })
+  assert.equal(read(join(work, 'page.html'), 'utf8'), '<h1>v1</h1>')
+  assert.ok(!existsSync(join(work, 'extra.css')))
+  assert.equal(r.removed, 1)
+  await engine.rewind(room.id, { ref: r.undo })
+  assert.equal(read(join(work, 'page.html'), 'utf8'), '<h1>hello</h1>')
+  assert.ok(existsSync(join(work, 'extra.css')))
+
+  assert.deepEqual(engine.setProject(room.id, true), ['AGENTS.md'])
+  assert.match(read(join(work, 'AGENTS.md'), 'utf8'), /Make the heading say hello/)
+  engine.setProject(room.id, false)
+  assert.equal(read(join(work, 'AGENTS.md'), 'utf8'), '')
+  store.flush()
+})
+
+// A saved flow runs its steps in order in a room of its own, each step after the last settled.
+test('flows: steps run in order and the run is recorded', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-flow-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  for (const name of ['claude', 'grok']) symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, name))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { Flows } = await import('../electron/flows')
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+  await engine.refresh()
+  const notes: string[] = []
+  const flows = new Flows(store, engine, { emit: () => {}, notify: (_t, body) => notes.push(body) })
+
+  const flow = flows.put({ name: 'Digest', steps: [{ to: 'grok', text: 'What is new on {{date}}?' }, { to: 'claude', text: 'Sum it up. Last time: {{last}}' }], crew: ['claude', 'grok'], workspace: root, access: 'plan', every: 'day', at: '08:00' })
+  assert.ok(flow.next && flow.next > Date.now())
+  const run = flows.run(flow.id)
+  assert.equal(await run.done, true)
+  const you = store.events(run.room).filter((e) => e.kind === 'you') as Extract<ReturnType<typeof store.events>[number], { kind: 'you' }>[]
+  assert.equal(you.length, 2)
+  assert.ok(you[0].text.startsWith('@grok ') && !you[0].text.includes('{{date}}'))
+  assert.match(you[1].text, /nothing yet, this is the first run/)
+  assert.equal(you[0].from, 'flow')
+  assert.equal(store.room(run.room)!.flow, flow.id)
+  assert.equal(flows.list()[0].runs[0].ok, true)
+  assert.deepEqual(notes, ['Flow finished'])
+
+  const again = flows.run(flow.id)
+  await again.done
+  const second = store.events(again.room).filter((e) => e.kind === 'you')[1] as Extract<ReturnType<typeof store.events>[number], { kind: 'you' }>
+  assert.ok(!second.text.includes('first run'), '{{last}} carries the previous run')
+  store.flush()
+})
