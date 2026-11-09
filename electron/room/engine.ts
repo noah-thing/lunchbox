@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
 import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
+import { classify, route, type Category } from '../../shared/route'
 import { detect, run } from '../agents'
 import type { Hands } from '../hands'
 import { openaiImage, target } from '../images'
@@ -227,10 +228,12 @@ export class Engine {
       if (command) this.enqueue(room, () => this.shell(room, 'you', command, access))
       return
     }
-    const lead = text.match(/^\s*((?:@[\w-]+[\s,]*)+)/)?.[1] ?? ''
-    const mentioned = meta.crew.filter((id) => new RegExp(`@${id}(?![\\w-])`, 'i').test(lead))
+    const head = text.match(/^\s*((?:@[\w-]+[\s,]*)+)/)?.[1] ?? ''
+    const mentioned = meta.crew.filter((id) => new RegExp(`@${id}(?![\\w-])`, 'i').test(head))
     const first = !this.store.events(room).some((e) => e.kind === 'you')
-    this.add(room, { kind: 'you', text, to: mentioned.length ? mentioned : undefined, arena: arena || undefined })
+    const cat = classify(text)
+    const lead = mentioned[0] ?? this.lead(meta, cat)
+    this.add(room, { kind: 'you', text, to: mentioned.length ? mentioned : undefined, arena: arena || undefined, cat, lead: arena ? undefined : lead })
     if (first) {
       this.block(room, 'brief', 'Brief', text, 'you')
       if (meta.name === 'New room') this.rename(room, title(text))
@@ -242,16 +245,31 @@ export class Engine {
         const crew = meta.crew.filter((c) => !this.why(c))
         await Promise.all(crew.map((who) => this.turn(room, who, { kind: 'reply' }, access, { ...ctx, arena: id })))
       } else {
-        const lead = mentioned[0] ?? meta.crew.find((c) => !this.why(c)) ?? meta.crew[0]
         await this.conversation(room, lead, { kind: 'reply' }, access, ctx)
       }
       this.settle(room)
     })
   }
 
+  private lead(meta: RoomMeta, cat: Category) {
+    const free = meta.crew.filter((c) => !this.why(c))
+    if (this.store.settings.route === 'order' || free.length < 2) return free[0] ?? meta.crew[0]
+    const today = this.store.totals().today
+    return route(this.store.ratings, cat, free.map((id) => {
+      const budget = this.store.settings.budgets[id]
+      return { id, paid: this.agent(id)?.via === 'api', budgetLeft: budget > 0 ? 1 - (today[id]?.cost ?? 0) / budget : undefined }
+    })) ?? free[0]
+  }
+
   pick(room: string, arena: string, who: string) {
+    const events = this.store.events(room)
+    if (events.some((e) => e.kind === 'pick' && e.arena === arena)) return
+    const answers = events.filter((e) => e.kind === 'say' && e.arena === arena)
+    const first = events.indexOf(answers[0])
+    const asked = events.slice(0, first).findLast((e) => e.kind === 'you')
+    const cat = (asked?.kind === 'you' && asked.cat) || classify(asked?.kind === 'you' ? asked.text : '')
     this.add(room, { kind: 'pick', arena, who })
-    this.store.win(who)
+    this.store.win(who, cat, answers.map((e) => (e as { who: string }).who))
     this.decision(room, `Picked ${this.name(who)}'s answer in a side by side`)
     this.hooks.emit('ledger', this.ledger())
   }

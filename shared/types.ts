@@ -1,6 +1,9 @@
 // Shapes shared by the main process and the renderer. Rooms are stored as these events, one JSON
 // object per line, so anything added here has to stay readable by older builds.
 
+import type { Category, Ratings } from './route'
+
+export type { Category, Ratings }
 export type Access = 'plan' | 'ask' | 'workspace' | 'full'
 export type Kind = 'read' | 'write' | 'network' | 'outside' | 'danger' | 'blocked'
 export type Verdict = { kind: Kind; decision: 'allow' | 'ask' | 'deny'; reason: string }
@@ -42,7 +45,7 @@ export type DecideAction =
   | { type: 'accept' }
 
 export type Event = { id: string; at: number } & (
-  | { kind: 'you'; text: string; to?: string[]; arena?: boolean }
+  | { kind: 'you'; text: string; to?: string[]; arena?: boolean; cat?: Category; lead?: string }
   | { kind: 'say'; who: string; text: string; acts: Act[]; usage?: Usage; proof?: Proof[]; arena?: string; reply?: string; error?: string; ms?: number }
   | { kind: 'hands'; from: string; to: string; ask: string; answer: string; acts: Act[]; usage?: Usage; error?: string; ms?: number; via?: 'tool' }
   | { kind: 'image'; by: string; for: string; prompt: string; path: string; usage?: Usage }
@@ -138,9 +141,10 @@ export type Settings = {
   notify: boolean
   defaultCrew: string[]
   imageModel?: string
+  route?: 'best' | 'order'
 }
 
-export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number> }
+export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: { day: string; cost: number; tokens: number }[] }
 
 export type Hit = { room: string; roomName: string; event?: string; text: string }
 

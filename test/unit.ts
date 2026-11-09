@@ -6,6 +6,7 @@ import { claudeLike, codex, limitOf, reason } from '../electron/agents/parse'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
 import { asks, plan } from '../shared/plan'
+import { classify, rating, route, score } from '../shared/route'
 import type { Event, RoomMeta } from '../shared/types'
 
 const fixture = (name: string) =>
@@ -109,4 +110,22 @@ test('context: a resumed agent only gets what changed', () => {
   assert.ok(!p.text.includes('Make a site'))
   assert.ok(p.text.includes('Make it blue') && p.text.includes('Changed files'))
   assert.ok(p.sent < p.full)
+})
+
+test('route: messages are sorted into kinds of work', () => {
+  assert.equal(classify('What are people saying on X about the launch today?'), 'live')
+  assert.equal(classify('Fix the failing test in the auth module'), 'code')
+  assert.equal(classify('Draft a newsletter about our spring release'), 'writing')
+  assert.equal(classify('hello there'), 'general')
+})
+
+test('route: the best rated free agent leads, kept answers move ratings', () => {
+  assert.equal(route({}, 'live', [{ id: 'claude', paid: false }, { id: 'grok', paid: false }]), 'grok')
+  assert.equal(route({}, 'code', [{ id: 'codex', paid: false }, { id: 'claude', paid: false, budgetLeft: 0.9 }]), 'codex')
+  assert.equal(route({}, 'code', [{ id: 'codex', paid: false, budgetLeft: 0.1 }, { id: 'claude', paid: false }]), 'claude')
+  let r = {}
+  for (let i = 0; i < 3; i++) r = score(r, 'code', 'claude', ['claude', 'codex'])
+  assert.ok(rating(r, 'code', 'claude').r > rating(r, 'code', 'codex').r)
+  assert.equal(rating(r, 'code', 'claude').n, 3)
+  assert.equal(route(r, 'code', [{ id: 'codex', paid: false }, { id: 'claude', paid: false }]), 'claude')
 })

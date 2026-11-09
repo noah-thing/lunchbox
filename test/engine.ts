@@ -25,6 +25,7 @@ test('room: handover, handoff, resume and proof', { skip: process.platform === '
   const agents = await engine.refresh()
   assert.ok(['claude', 'codex', 'grok'].every((id) => agents.find((a) => a.id === id)?.ready))
 
+  store.saveSettings({ route: 'order' })
   const room = engine.create({ crew: ['codex', 'claude', 'grok'], workspace: root })
   engine.send(room.id, 'Find out what people think of agent limits', 'workspace')
   await engine.idle(room.id)
@@ -84,12 +85,12 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   await engine.refresh()
 
   const room = engine.create({ crew: ['claude', 'grok'], workspace: root })
-  engine.send(room.id, 'Borrow: what do people on X say about agent limits?', 'workspace')
+  engine.send(room.id, '@claude Borrow: what do people on X say about agent limits?', 'workspace')
   await engine.idle(room.id)
-  hands.stop()
 
   const events = store.events(room.id)
   assert.deepEqual(events.map((e) => e.kind), ['you', 'hands', 'say'])
+  assert.equal((events[0] as Extract<typeof events[number], { kind: 'you' }>).cat, 'live')
   const borrowed = events[1] as Extract<typeof events[number], { kind: 'hands' }>
   assert.equal(borrowed.via, 'tool')
   assert.equal(borrowed.from, 'claude')
@@ -99,5 +100,11 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   assert.match(said.text, /Grok found: 212 posts/)
   assert.match(said.text, /Tools: ask_crewmate, search_x, search_web, make_image, room_memory, remember/)
   assert.ok(said.acts.some((a) => a.t === 'tool' && a.name === 'mcp__lunchbox__search_x'))
+
+  engine.send(room.id, 'What is trending on X today?', 'workspace')
+  await engine.idle(room.id)
+  hands.stop()
+  const routed = store.events(room.id).filter((e) => e.kind === 'you').at(-1) as Extract<typeof events[number], { kind: 'you' }>
+  assert.equal(routed.lead, 'grok', 'live news goes to the agent built for it')
   store.flush()
 })

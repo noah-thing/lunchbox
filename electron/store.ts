@@ -1,8 +1,11 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Event, Ledger, RoomMeta, Settings, Skill, Spent, Usage } from '../shared/types'
+import { score } from '../shared/route'
+import type { Category, Event, Ledger, Ratings, RoomMeta, Settings, Skill, Spent, Usage } from '../shared/types'
 
 export type Cipher = { seal(text: string): string; open(sealed: string): string }
+
+const DAYS = 14
 
 const DEFAULTS: Settings = { models: {}, budgets: {}, disabled: [], notify: true, defaultCrew: [] }
 const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0 })
@@ -36,18 +39,20 @@ export class Store {
   skills: Skill[]
   private ledger: { at: number; agent: string; room: string; usage: Usage }[] = []
   private arena: Record<string, number>
+  ratings: Ratings
 
   constructor(readonly dir: string, private cipher: Cipher) {
     mkdirSync(join(dir, 'rooms'), { recursive: true })
     mkdirSync(join(dir, 'packs'), { recursive: true })
     for (const meta of readJson<RoomMeta[]>(join(dir, 'rooms.json'), [])) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
-    const state = readJson<{ spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number> }>(join(dir, 'state.json'), {})
+    const state = readJson<{ spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
     this.health = state.health ?? {}
     this.arena = state.arena ?? {}
+    this.ratings = state.ratings ?? {}
     this.skills = readJson<Skill[]>(join(dir, 'skills.json'), [])
-    const since = Date.now() - 8 * 86400e3
+    const since = Date.now() - DAYS * 86400e3
     try {
       for (const line of readFileSync(join(dir, 'ledger.jsonl'), 'utf8').split('\n')) {
         if (!line) continue
@@ -127,7 +132,7 @@ export class Store {
   }
 
   saveState() {
-    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena })
+    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings })
   }
 
   saveSkills() {
@@ -156,8 +161,9 @@ export class Store {
     appendFileSync(join(this.dir, 'ledger.jsonl'), JSON.stringify(row) + '\n')
   }
 
-  win(agent: string) {
+  win(agent: string, cat: Category, losers: string[]) {
     this.arena[agent] = (this.arena[agent] ?? 0) + 1
+    this.ratings = score(this.ratings, cat, agent, losers)
     this.saveState()
   }
 
@@ -165,11 +171,21 @@ export class Store {
     const day = new Date()
     day.setHours(0, 0, 0, 0)
     const week = Date.now() - 7 * 86400e3
-    const out: Ledger = { today: {}, week: {}, arena: { ...this.arena } }
+    const days = Array.from({ length: DAYS }, (_, i) => {
+      const d = new Date(day.getTime() - (DAYS - 1 - i) * 86400e3)
+      return { day: d.toISOString().slice(0, 10), start: d.getTime(), cost: 0, tokens: 0 }
+    })
+    const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [] }
     for (const row of this.ledger) {
       if (row.at >= week) addUsage((out.week[row.agent] ??= zero()), row.usage)
       if (row.at >= day.getTime()) addUsage((out.today[row.agent] ??= zero()), row.usage)
+      const slot = days.findLast((d) => row.at >= d.start)
+      if (slot) {
+        slot.cost += row.usage.cost
+        slot.tokens += row.usage.input + row.usage.output + row.usage.cached
+      }
     }
+    out.days = days.map(({ day, cost, tokens }) => ({ day, cost, tokens }))
     return out
   }
 
