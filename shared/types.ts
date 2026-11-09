@@ -68,6 +68,9 @@ export type Event = { id: string; at: number } & (
   | { kind: 'pick'; arena: string; who: string }
   | { kind: 'note'; text: string; tone?: 'bad' | 'warn'; undo?: string }
   | { kind: 'crew'; crew: string[] }
+  // A crewmate the main agent brought in for one piece of work, and the moment it stepped out.
+  | { kind: 'joined'; who: string; by: string; task: string }
+  | { kind: 'left'; who: string }
 )
 
 export type Block = { id: string; title: string; text: string; v: number; at: number; by?: string }

@@ -98,14 +98,32 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   assert.match(borrowed.ask, /^Search X for: agent limits/)
   const said = events[2] as Extract<typeof events[number], { kind: 'say' }>
   assert.match(said.text, /Grok found: 212 posts/)
-  assert.match(said.text, /Tools: ask_crewmate, search_x, search_web, make_image, room_memory, remember/)
+  assert.match(said.text, /Tools: ask_crewmate, bring_in, search_x, search_web, make_image, room_memory, remember/)
   assert.ok(said.acts.some((a) => a.t === 'tool' && a.name === 'mcp__lunchbox__search_x'))
 
   engine.send(room.id, 'What is trending on X today?', 'workspace')
   await engine.idle(room.id)
-  hands.stop()
   const routed = store.events(room.id).filter((e) => e.kind === 'you').at(-1) as Extract<typeof events[number], { kind: 'you' }>
-  assert.equal(routed.lead, 'grok', 'live news goes to the agent built for it')
+  assert.equal(routed.lead, 'claude', 'the main agent takes every message nobody is named in')
+
+  // The main agent brings Grok in for one task; Grok gets a briefing, not the conversation.
+  const log = join(root, 'calls.jsonl')
+  process.env.FAKE_LOG = log
+  const before = store.events(room.id).length
+  engine.send(room.id, 'Bring: get the launch post drafted', 'workspace')
+  await engine.idle(room.id)
+  delete process.env.FAKE_LOG
+  hands.stop()
+  const after = store.events(room.id).slice(before)
+  assert.deepEqual(after.map((e) => e.kind), ['you', 'joined', 'say', 'left', 'say'])
+  const joined = after[1] as Extract<typeof events[number], { kind: 'joined' }>
+  assert.deepEqual([joined.by, joined.who, joined.task], ['claude', 'grok', 'Draft the launch post'])
+  assert.match((after[4] as Extract<typeof events[number], { kind: 'say' }>).text, /Grok reported: Done: drafted the launch post/)
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const grok = calls.find((c) => c.name === 'grok')
+  assert.match(grok.input, /You are joining this room for one task/)
+  assert.match(grok.input, /Keep it under 50 words/)
+  assert.doesNotMatch(grok.input, /The conversation so far|Since your last turn/, 'a joiner never gets the transcript')
   store.flush()
 })
 

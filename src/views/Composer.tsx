@@ -140,7 +140,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
       <div className="cbar">
         <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span>{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</>}>
           {() => (
-            <CrewMenu listed={listed} crew={crew} toggle={toggle} footer={
+            <CrewMenu listed={listed} crew={crew} toggle={toggle} promote={(id) => setCrew([id, ...crew.filter((w) => w !== id)])} footer={
               <>
                 {!listed.length && <div className="menunote">No agents found yet.</div>}
                 <div className="sep" />

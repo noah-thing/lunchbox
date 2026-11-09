@@ -53,6 +53,29 @@ if (name === 'codex') {
 }
 
 const mcp = args.includes('--mcp-config') ? JSON.parse(((v) => (v.trim().startsWith('{') ? v : readFileSync(v, 'utf8')))(args[args.indexOf('--mcp-config') + 1])).mcpServers.lunchbox.url : null
+// Brought in by the main agent for one task: report back. Checked first, because the briefing
+// quotes the person's message, which may hold the words the main agent reacts to.
+if (input.includes('brought you in for this:')) {
+  const text = `Done: drafted the launch post in 42 words.`
+  say({ type: 'system', subtype: 'init', session_id: `${name}-session`, model: 'fake' })
+  say({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  say({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: `${name}-session`, total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } })
+  process.exit(0)
+}
+
+// The main agent brings a crewmate in through the room's tool and passes on its report.
+if (mcp && input.includes('Bring:')) {
+  let id = 0
+  const rpc = async (method, params) => (await fetch(mcp, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) })).json()
+  await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name, version: '1' } })
+  say({ type: 'system', subtype: 'init', session_id: `${name}-session`, model: 'fake' })
+  const got = (await rpc('tools/call', { name: 'bring_in', arguments: { agent: 'grok', task: 'Draft the launch post', context: 'Keep it under 50 words.' } })).result.content[0].text
+  const text = `Grok reported: ${got}`
+  say({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  say({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: `${name}-session`, total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } })
+  process.exit(0)
+}
+
 if (mcp && input.includes('Borrow:')) {
   let id = 0
   const rpc = async (method, params) => {

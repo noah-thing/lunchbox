@@ -3,7 +3,7 @@ import { CATEGORIES, rating } from '../../shared/route'
 import type { AgentInfo, PlanLimits, PlanWindow, Usage } from '../../shared/types'
 import { Mark, Meter } from '../ui/bits'
 import { IconShare } from '../ui/icons'
-import { clock, desk, money, now, reason, reload, tokens, unavailable, useApp } from '../lib/desk'
+import { clock, desk, money, now, reason, tokens, unavailable, useApp } from '../lib/desk'
 import type { View } from '../App'
 
 const sum = (r: Record<string, Usage> | undefined) =>
@@ -20,7 +20,6 @@ export function Pool({ go, say }: { go: (v: View) => void; say: (t: string) => v
   const limits = useApp((s) => s.limits)
   const [open, setOpen] = useState(false)
   const pool = weeklyPool(present, limits, settings.budgets)
-  const route = settings.route ?? 'best'
 
   return (
     <div className="page">
@@ -53,11 +52,7 @@ export function Pool({ go, say }: { go: (v: View) => void; say: (t: string) => v
 
         <section className="group rise" style={{ '--i': 4 } as CSSProperties}>
           <h2>
-            Who leads what<span className="quiet">ratings move every time you keep one answer over others</span>
-            <span className="seg">
-              <button className={route === 'best' ? 'on' : ''} onClick={() => reload.settings({ route: 'best' })}>Best for the job</button>
-              <button className={route === 'order' ? 'on' : ''} onClick={() => reload.settings({ route: 'order' })}>Crew order</button>
-            </span>
+            Who is best at what<span className="quiet">ratings move every time you keep one answer over others</span>
           </h2>
           <Ratings agents={present} />
           <div className="row">

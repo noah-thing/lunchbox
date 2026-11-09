@@ -25,7 +25,8 @@ function listOf(a: AgentInfo) {
 
 // The crew menu: who is in the room, and beside each one the model it uses. The model opens that
 // agent's list in place; picking one slides back. The same setting as on the Agents page.
-export function CrewMenu({ listed, crew, toggle, footer }: { listed: AgentInfo[]; crew: string[]; toggle: (id: string) => void; footer: ReactNode }) {
+// The first in the crew is the main agent; Make main moves another one to the front.
+export function CrewMenu({ listed, crew, toggle, promote, footer }: { listed: AgentInfo[]; crew: string[]; toggle: (id: string) => void; promote: (id: string) => void; footer: ReactNode }) {
   const models = useApp((s) => s.settings.models)
   const [at, setAt] = useState<AgentInfo | null>(null)
   const [came, setCame] = useState(false)
@@ -42,9 +43,11 @@ export function CrewMenu({ listed, crew, toggle, footer }: { listed: AgentInfo[]
             const why = unavailable(a)
             return (
               <div key={a.id} className={`crewrow${on ? ' checked' : ''}${why ? ' off' : ''}`}>
-                <button className="item" role="menuitemcheckbox" aria-checked={on} onClick={() => toggle(a.id)}>
+                <button className={`item${on ? ' checked' : ''}`} role="menuitemcheckbox" aria-checked={on} onClick={() => toggle(a.id)}>
                   <Mark seed={a.mark} size={14} />
-                  <span className="grow"><b>{a.name}</b><span>{why ?? a.good}</span></span>
+                  <span className="grow"><b className="crewname"><span>{a.name}</span>{on && crew.length > 1 && (crew[0] === a.id
+                    ? <em className="maintag">Main</em>
+                    : !why && <em className="maintag make" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); promote(a.id) }} onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); promote(a.id) } }}>Make main</em>)}</b><span>{why ?? a.good}</span></span>
                   <i className="check" />
                 </button>
                 {on && !why && (

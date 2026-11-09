@@ -445,6 +445,20 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
           {!/limit|turned off|budget/.test(e.reason) && <button className="reportbtn" onClick={() => openReport({ context: wallText(e, agents) })}>Report this</button>}
         </Ev>
       )
+    case 'joined':
+      return (
+        <Ev id={e.id} mark={<span className="gutdot" />} className="note joinline">
+          <span className="switch"><Mark seed={agentOf(e.by, agents).mark} size={12} /><i className="wire" /><Mark seed={agentOf(e.who, agents).mark} size={12} /></span>
+          <span>{agentOf(e.by, agents).short} brought in {agentOf(e.who, agents).short}<span className="quiet">: {e.task}</span></span>
+        </Ev>
+      )
+    case 'left':
+      return (
+        <Ev id={e.id} mark={<span className="gutdot" />} className="note joinline">
+          <span className="switch"><Mark seed={agentOf(e.who, agents).mark} size={12} /></span>
+          <span className="quiet">{agentOf(e.who, agents).short} stepped out</span>
+        </Ev>
+      )
     case 'decide': {
       const c = chosen.get(e.id)
       return (
@@ -951,14 +965,18 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
 
       <section>
         <h2>Crew<small>{crew.length}</small></h2>
-        {crew.map((a) => {
+        {crew.map((a, i) => {
           const why = unavailable(a)
           const today = ledger?.today[a.id]
           const budget = budgets[a.id]
-          const status = live.active === a.id ? (live.waiting ? 'Waiting for your OK' : 'Working') : why ?? (today ? `${tokens(today.input + today.output + today.cached)} tokens today${today.cost ? `, ${money(today.cost)}` : ''}` : 'Ready')
+          // The main agent follows the room; everyone else is on call until brought in.
+          const working = live.turns.some((t) => t.who === a.id)
+          const used = today ? `${tokens(today.input + today.output + today.cached)} tokens today${today.cost ? `, ${money(today.cost)}` : ''}` : ''
+          const role = i === 0 ? 'Main' : 'On call'
+          const status = working ? (live.waiting && live.active === a.id ? 'Waiting for your OK' : i === 0 ? 'Main, working' : 'Working') : why ?? [role, used].filter(Boolean).join(', ')
           return (
-            <div key={a.id} className={`crew${live.active === a.id ? ' on' : ''}${why ? ' spent' : ''}`} title={a.name}>
-              <Mark seed={a.mark} size={16} active={live.active === a.id && !live.waiting} />
+            <div key={a.id} className={`crew${working ? ' on' : ''}${why ? ' spent' : ''}`} title={a.name}>
+              <Mark seed={a.mark} size={16} active={working && !live.waiting} />
               <span className="grow">{a.short}<small>{status}</small></span>
               {budget > 0 && <Meter value={Math.max(0, 1 - (today?.cost ?? 0) / budget)} cells={10} tone={(today?.cost ?? 0) > budget * 0.75 ? 'warn' : undefined} />}
             </div>

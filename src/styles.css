@@ -282,8 +282,15 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .crewrow .modelchip{position:absolute;right:30px;top:8px;display:inline-flex;align-items:center;gap:4px;max-width:130px;height:20px;padding:0 6px 0 8px;border-radius:6px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 140ms var(--out),background-color 140ms var(--out)}
 @media (hover:hover){.crewrow .modelchip:hover{color:var(--ink);background:var(--hover)}}
 .crewrow .modelchip .chev{flex:none;opacity:.7}
-.crewrow.checked .item .grow b{padding-right:112px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crewrow.checked .item .grow b{padding-right:112px}
+.crewname{display:flex;align-items:center;gap:8px;min-width:0}
+.crewname>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crewrow.off .item .grow span{color:var(--faint)}
+.maintag{flex:none;padding:1px 6px;border-radius:5px;font:500 10.5px var(--sans);font-style:normal;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2);vertical-align:1px}
+.maintag.make{display:none;color:var(--faint);box-shadow:none;background:var(--hover);animation:fadein 160ms var(--out) both;transition:color 140ms var(--out)}
+@media (hover:hover){.crewrow:hover .maintag.make{display:inline-block}.maintag.make:hover{color:var(--ink)}}
+.crewrow:focus-within .maintag.make{display:inline-block}
+.menu:has(.crewrow){width:344px}
 .crewrow.off .item>.mark{opacity:.45}
 .modellist{max-height:280px;overflow-y:auto;overscroll-behavior:contain}
 .item.modelrow{align-items:center;gap:10px;padding:7px 8px}
@@ -858,3 +865,6 @@ html[data-platform=win32] .ntoasts,html[data-platform=linux] .ntoasts,html[data-
 .makername svg{width:14px;height:14px}
 .makerhandle{color:var(--dim)}
 .makergh{color:var(--dim)}
+
+/* A crewmate joining or stepping out: one line, the task cut to fit. */
+.ev.joinline>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
