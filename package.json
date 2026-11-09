@@ -3,7 +3,7 @@
   "productName": "Lunchbox",
   "version": "0.1.1",
   "private": true,
-  "description": "The AI tools you already pay for, working together in one room.",
+  "description": "A desktop app that runs Claude Code, Codex, Grok and Gemini together on your projects, with the logins you already have.",
   "author": {
     "name": "Noah",
     "email": "261804785+noah-thing@users.noreply.github.com"
