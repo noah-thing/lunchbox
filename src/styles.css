@@ -96,6 +96,11 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .app{height:100%;display:grid;grid-template-columns:232px 1fr}
 .sidebar{display:flex;flex-direction:column;padding:0 8px 8px;min-height:0}
 .sbtop{height:44px;flex:none;-webkit-app-region:drag}
+/* The name row heads the sidebar: mark over the icon column, name over the labels. */
+.sbbrand{display:flex;align-items:center;gap:8px;height:30px;margin:-4px 0 10px;padding:0 8px;border-radius:6px;font-size:13.5px;color:var(--ink);transition:background-color 140ms var(--out)}
+.sbbrand b{font-weight:600;letter-spacing:-.01em}
+.sbbrand .logo{flex:none}
+@media (hover:hover){.sbbrand:hover{background:var(--hover)}}
 .oblogo{display:block;margin-bottom:22px;color:var(--ink)}
 .about{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12.5px;color:var(--faint)}
 .about b{font-weight:500;color:var(--dim)}
@@ -326,9 +331,6 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .newbody{width:100%;max-width:var(--col);margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .newbody .band{margin-bottom:16px}
 .newbody h1{font-size:30px;font-weight:500;letter-spacing:-.02em;line-height:1.15}
-/* The mark greets you on the home screen, set to the cap height of the question. */
-.newbody h1.hello{display:flex;align-items:center;gap:12px}
-.newbody h1.hello .logo{flex:none;margin-top:-2px}
 .ideas{display:flex;gap:8px;flex-wrap:wrap}
 .ideas button{height:28px;padding:0 12px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--line2);font-size:12px;color:var(--dim);transition:color 140ms var(--out),background-color 140ms var(--out)}
 @media (hover:hover){.ideas button:hover{color:var(--ink);background:var(--hover)}}

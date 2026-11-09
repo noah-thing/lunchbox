@@ -3,7 +3,6 @@ import { PLAYBOOKS } from '../../shared/skills'
 import type { Skill } from '../../shared/types'
 import { Band } from '../ui/Band'
 import { Loader, Mark } from '../ui/bits'
-import { Logo } from '../ui/Logo'
 import { IconFolder, IconFolderPlus } from '../ui/icons'
 import { Menu } from '../ui/Access'
 import { agentOf, ago, desk, machine, short, unavailable, upcoming, useApp, type Access } from '../lib/desk'
@@ -102,7 +101,7 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
     <div className={`newroom${starting ? ' starting' : ''}`}>
       <div className="newbody">
         <Band rows={9} label={label} busy={starting} />
-        <h1 className="rise hello" style={{ '--i': 1 } as CSSProperties}><Logo size={30} />What are we working on?</h1>
+        <h1 className="rise" style={{ '--i': 1 } as CSSProperties}>What are we working on?</h1>
         <div className="rise" style={{ '--i': 2 } as CSSProperties}>
           {crew.length ? (
             <Composer crew={crew} setCrew={setChosen} onSend={start} access={access} setAccess={setAccess} draft={draft} arena={arena} setArena={setArena} pack={pack} folder={workspace}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEv
 import { flushSync } from 'react-dom'
 import type { Hit, Skill } from '../shared/types'
 import { Loader } from './ui/bits'
+import { Logo } from './ui/Logo'
 import { IconAgents, IconBrowser, IconClock, IconFlows, IconLibrary, IconPlus, IconPool, IconSave, IconSearch, IconSettings } from './ui/icons'
 import { Onboarding } from './views/Onboarding'
 import { RoomView } from './views/Room'
@@ -179,6 +180,7 @@ export function App() {
     <div className={`app${arriving ? ' arriving' : ''}`}>
       <aside className="sidebar">
         <div className="sbtop" />
+        <button className="sbbrand" onClick={() => go({ name: 'new' })} title="Home"><Logo size={16} /><b>Lunchbox</b></button>
         <button className={`sbitem${on('new') ? ' on' : ''}`} onClick={() => go({ name: 'new' })}>{on('new') && sel}<IconPlus />New room<kbd>{mod}N</kbd></button>
         <button ref={searchButton} className={`sbitem${palette ? ' on' : ''}`} onClick={() => openPalette(true)}><IconSearch />Search<kbd>{mod}K</kbd></button>
         <div className="sbgap" />
