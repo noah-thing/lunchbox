@@ -96,7 +96,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .app{height:100%;display:grid;grid-template-columns:232px 1fr}
 .sidebar{display:flex;flex-direction:column;padding:0 8px 8px;min-height:0}
 .sbtop{height:44px;flex:none;display:flex;align-items:center;padding:0 10px;color:var(--ink);-webkit-app-region:drag}
-.sbtop.mac{justify-content:flex-end}
+/* macOS: just after the window buttons (they end at 70px), on the same line */
+.sbtop.mac{padding-left:84px}
 .sbtop .logo{opacity:.92}
 .oblogo{display:block;margin-bottom:22px;color:var(--ink)}
 .about{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12.5px;color:var(--faint)}
