@@ -81,6 +81,8 @@ function createWindow() {
     ...(mac
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 15 } }
       : { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 44 } }),
+    // Windows and Linux take the window and taskbar icon from here; macOS from the app bundle.
+    ...(mac ? {} : { icon: join(__dirname, '../build/icon-1024.png') }),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   })
   win.once('ready-to-show', () => win?.show())

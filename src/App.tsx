@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEv
 import { flushSync } from 'react-dom'
 import type { Hit, Skill } from '../shared/types'
 import { Loader } from './ui/bits'
+import { Logo } from './ui/Logo'
 import { IconAgents, IconBrowser, IconClock, IconFlows, IconLibrary, IconPlus, IconPool, IconSave, IconSearch, IconSettings } from './ui/icons'
 import { Onboarding } from './views/Onboarding'
 import { RoomView } from './views/Room'
@@ -14,7 +15,7 @@ import { Savings } from './views/Savings'
 import { Library } from './views/Library'
 import { Browser, useBrowser } from './views/Browser'
 import { Palette, type Command } from './views/Palette'
-import { ago, boot, desk, mod, reload, unavailable, useApp, type Access } from './lib/desk'
+import { ago, boot, desk, isMac, mod, reload, unavailable, useApp, type Access } from './lib/desk'
 
 export type View =
   | { name: 'room'; id: string; focus?: string }
@@ -178,7 +179,7 @@ export function App() {
   return (
     <div className={`app${arriving ? ' arriving' : ''}`}>
       <aside className="sidebar">
-        <div className="sbtop" />
+        <div className={`sbtop${isMac ? ' mac' : ''}`}><Logo size={18} /></div>
         <button className={`sbitem${on('new') ? ' on' : ''}`} onClick={() => go({ name: 'new' })}>{on('new') && sel}<IconPlus />New room<kbd>{mod}N</kbd></button>
         <button ref={searchButton} className={`sbitem${palette ? ' on' : ''}`} onClick={() => openPalette(true)}><IconSearch />Search<kbd>{mod}K</kbd></button>
         <div className="sbgap" />

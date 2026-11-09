@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from
 import type { AgentInfo } from '../../shared/types'
 import { Mark } from '../ui/bits'
 import { Band } from '../ui/Band'
+import { Logo } from '../ui/Logo'
 import { IconFolder } from '../ui/icons'
 import { flow } from '../App'
 import { desk, isDesktop, machine, short, useApp } from '../lib/desk'
@@ -62,6 +63,7 @@ function Welcome({ onNext }: { onNext: () => void }) {
   useEnter(onNext)
   return (
     <div className="obpage first">
+      <Logo size={36} className="oblogo rise" />
       <h1 className="rise" style={r(0)}>Every AI you use, working as one.</h1>
       <p className="rise" style={r(1)}>Bring the agents already on {machine()} into one room. They share what they know, ask each other for help and check each other’s work.</p>
       <div className="obfacts rise" style={r(2)}>

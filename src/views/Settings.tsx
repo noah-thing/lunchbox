@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { Loader, Mark } from '../ui/bits'
+import { Logo } from '../ui/Logo'
 import { ACCESS, desk, reason, reload, short, unavailable, useApp, type RemoteStatus } from '../lib/desk'
 import type { Look } from '../App'
 import { Toggle } from './Flows'
@@ -141,7 +142,7 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <button className="btn small quiet" onClick={restart}>Show again</button>
           </div>
         </div>
-        <p className="hint mono">Lunchbox {env.version}</p>
+        <p className="about"><Logo size={16} /><b>Lunchbox</b><span>{env.version}</span></p>
       </section>
     </div>
   )
