@@ -78,6 +78,10 @@ await visit('Library', '06-library', async () => {
   await page.keyboard.press('Meta+k')
   await shot('06c-palette', 500)
   await page.keyboard.press('Escape')
+  await page.click('.tabs button >> nth=1').catch(() => {})
+  await page.evaluate(() => document.querySelector('.page')?.scrollTo(0, 900))
+  await shot('07b-library-scrolled', 500)
+  await page.evaluate(() => document.querySelector('.page')?.scrollTo(0, 0))
   for (const [i, t] of [[0, 'skills'], [1, 'tools'], [2, 'packs']]) {
     await page.click(`.tabs button >> nth=${i + 1}`).catch(() => {})
     await shot(`07-library-${t}`, 500)
