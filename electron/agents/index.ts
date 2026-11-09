@@ -1,11 +1,9 @@
 import { createInterface } from 'node:readline'
-import { rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { existsSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
-import { env, launch, stop, version, which } from '../system'
+import { capture, env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
 import { chat, listModels, PROVIDERS } from './http'
 import { logoOf } from '../../shared/logos'
@@ -249,9 +247,34 @@ export async function detect(keys: Record<string, string>, models: Record<string
 // pin a version. Anything else typed in the field is passed through as is.
 const CLAUDE_MODELS = ['fable', 'opus', 'sonnet', 'haiku', 'claude-fable-5-2', 'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']
 
+// Gemini CLI has no command that lists models; these are the ones it accepts by name, newest first.
+const GEMINI_MODELS = ['auto-gemini-3', 'gemini-3.1-pro-preview', 'gemini-3-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-3.1-flash-lite']
+
+// Codex keeps the models this account may pick in its own cache, in the order its picker shows them.
+function codexModels() {
+  try {
+    const file = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'models_cache.json')
+    const list: { slug?: string; visibility?: string; priority?: number }[] = JSON.parse(readFileSync(file, 'utf8')).models ?? []
+    return list.filter((m) => m.slug && m.visibility !== 'hide').sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)).map((m) => m.slug!)
+  } catch {
+    return []
+  }
+}
+
+// Grok prints its models with `grok models`: the default marked with *, the rest with -.
+async function grokModels() {
+  const path = paths.get('grok') ?? (await locate('grok'))
+  if (!path) return []
+  const out = await capture(path, ['models'], 8000, await env())
+  return [...out.matchAll(/^\s*[*-]\s+([\w.:/-]+)/gm)].map((m) => m[1])
+}
+
 export async function modelsFor(id: string, keys: Record<string, string>) {
   const d = def(id)
   if (d?.id === 'claude') return CLAUDE_MODELS
+  if (d?.id === 'codex') return codexModels()
+  if (d?.id === 'grok') return grokModels()
+  if (d?.id === 'gemini') return GEMINI_MODELS
   if (!d || d.via === 'cli') return []
   const all = await listModels(providerOf(d), keys[d.key!] ?? '')
   return d.via === 'local' ? all.filter((m) => !/embed/i.test(m)) : all

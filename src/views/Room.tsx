@@ -8,7 +8,7 @@ import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
 import { roomCard } from '../ui/roomcard'
 import { openReport } from '../lib/report'
-import { IconBranches, IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
+import { IconBranches, IconChevron, IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
 import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
 import { Composer } from './Composer'
@@ -647,7 +647,6 @@ function Sources({ search, out }: { search: Search; out?: string }) {
   )
 }
 
-const IconChevron = () => <svg className="chev" width="10" height="10" viewBox="0 0 16 16" aria-hidden><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
 
 const IconHeart = () => <svg width="11" height="11" viewBox="0 0 24 24" aria-hidden><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.3C.9 8.2 3 4.5 6.7 4.5c2.1 0 3.6 1.1 4.4 2.5h1.8c.8-1.4 2.3-2.5 4.4-2.5 3.7 0 5.8 3.7 4.3 7.2C19.5 16.4 12 21 12 21z" /></svg>
 

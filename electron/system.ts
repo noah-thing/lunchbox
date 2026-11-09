@@ -3,7 +3,7 @@ import { delimiter } from 'node:path'
 
 export const isWin = process.platform === 'win32'
 
-function capture(file: string, args: string[], timeout = 6000, env = process.env) {
+export function capture(file: string, args: string[], timeout = 6000, env = process.env) {
   return new Promise<string>((done) =>
     execFile(file, args, { timeout, maxBuffer: 1 << 20, env, windowsHide: true }, (_e, out, err) => done(String(out || err || ''))),
   )
