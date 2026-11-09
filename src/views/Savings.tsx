@@ -74,7 +74,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
                   <span className="sv-num">{tokens(reused(u))}</span>
                   <span className="sv-num sv-dim">{tokens(u.input)}</span>
                   <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>{a?.via === 'local' ? 'free' : '—'}</em>}</span>
+                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>{a?.via === 'local' ? 'free' : 'none yet'}</em>}</span>
                 </div>
               ))}
             </Table>
@@ -90,7 +90,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
                   <span className="sv-num">{tokens(reused(u))}</span>
                   <span className="sv-num sv-dim">{tokens(u.input)}</span>
                   <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>—</em>}</span>
+                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>none yet</em>}</span>
                 </button>
               ))}
             </Table>

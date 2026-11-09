@@ -255,7 +255,8 @@ export class Limits {
   get() { return this.now }
 
   async poll(only?: string) {
-    if (this.store.settings.planLimits === false || this.busy) return
+    // Test runs use stand-in agents and must never read, or be gated by, the real plans on this computer.
+    if (this.store.settings.planLimits === false || process.env.LB_PLAN_LIMITS === 'off' || this.busy) return
     this.busy = true
     try {
       const ids = (only ? [only] : this.present()).filter((id) => READERS[id])

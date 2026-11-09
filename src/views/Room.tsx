@@ -642,7 +642,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
       {steps.length > 0 && (
         <section>
           <h2>Progress<small>{done} of {steps.length}</small></h2>
-          <div className="steps">{steps.map((s, i) => <i key={i} className={s.done ? 'done' : ''} />)}</div>
+          <div className="stepbar">{steps.map((s, i) => <i key={i} className={s.done ? 'done' : ''} />)}</div>
           {steps.map((s, i) => (
             <div key={i} className={`task${s.done ? ' done' : ''}`}><i /><span className="grow">{s.text}</span><small>{agentOf(s.who, agents).short}</small></div>
           ))}

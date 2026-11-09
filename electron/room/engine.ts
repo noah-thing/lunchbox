@@ -27,7 +27,7 @@ type Hooks = {
 
 type Task =
   | { kind: 'reply' }
-  | { kind: 'answer'; from: string; ask: string; via?: 'tool' }
+  | { kind: 'answer'; from: string; ask: string; via?: 'tool'; quiet?: boolean }
   | { kind: 'continue' }
   | { kind: 'retry'; tools: string[] }
 
@@ -441,9 +441,9 @@ export class Engine {
     }
   }
 
-  private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>) {
+  private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>, quiet = false) {
     if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
-    const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool' }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
+    const r = await this.turn(room, to, { kind: 'answer', from, ask, via: 'tool', quiet }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1, models })
     if (!r?.text) throw new Error(`${this.name(to)} could not answer right now.`)
     return r.text
   }
@@ -465,7 +465,8 @@ export class Engine {
       this.hooks.emit('ledger', this.ledger())
     } else {
       const ask = `Generate this image with your image tool and save it as ${path}${size ? ` at ${size}` : ''}. Reply with the path only.\n\nImage: ${prompt}`
-      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }).catch((e: Error) => e.message)
+      // Quiet: the image itself is what the room shows, not the instruction that produced it.
+      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }, true).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
     this.add(room, { kind: 'image', by, for: from, prompt, path, usage })
@@ -570,8 +571,12 @@ export class Engine {
     const parsed = task.kind === 'answer' || ctx.arena ? { asks: [], text: r.text } : asks(r.text, handles)
     let event: Event
     if (task.kind === 'answer') {
-      event = this.add(room, { kind: 'hands', from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via })
-      this.block(room, `answer-${event.id}`, `${me.short} for ${this.name(task.from)}: ${task.ask.slice(0, 60)}`, r.text, who)
+      const hands = { kind: 'hands' as const, from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via }
+      if (task.quiet) event = { ...hands, id: uid(), at: Date.now() }
+      else {
+        event = this.add(room, hands)
+        this.block(room, `answer-${event.id}`, `${me.short} for ${this.name(task.from)}: ${task.ask.slice(0, 60)}`, r.text, who)
+      }
     } else {
       const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms }
       const proof = check(draft.text, [...events, { ...draft, id: '', at: 0 }])

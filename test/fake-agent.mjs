@@ -21,6 +21,14 @@ const pause = Number(process.env.FAKE_DELAY ?? 0)
 const sleep = (ms) => ms && Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 const say = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); sleep(pause) }
 
+// FAKE_SCRIPT=showcase plays one clean room for the README: Claude plans and asks two crewmates
+// at once, Grok searches X, Codex builds a page and proves it with a passing test.
+if (process.env.FAKE_SCRIPT === 'showcase') {
+  const { showcase } = await import('./showcase.mjs')
+  await showcase(name, input, args, say, sleep, pause)
+  process.exit(0)
+}
+
 if (name === 'codex') {
   say({ type: 'thread.started', thread_id: 'thread-1' })
   say({ type: 'error', message: "You've hit your usage limit. Try again in 2 hours." })

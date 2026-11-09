@@ -128,7 +128,7 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
         <h2>Data</h2>
         <div className="settings">
           <div className="setting">
-            <div className="grow"><b>Stored on this computer</b><span className="mono">{short(env.data) || '—'}</span></div>
+            <div className="grow"><b>Stored on this computer</b><span className="mono">{short(env.data) || 'not set'}</span></div>
             <button className="btn small quiet" onClick={() => desk.call('reveal', env.data)}>Open</button>
           </div>
           {!secure && (
