@@ -28,12 +28,9 @@
 
 <br>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/room-dark.png">
-  <img alt="A Lunchbox room: Grok has searched X, Codex has designed the banner and is running the tests" src=".github/assets/room-light.png">
-</picture>
+https://github.com/user-attachments/assets/92e057ae-6206-4a41-ae07-bffed98bee19
 
-<p align="center"><sub>Grok searches X, Codex designs the banner, Claude writes the announcement. One room, one memory.</sub></p>
+<p align="center"><sub>One room, recorded as it runs: Claude plans, Grok searches X, Codex draws the banner, builds the event page and proves it with a passing test run.</sub></p>
 
 <br>
 
@@ -42,6 +39,11 @@
 Lunchbox is a desktop app for people who use more than one AI agent. Claude Code, Codex, Grok Build, Gemini CLI, local models and API keys join the same room, share what they know and pass work to each other mid-task.
 
 Every agent runs as the real tool, with its own login and plan. Lunchbox never resells access and never sends your work through a server of its own.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/room-dark.png">
+  <img alt="A Lunchbox room: Grok has searched X, Codex has designed the banner and is running the tests" src=".github/assets/room-light.png">
+</picture>
 
 <table>
   <tr>
