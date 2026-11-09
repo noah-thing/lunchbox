@@ -742,17 +742,42 @@ textarea:focus-visible,input:focus-visible{outline:0}
 /* The beta tag in the name row, and the report sheet it opens. */
 .sbbeta{margin-left:auto;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:500;letter-spacing:.02em;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2);transition:color 140ms var(--out),box-shadow 140ms var(--out)}
 @media (hover:hover){.sbbeta:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--faint)}}
-.report .quiet{font-size:12.5px;color:var(--faint);margin-top:2px}
-.report .kinds{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.report .kinds button{height:34px;border-radius:9px;font-size:12.5px;box-shadow:inset 0 0 0 1px var(--line);transition:box-shadow 140ms var(--out),background-color 140ms var(--out)}
-.report .kinds button b{font-weight:500}
-.report .kinds button.on{box-shadow:inset 0 0 0 1px var(--ink);background:var(--hover)}
-.report .field{max-width:none}
-.report textarea{padding:9px 10px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line2);font:13px/1.5 var(--sans);resize:vertical;min-height:92px}
-.report textarea:focus{box-shadow:inset 0 0 0 1px var(--ink)}
 .reportctx{max-height:140px;overflow:auto;padding:10px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:11.5px/1.5 var(--mono);color:var(--dim);white-space:pre-wrap;word-break:break-word}
-.attachline{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--dim)}
-.attachline label{display:flex;align-items:center;gap:7px}
+/* Feedback sheet: calm panels like the composer, a sliding segmented control, the app's toggle. */
+.sheetcard.fb{width:min(520px,calc(100vw - 48px));gap:16px;padding:24px}
+.fbhead{display:flex;align-items:flex-start;gap:12px}
+.fbhead h2{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:500;letter-spacing:-.015em}
+.fbhead p{margin-top:5px;font-size:13px;line-height:1.5;color:var(--dim)}
+.fbtag{padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:500;letter-spacing:.02em;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2)}
+.fbkinds{position:relative;display:grid;grid-template-columns:repeat(3,1fr);padding:3px;border-radius:11px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
+.fbkinds button{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:7px;height:34px;border-radius:8px;font-size:12.5px;color:var(--dim);transition:color 160ms var(--out)}
+.fbkinds button.on{color:var(--ink)}
+.fbkinds svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.fbpill{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px) / 3);border-radius:8px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 1px 2px rgba(0,0,0,.25);transform:translateX(calc(var(--at) * 100%));transition:transform 260ms var(--out)}
+.fbbox,.fbline{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:12px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);transition:box-shadow 160ms var(--out)}
+.fbbox:focus-within,.fbline:focus-within{box-shadow:inset 0 0 0 1px var(--faint)}
+.fbbox>span{font-size:12.5px;font-weight:500;color:var(--ink)}
+.fbbox textarea{min-height:96px;resize:none;background:none;border:0;padding:0;font:14px/1.55 var(--sans);color:var(--ink)}
+.fbbox textarea::placeholder,.fbline input::placeholder{color:var(--faint)}
+.fbline{flex-direction:row;align-items:center;gap:12px;padding:0 14px;height:42px}
+.fbline>span{flex:none;font-size:12.5px;color:var(--dim)}
+.fbline input{flex:1;min-width:0;height:100%;background:none;border:0;font:13px var(--sans);color:var(--ink)}
+.fbctx{display:flex;flex-direction:column;gap:6px}
+.fbctx>span{font-size:11.5px;color:var(--faint)}
+.fbctx pre,.fbpeek{max-height:120px;overflow:auto;padding:10px 12px;border-radius:10px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:11.5px/1.5 var(--mono);color:var(--dim);white-space:pre-wrap;word-break:break-word}
+.fbattach{display:flex;align-items:center;gap:14px}
+.fbattach b{display:block;font-size:13px;font-weight:500}
+.fbattach span{display:block;margin-top:2px;font-size:12px;color:var(--faint)}
+.fbattach .linkbtn{font-size:12px;color:var(--dim)}
+.fbfoot{display:flex;align-items:center;gap:8px;padding-top:4px}
+.fbfoot>span{font-size:11.5px;line-height:1.45;color:var(--faint)}
+.fbsend kbd{margin-left:6px;font-size:10.5px;opacity:.6}
+.fbdone{display:flex;flex-direction:column;align-items:center;gap:8px;padding:28px 12px 24px;text-align:center;animation:land 320ms var(--out) both}
+.fbdone svg{width:40px;height:40px;fill:none;stroke:var(--ink);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;margin-bottom:6px}
+.fbdone svg path{stroke-dasharray:16;stroke-dashoffset:16;animation:fbtick 420ms 160ms var(--out) forwards}
+@keyframes fbtick{to{stroke-dashoffset:0}}
+.fbdone b{font-size:16px;font-weight:500}
+.fbdone span{font-size:13px;color:var(--dim)}
 .reportbtn{margin-left:8px;padding:0 8px;height:22px;border-radius:6px;font-size:11.5px;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2);vertical-align:1px}
 @media (hover:hover){.reportbtn:hover{color:var(--ink)}}
 
