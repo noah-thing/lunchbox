@@ -446,3 +446,22 @@ test('connectors wear their product logo, or a terminal or server', async () => 
   assert.equal(logoOf({ kind: 'openai', base: 'http://10.0.0.2:9000/v1' }), 'server')
   assert.equal(logoOf({ kind: 'anthropic', base: 'https://gateway.example.com' }), 'claude')
 })
+
+test('briefing: brief always kept, newest memory first, no transcript, only changes when resumed', async () => {
+  const { briefing } = await import('../electron/room/context')
+  const block = (id: string, text: string, v = 1) => ({ id, title: id, text, v, at: 0 })
+  const meta = { id: 'r', name: 'r', created: 0, updated: 0, crew: ['claude', 'codex'], workspace: '/w', sessions: {}, seen: { codex: { brief: 1, old: 1 } }, heard: {}, saved: { full: 0, sent: 0 },
+    blocks: [block('brief', 'Build the page'), block('old', 'x'.repeat(3990)), block('a', 'y'.repeat(3990)), block('b', 'z'.repeat(3990)), block('c', 'w'.repeat(3990)), block('newest', 'fresh finding', 2)] }
+  const events = [{ id: '1', at: 0, kind: 'you' as const, text: 'Make the hero darker' }, { id: '2', at: 0, kind: 'say' as const, who: 'claude', text: 'SECRET TRANSCRIPT LINE', acts: [] }]
+  const p = briefing(meta, events, 'codex', 'Do the task')
+  assert.match(p.text, /## brief\nBuild the page/)
+  assert.match(p.text, /fresh finding/, 'the newest block survives the cap')
+  assert.doesNotMatch(p.text, /## old\n/, 'the oldest block is the one dropped')
+  assert.doesNotMatch(p.text, /SECRET TRANSCRIPT LINE/)
+  assert.match(p.text, /Make the hero darker/)
+  const again = briefing(meta, events, 'codex', 'Do the task', true)
+  assert.doesNotMatch(again.text, /## brief\n/, 'a resumed session is not sent what it already has')
+  assert.match(again.text, /fresh finding/)
+  const follow = briefing(meta, events, 'codex', 'Reply', false, ['Claude: here is the draft'])
+  assert.match(follow.text, /The last few lines of the room:\n\nClaude: here is the draft/)
+})

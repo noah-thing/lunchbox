@@ -67,7 +67,8 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
   const env = useApp((s) => s.env)
   const [secure, setSecure] = useState(true)
   useEffect(() => { desk.call('keys:secure').then((v: boolean | null) => setSecure(v !== false)) }, [])
-  const usable = agents.filter((a) => !unavailable(a))
+  // In the order a new room fills its crew, so the Main shown here is the one a new room gets.
+  const usable = agents.filter((a) => !unavailable(a)).sort((a, b) => Number(b.tools) - Number(a.tools))
   const crew = settings.defaultCrew
 
   return (
