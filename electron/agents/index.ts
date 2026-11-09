@@ -158,7 +158,8 @@ let custom: Def[] = []
 // A command line split like a shell would, keeping quoted parts together.
 export function words(s: string) {
   const out: string[] = []
-  for (const m of s.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g)) out.push(m[1] !== undefined ? m[1].replace(/\\(.)/g, '$1') : (m[2] ?? m[3]))
+  // Inside double quotes only \" and \\ are escapes, so C:\Program Files\tool.exe survives.
+  for (const m of s.matchAll(/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g)) out.push(m[1] !== undefined ? m[1].replace(/\\(["\\])/g, '$1') : (m[2] ?? m[3]))
   return out
 }
 
@@ -174,11 +175,23 @@ function fromConnector(c: Connector): Def {
     // {prompt} is the whole request, {file} a temporary file holding it, {model} and {cwd} as named.
     // Without {prompt} or {file} the request goes to the agent on standard input.
     spawn: (i, file) => {
-      const text = prompt(i)
+      const full = prompt(i)
       const template = [...fixed, ...words(c.args ?? '')]
       const inline = template.some((a) => a.includes('{prompt}') || a.includes('{file}'))
-      const args = template.map((a) => a.replaceAll('{prompt}', text).replaceAll('{file}', file).replaceAll('{model}', i.model ?? c.model ?? '').replaceAll('{cwd}', i.cwd)).filter((a) => a !== '')
-      return { args, stdin: inline ? '' : text, file: template.some((a) => a.includes('{file}')) ? text : undefined, parser: c.output === 'stream-json' ? claudeLike() : textOut() }
+      // A command line can't carry a whole room on Windows, or a newline through a .cmd shim, so
+      // a long or multi-line request goes in the file and the argument points at it.
+      const viaFile = template.some((a) => a.includes('{prompt}')) && (full.length > 7000 || (process.platform === 'win32' && /\n/.test(full)))
+      const text = viaFile ? `Read the full request in ${file} and do what it asks.` : full
+      const model = i.model ?? c.model ?? ''
+      const vals: Record<string, string> = { prompt: text, file, model, cwd: i.cwd }
+      const args: string[] = []
+      for (const [n, a] of template.entries()) {
+        // A flag whose value would be an empty {model} goes too, rather than eat the next flag.
+        if (a === '{model}' && !model) { if (args.length && /^-/.test(template[n - 1] ?? '')) args.pop(); continue }
+        const v = a.replace(/\{(prompt|file|model|cwd)\}/g, (_m, k: string) => vals[k])
+        if (v !== '' && !/^-[\w-]+=$/.test(v)) args.push(v)
+      }
+      return { args, stdin: inline ? '' : full, file: viaFile || template.some((a) => a.includes('{file}')) ? full : undefined, parser: c.output === 'stream-json' ? claudeLike() : textOut() }
     },
   }
 }
@@ -244,6 +257,10 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
       })
     return { done, stop: () => ctl.abort() }
   }
+  // Lunchbox can't hold a command line connector to Plan or Ask; it says so instead of running it.
+  if (d.maker === 'Your connector' && d.via === 'cli' && (input.access === 'plan' || input.access === 'ask')) {
+    return { done: Promise.resolve(failed(`${d.name} runs with full permissions, so it does not run in ${input.access === 'plan' ? 'Plan' : 'Ask'} mode. Switch the room to Auto to use it.`)), stop() {} }
+  }
   let child: ReturnType<typeof launch> | null = null
   let stopped = false
   const done = (async (): Promise<Result> => {
@@ -254,6 +271,8 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     const spec = d.spawn!(input, file)
     if (spec.file) writeFileSync(file, spec.file)
     for (const x of spec.extra ?? []) writeFileSync(x.path, x.text, { mode: 0o600 })
+    // Stop pressed while the tool was still being found: it never starts.
+    if (stopped) return failed('Stopped')
     child = launch(path, spec.args, { cwd: input.cwd, env: { ...(await env()), ...spec.env }, stdio: ['pipe', 'pipe', 'pipe'] })
     let stderr = ''
     child.stderr?.on('data', (b: Buffer) => { if (stderr.length < 65536) stderr += b.toString() })

@@ -189,6 +189,8 @@ export type Settings = {
   planLimits?: boolean
   connectors?: Connector[]
   habits?: string[]
+  dismissed?: string[]
+  autoUpdate?: boolean
 }
 
 // Anything not built in: an API that speaks the OpenAI or Anthropic format, or a command-line
@@ -233,3 +235,30 @@ export type Day = { day: string; cost: number; tokens: number; input: number; ca
 export type Hit = { room: string; roomName: string; event?: string; text: string }
 
 export type Env = { home: string; platform: string; version: string; cwd: string; data: string }
+
+// A message pushed to every copy of the app from the signed feed, no update needed. A toast sits in
+// the corner, a card is a designed pop-up for big news, a banner runs across the top of the page.
+export type Notice = {
+  id: string
+  kind: 'toast' | 'card' | 'banner'
+  title: string
+  body?: string
+  image?: string
+  action?: { label: string; url: string }
+  // Who sees it: versions from and to (inclusive), platforms, and a window in time.
+  from?: string
+  to?: string
+  platforms?: ('darwin' | 'win32' | 'linux')[]
+  after?: string
+  until?: string
+}
+
+export type UpdateState =
+  | { state: 'idle' | 'checking' | 'none' }
+  | { state: 'available'; version: string }
+  | { state: 'downloading'; version: string; progress: number }
+  | { state: 'ready'; version: string }
+  | { state: 'manual'; version: string; url: string }
+  | { state: 'error'; error: string }
+
+export type Report = { kind: 'bug' | 'idea' | 'question'; text: string; contact?: string; context?: string; diagnostics?: string }

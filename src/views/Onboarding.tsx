@@ -89,7 +89,7 @@ function Agents({ onNext, setLabel, setBusy }: { onNext: () => void; setLabel: (
       const all = (found as AgentInfo[] | null) ?? cached
       setList(all.filter((a) => a.via !== 'api').sort((a, b) => Number(b.found) - Number(a.found)))
       setBusy(false)
-    })
+    }).catch(() => { if (alive) { setList(cached.filter((a) => a.via !== 'api')); setBusy(false) } })
     return () => { alive = false }
   }, [])
   const rescan = () => desk.call('agents:refresh').then((all: AgentInfo[]) => {

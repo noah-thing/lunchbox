@@ -90,7 +90,7 @@ export const reload = {
 }
 
 export const isMac = /Mac/.test(navigator.platform)
-export const mod = isMac ? '⌘' : 'Ctrl '
+export const mod = isMac ? '⌘' : 'Ctrl+'
 export const machine = () => (state.env.platform === 'darwin' || (!isDesktop && isMac) ? 'this Mac' : 'this computer')
 
 export const ACCESS: { id: Access; name: string; line: string; level: number }[] = [

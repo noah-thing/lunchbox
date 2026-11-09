@@ -7,6 +7,7 @@ import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
 import { roomCard } from '../ui/roomcard'
+import { openReport } from '../lib/report'
 import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
 import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
@@ -174,6 +175,8 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
 
 function Title({ name, rename }: { name: string; rename: (n: string) => void }) {
   const [editing, setEditing] = useState(false)
+  // The room menu's Rename opens the same inline field as a double click.
+  useEffect(() => { const on = () => setEditing(true); addEventListener('lb:rename', on); return () => removeEventListener('lb:rename', on) }, [])
   const [value, setValue] = useState(name)
   useEffect(() => setValue(name), [name])
   if (!editing) return <h1 onDoubleClick={() => setEditing(true)} title="Double click to rename">{name}</h1>
@@ -199,6 +202,9 @@ function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: stri
           </button>
           <button className="item" onClick={async () => { close(); const c = await desk.call('room:fork', id, ''); if (c) open(c.id) }}>
             <span className="grow"><b>Fork room</b><span>Try another direction, keep this one as it is</span></span>
+          </button>
+          <button className="item" onClick={() => { close(); dispatchEvent(new Event('lb:rename')) }}>
+            <span className="grow"><b>Rename</b><span>{meta.name}</span></span>
           </button>
           <button className="item" onClick={() => { desk.call('room:mark', id, { pinned: !meta.pinned }); close(); say(meta.pinned ? 'Unpinned' : 'Pinned to the top of your rooms') }}>
             <span className="grow"><b>{meta.pinned ? 'Unpin' : 'Pin to top'}</b><span>Keep it above the rest of your rooms</span></span>
@@ -337,7 +343,9 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} />)
     last = t.who
   }
-  for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} /></Ev>)
+  // Only the first command waiting for an answer takes the keyboard, so one key never answers two.
+  const first = live?.runs.find((r) => r.state === 'asking')?.id
+  for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} keys={r.id === first} /></Ev>)
 
   return (
     <div className="transcript" ref={box}
@@ -392,7 +400,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
         <Ev id={e.id} mark={<Mark seed={a.mark} size={16} />} grouped={grouped} className="turn">
           {!grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
           {e.text && <Rich text={e.text} />}
-          {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}</div>}
+          {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}{e.error !== 'Stopped' && <button className="reportbtn" onClick={() => openReport({ context: `${a.short}: ${e.error}` })}>Report this</button>}</div>}
           <Acts acts={e.acts} />
           {e.proof?.map((p) => (
             <div key={p.claim} className={`proof${p.ok ? '' : ' bad'}`}><i />{p.ok ? 'Proved' : 'Not proved'}: {p.claim}<span>{p.text.replace(/`/g, '')}</span></div>
@@ -434,6 +442,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
         <Ev id={e.id} mark={<span className="gutdot" />} className="note">
           <span className="switch"><Mark seed={agentOf(e.from, agents).mark} size={12} /><i className="wire" />{e.to && <Mark seed={agentOf(e.to, agents).mark} size={12} />}</span>
           <span>{wallText(e, agents)}</span>
+          {!/limit|turned off|budget/.test(e.reason) && <button className="reportbtn" onClick={() => openReport({ context: wallText(e, agents) })}>Report this</button>}
         </Ev>
       )
     case 'decide': {
@@ -819,10 +828,10 @@ function Arena({ id, done, going, picked, agents, pick }: { id: string; done: Sa
 type RunView = { id?: string; command: string; cwd: string; state: LiveRun['state'] | 'done' | 'denied'; verdict?: Verdict; out: string; code?: number | null; ms?: number; how?: string }
 
 // A command in the room: what it is, what the mode made of it, and its output.
-function RunBlock({ run, answer, kill }: { run: RunView; answer?: Actions['answer']; kill?: Actions['kill'] }) {
+function RunBlock({ run, answer, kill, keys = true }: { run: RunView; answer?: Actions['answer']; kill?: Actions['kill']; keys?: boolean }) {
   const asking = run.state === 'asking'
   useEffect(() => {
-    if (!asking || !answer || !run.id) return
+    if (!asking || !answer || !run.id || !keys) return
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'TEXTAREA') return
       // ⌘Enter runs it, so pressing Enter on some other button never approves a command.
@@ -831,7 +840,7 @@ function RunBlock({ run, answer, kill }: { run: RunView; answer?: Actions['answe
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
-  }, [asking, run.id, answer])
+  }, [asking, run.id, answer, keys])
   const failed = run.state === 'done' && run.code !== 0
   const v = run.verdict
   const status =

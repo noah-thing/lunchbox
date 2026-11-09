@@ -90,7 +90,8 @@ export function prompt(meta: RoomMeta, events: Event[], me: string, task: string
     if (size + l.length > BUDGET && size > 0) break
     size += l.length
   }
-  if (start > 0) start = Math.min(lines.length, Math.ceil(start / STEP) * STEP)
+  // Rounded to steps so the cached prefix stays put, but never past the newest line.
+  if (start > 0) start = Math.min(Math.max(0, lines.length - 1), Math.ceil(start / STEP) * STEP)
   const history = lines.slice(start).filter((l): l is string => !!l)
   const head = history.length ? `${resumed ? 'Since your last turn' : start ? 'The conversation so far, latest part' : 'The conversation so far'}:` : ''
   const tail = [

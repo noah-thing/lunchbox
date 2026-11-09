@@ -61,7 +61,10 @@ export function launch(path: string, args: string[], options: SpawnOptions) {
   return spawn(path, args, { ...options, windowsHide: true })
 }
 
-export function stop(child: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }) {
-  if (isWin && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true })
-  else child.kill('SIGTERM')
+// Stop asks politely, then insists: a process that ignores SIGTERM, or left children behind, is
+// killed after three seconds so nothing keeps running or holds the room's queue.
+export function stop(child: { pid?: number; exitCode?: number | null; kill: (s?: NodeJS.Signals) => boolean }) {
+  if (isWin && child.pid) return void spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true })
+  child.kill('SIGTERM')
+  setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL') }, 3000).unref?.()
 }

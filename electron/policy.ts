@@ -35,12 +35,13 @@ const DANGER: [RegExp, string][] = [
 
 const NETWORK = /\b(curl|wget|ssh|scp|rsync|nc|ftp|git\s+(push|pull|fetch|clone)|npm\s+(i|install|ci|publish|add|update)|npx\s|pnpm\s+(i|install|add)|yarn(\s+add|\s+install|\s*$)|bun\s+(add|install)|pip3?\s+install|uv\s+(add|pip)|brew\s+(install|upgrade)|gh\s|vercel\b|docker\s+(pull|push)|invoke-webrequest|iwr\s|invoke-restmethod|winget\s+install|choco\s+install|scoop\s+install)/i
 
-const READ = new Set(['ls', 'cat', 'pwd', 'head', 'tail', 'wc', 'grep', 'rg', 'which', 'echo', 'printf', 'du', 'df', 'file', 'stat', 'tree', 'date', 'whoami', 'uname', 'env', 'less', 'diff', 'sort', 'uniq', 'cut', 'jq', 'true', 'type', 'command', 'basename', 'dirname', 'realpath', 'sw_vers', 'uptime', 'dir', 'where', 'findstr', 'ver', 'get-childitem', 'gci', 'get-content', 'gc', 'get-location'])
+const READ = new Set(['ls', 'cat', 'pwd', 'head', 'tail', 'wc', 'grep', 'rg', 'which', 'echo', 'printf', 'du', 'df', 'file', 'stat', 'tree', 'date', 'whoami', 'uname', 'env', 'less', 'diff', 'cut', 'jq', 'true', 'type', 'basename', 'dirname', 'realpath', 'sw_vers', 'uptime', 'dir', 'where', 'findstr', 'ver', 'get-childitem', 'gci', 'get-content', 'gc', 'get-location'])
 const READ_GIT = /^git\s+(status|diff|log|show|branch|remote\s+-v|rev-parse|ls-files|blame|describe|tag\s*$)/
 const VERSION = /^\S+\s+(-v|--version|-V|version)\s*$/
 
 function segments(command: string) {
-  return command.split(/&&|\|\||;|\||\n/).map((s) => s.trim()).filter(Boolean)
+  // A single & starts a second command as surely as && does.
+  return command.split(/&&|\|\||;|\||&|\r|\n/).map((s) => s.trim()).filter(Boolean)
 }
 
 function isRead(segment: string) {
@@ -52,7 +53,8 @@ function isRead(segment: string) {
   const [first, ...rest] = segment.split(/\s+/)
   const head = first.toLowerCase()
   if (head === 'find') return !rest.some((a) => /^-(delete|exec|execdir|ok)$/.test(a))
-  if (head === 'sed') return !rest.some((a) => /^-i/.test(a))
+  if (head === 'sed') return !rest.some((a) => /^-i/.test(a)) && !/(^|;)\s*\d*\s*[ew]\b|'\d*[ew]/.test(rest.join(' '))
+  if (head === 'rg') return !rest.some((a) => /^--pre/.test(a))
   return READ.has(head)
 }
 
@@ -96,7 +98,9 @@ export function decide(access: Access, command: string, cwd: string, root: strin
   const { kind, reason } = classify(command, cwd, root)
   if (kind === 'blocked') return { kind, decision: 'deny', reason }
   if (access === 'plan' && kind !== 'read') return { kind, decision: 'deny', reason: `${reason}, and Plan only reads` }
-  if (AUTO[access].includes(kind) || (kind !== 'danger' && remembered.has(prefix(command)))) return { kind, decision: 'allow', reason }
+  // "Always" covers the same simple command again, never a longer chain that starts like it.
+  const simple = segments(command).length === 1 && !/[`$<>]|\$\(/.test(command)
+  if (AUTO[access].includes(kind) || (kind !== 'danger' && simple && remembered.has(prefix(command)))) return { kind, decision: 'allow', reason }
   return { kind, decision: 'ask', reason }
 }
 

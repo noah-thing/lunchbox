@@ -78,7 +78,15 @@ export class Browser {
     const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:browser', backgroundThrottling: false } })
     view.setBackgroundColor('#00000000')
     const wc = view.webContents
-    wc.setWindowOpenHandler(({ url }) => { wc.loadURL(url); return { action: 'deny' } })
+    // Pages open new windows in the same view, and only on the web: never file:, app or
+    // javascript: schemes, whether a person clicks or a page or an agent asks.
+    const web = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(169\.254\.|0\.0\.0\.0|\[?::\]?)/i.test(u)
+    wc.setWindowOpenHandler(({ url }) => { if (web(url)) wc.loadURL(url); return { action: 'deny' } })
+    wc.on('will-navigate', (e, url) => { if (!web(url)) e.preventDefault() })
+    wc.on('will-redirect', (e, url) => { if (!web(url)) e.preventDefault() })
+    // Camera, microphone, location, notifications: no page in the agent browser gets them.
+    wc.session.setPermissionRequestHandler((_w, _p, done) => done(false))
+    wc.session.setPermissionCheckHandler(() => false)
     for (const e of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'] as const) wc.on(e as 'did-start-loading', () => this.changed())
     win.contentView.addChildView(view)
     this.view = view

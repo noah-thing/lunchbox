@@ -113,6 +113,10 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <Toggle on={settings.planLimits !== false} set={(v) => reload.settings({ planLimits: v })} label="Plan limits" />
           </div>
           <div className="setting">
+            <div className="grow"><b>Install updates automatically</b><span>New versions download in the background and install when you restart. Off, Lunchbox still tells you when one is out.</span></div>
+            <Toggle on={settings.autoUpdate !== false} set={(v) => reload.settings({ autoUpdate: v })} label="Install updates automatically" />
+          </div>
+          <div className="setting">
             <div className="grow"><b>Checkpoints</b><span>Save the folder before every message so any change can be rewound. Kept outside the project, in its own history.</span></div>
             <Toggle on={settings.snapshots !== false} set={(v) => reload.settings({ snapshots: v })} label="Checkpoints" />
           </div>

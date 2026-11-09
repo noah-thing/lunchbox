@@ -297,6 +297,11 @@ export class Engine {
     return copy
   }
 
+  // Quitting the app stops every agent and command, so nothing keeps editing files afterwards.
+  stopAll() {
+    for (const room of this.lives.keys()) this.stop(room)
+  }
+
   // Stopping is instant from the user's side: what each agent wrote so far lands in the room now
   // and the live turns clear, while the processes are killed and exit in their own time.
   stop(room: string) {
@@ -365,6 +370,7 @@ export class Engine {
       if (arena) {
         const id = uid()
         const crew = meta.crew.filter((c) => !this.why(c))
+        if (!crew.length) this.add(room, { kind: 'note', tone: 'warn', text: 'Nobody in the crew can answer right now. Each agent is out, turned off or over its budget; see Pool for when they are back.' })
         await Promise.all(crew.map((who) => this.turn(room, who, { kind: 'reply' }, access, { ...ctx, arena: id })))
       } else {
         await this.conversation(room, lead, { kind: 'reply' }, access, ctx)
@@ -529,7 +535,8 @@ export class Engine {
     if (!crew.some((a) => a.id === who)) crew.unshift(me)
     const pack = this.hooks.packs().find((p) => p.id === meta.pack)
     const session = meta.sessions[who]
-    const resumed = !!session && me.via === 'cli' && who !== 'gemini'
+    // Only the CLIs Lunchbox knows how to resume get a delta; a connector always gets the whole room.
+    const resumed = !!session && ['claude', 'codex', 'grok'].includes(who)
     const events = this.store.events(room)
     const p = prompt(meta, events, who, this.task(task), this.name, resumed)
     this.store.update(room, (m) => {
@@ -565,7 +572,10 @@ export class Engine {
         // The loop guard: the same command failing three times means the agent is going round in
         // circles, spending the plan. Stop the turn and let the person decide.
         for (const a of u.acts) {
-          if (a.t !== 'cmd' || a.exit === 0 || a.exit === null) continue
+          // An edit in between means the agent is fixing, not looping; a pass clears the count.
+          if (a.t === 'edit') { fails.clear(); continue }
+          if (a.t !== 'cmd' || a.exit === null) continue
+          if (a.exit === 0) { fails.delete(a.command); continue }
           const n = (fails.get(a.command) ?? 0) + 1
           fails.set(a.command, n)
           if (n >= LOOP && !looped) { looped = a.command; running.stop() }
@@ -584,7 +594,10 @@ export class Engine {
     if (live.active === who) live.active = live.turns[live.turns.length - 1]?.who ?? null
     this.changed(room)
     if (looped) {
-      this.flushed.add(lt.id)
+      this.store.record(who, room, r.usage)
+      this.hooks.emit('ledger', this.ledger())
+      if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
+      this.flushed.delete(lt.id)
       this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts.length ? r.acts : lt.acts, usage: r.usage, ms: r.ms })
       const other = this.fallback(meta, who)
       this.add(room, {

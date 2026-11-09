@@ -34,7 +34,7 @@ function morph(box: HTMLElement, clip: HTMLElement, glow: HTMLElement, rows: HTM
 export type Command = { label: string; hint: string; group: 'Rooms' | 'Go to' | 'Actions' | 'Skills' | 'Flows'; run: () => void }
 type Item = { key: string; label: string; hint: string; group: string; run: () => void }
 
-const GROUPS = ['Rooms', 'Messages', 'Skills', 'Go to', 'Actions']
+const GROUPS = ['Rooms', 'Messages', 'Skills', 'Flows', 'Go to', 'Actions']
 
 export function Palette({ commands, close, openHit, anchor }: { commands: Command[]; close: () => void; openHit: (h: Hit) => void; anchor?: RefObject<HTMLElement | null> }) {
   const [q, setQ] = useState('')

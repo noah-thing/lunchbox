@@ -11,7 +11,7 @@ export const CLAIMS: Claim[] = [
   { id: 'build', label: 'the build works', said: /\bbuild(s|ing)?\b[^.\n]{0,30}\b(pass(es|ed)?|succeed(s|ed)?|works|is clean|green|fine)\b|\bbuilds\s+(cleanly|fine)\b/i, ran: /\bbuild\b|\btsc\b|\bmake\b|cargo build|go build/i },
   { id: 'types', label: 'the types check', said: /\b(type ?check(s|ing)?|types?)\b[^.\n]{0,30}\b(pass(es)?|clean|no errors)\b/i, ran: /\btsc\b|typecheck|mypy|pyright|vue-tsc/i },
   { id: 'lint', label: 'lint is clean', said: /\blint(s|ing|er)?\b[^.\n]{0,30}\b(pass(es)?|clean|no (errors|warnings))\b/i, ran: /\blint\b|eslint|ruff|flake8|clippy|biome|golangci/i },
-  { id: 'pushed', label: 'it is pushed', said: /\b(i(?:'ve| have)?\s+)?pushed\b(?![^.\n]{0,20}\b(yet|later|soon)\b)|\bis (now )?(on|up on) (github|gitlab|the remote)\b/i, ran: /\bgit\s+push\b/i },
+  { id: 'pushed', label: 'it is pushed', said: /\b(i(?:'ve| have)?\s+)?pushed\b(?![^.\n]{0,20}\b(yet|later|soon)\b)|\bis (now )?(on|up on) (github|gitlab|the remote)\b/i, ran: /\bgit\b(?![^|;&\n]*--dry-run)[^|;&\n]*\bpush\b/i },
   { id: 'lighthouse', label: 'the Lighthouse score', said: /\blighthouse\b[^.\n]{0,40}\b(\d{2,3}|perfect|green|pass(es)?)\b/i, ran: /lighthouse|lhci/i },
 ]
 
@@ -32,12 +32,16 @@ export function history(events: Event[]) {
   return steps
 }
 
+// "I couldn't get the tests to pass" or "haven't pushed yet" is not a claim.
+const DENIED = /(\bnot|n't|\bnever|\bcould not|\bcannot|\bunable|\bfail(s|ed)? to|\byet to|\bno longer)\b[^.\n]{0,40}$/i
+
 export function check(text: string, events: Event[]): Proof[] {
   const steps = history(events)
   const lastEdit = steps.filter((s) => s.edit).pop()?.seq ?? -1
   const out: Proof[] = []
   for (const c of CLAIMS) {
-    if (!c.said.test(text)) continue
+    const hit = text.match(c.said)
+    if (!hit || DENIED.test(text.slice(Math.max(0, hit.index! - 60), hit.index!)) || /^\S*\s*pushed (back|through|aside|out)\b/i.test(text.slice(hit.index!, hit.index! + 30))) continue
     const runs = steps.filter((s) => s.command && c.ran.test(s.command))
     const after = runs.filter((s) => s.seq > lastEdit)
     const passed = after.filter((s) => s.exit === 0).pop()

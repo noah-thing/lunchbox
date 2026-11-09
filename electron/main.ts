@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
-import type { Access, Connector, Flow, Settings, Skill } from '../shared/types'
+import type { Access, Connector, Flow, Report, Settings, Skill } from '../shared/types'
 import { installed, modelsFor, testConnector, useConnectors } from './agents'
 import { markdown, replay } from './export'
 import { Flows } from './flows'
@@ -13,6 +13,8 @@ import { Remote } from './remote'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
 import { resetPath } from './system'
+import { Updates } from './updates'
+import { catchErrors, diagnostics, flush, logError, send } from './report'
 import { Snapshots } from './snap'
 import { Browser, type Device } from './browser'
 import { Toolbox } from './tools'
@@ -41,6 +43,7 @@ let flows: Flows
 let remote: Remote
 let browser: Browser
 let toolbox: Toolbox
+let updates: Updates | undefined
 const packs = () => loadPacks(store.packFiles())
 const name = (id: string) => engine.agents.find((a) => a.id === id)?.short ?? id
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'room'
@@ -233,6 +236,7 @@ function wire() {
   h('settings:set', async (patch: Partial<Settings>) => {
     store.saveSettings(patch)
     if (patch.connectors) useConnectors(store.settings.connectors)
+    if (patch.autoUpdate !== undefined) updates?.setAuto(patch.autoUpdate)
     if (patch.models || patch.disabled || patch.connectors) await engine.refresh()
     if (patch.budgets) emit('ledger', engine.ledger())
     return store.settings
@@ -244,6 +248,15 @@ function wire() {
     return engine.refresh()
   })
   h('keys:secure', () => safeStorage.isEncryptionAvailable())
+  h('update', () => updates?.state)
+  h('update:check', () => updates?.check())
+  h('update:install', () => updates?.install())
+  h('update:download', () => updates?.download())
+  h('notices', () => updates?.shown() ?? [])
+  h('notice:dismiss', (id: string) => updates?.dismiss(String(id)))
+  h('report:diagnostics', () => diagnostics(engine.agents))
+  h('report:send', (r: Report) => send(r, store.dir))
+  h('error:log', (message: string) => logError('window', String(message).slice(0, 4000)))
   h('connector:test', (c: Connector, key: string) => testConnector(c, key ?? ''))
   h('connector:installed', (bins: string[]) => installed(Array.isArray(bins) ? bins : []))
   h('packs', () => packs())
@@ -299,6 +312,8 @@ function wire() {
   })
 }
 
+catchErrors()
+
 app.whenReady().then(async () => {
   store = new Store(join(app.getPath('userData'), 'data'), cipher)
   const hands = new Hands()
@@ -318,12 +333,15 @@ app.whenReady().then(async () => {
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
   useConnectors(store.settings.connectors)
   createWindow()
+  updates = new Updates(store, emit)
+  updates.start()
+  flush(store.dir).catch(() => {})
   await engine.refresh()
   limits.start()
   flows.start()
   remote.start()
   toolbox.startAll()
 })
-app.on('before-quit', () => { limits?.stop(); flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
+app.on('before-quit', () => { engine?.stopAll(); limits?.stop(); flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
 app.on('window-all-closed', () => { if (!mac) app.quit() })
 app.on('activate', () => { if (!win) createWindow() })

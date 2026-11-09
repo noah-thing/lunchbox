@@ -97,10 +97,11 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .sidebar{display:flex;flex-direction:column;padding:0 8px 8px;min-height:0}
 .sbtop{height:44px;flex:none;-webkit-app-region:drag}
 /* The name row heads the sidebar: mark over the icon column, name over the labels. */
-.sbbrand{display:flex;align-items:center;gap:8px;height:30px;margin:-4px 0 10px;padding:0 8px;border-radius:6px;font-size:13.5px;color:var(--ink);transition:background-color 140ms var(--out)}
-.sbbrand b{font-weight:600;letter-spacing:-.01em}
-.sbbrand .logo{flex:none}
-@media (hover:hover){.sbbrand:hover{background:var(--hover)}}
+.sbbrand{display:flex;align-items:center;gap:6px;height:30px;margin:-4px 0 10px;padding-right:6px}
+.sbhome{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px;font-size:13.5px;color:var(--ink);transition:background-color 140ms var(--out)}
+.sbhome b{font-weight:600;letter-spacing:-.01em}
+.sbhome .logo{flex:none}
+@media (hover:hover){.sbhome:hover{background:var(--hover)}}
 .oblogo{display:block;margin-bottom:22px;color:var(--ink)}
 .about{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12.5px;color:var(--faint)}
 .about b{font-weight:500;color:var(--dim)}
@@ -431,6 +432,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .plist small{margin-left:auto;flex:none;max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:11px var(--mono);color:var(--faint)}
 .plist .empty{padding:20px 12px;color:var(--faint);text-align:center}
 .toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:var(--ink);color:var(--ground);font-size:12.5px;animation:toast 2.6s var(--out) both}
+.toast.long{animation:land 260ms var(--out) both;display:flex;align-items:center;max-width:min(620px,calc(100vw - 48px))}
+.toast .reportbtn{color:var(--ground);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ground) 30%,transparent);flex:none}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,6px)}8%,88%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
 
 /* Live rooms */
@@ -719,3 +722,43 @@ textarea:focus-visible,input:focus-visible{outline:0}
 /* The message j and k landed on: a quiet bar in the gutter. */
 .kfocus{position:relative}
 .kfocus::before{content:"";position:absolute;left:-14px;top:2px;bottom:2px;width:2px;border-radius:1px;background:var(--ink);opacity:.5}
+
+/* Pushed messages and updates: a banner over the page, toasts in the corner, a card for big news. */
+.nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:land 320ms var(--out) both}
+.nbanner b{font-weight:500}
+.nbanner span span{color:var(--dim)}
+.ntoasts{position:fixed;top:14px;right:14px;z-index:46;display:flex;flex-direction:column;gap:8px;width:320px}
+.ntoast{display:flex;align-items:flex-start;gap:8px;padding:12px 8px 12px 14px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:land 320ms var(--out) both}
+.ntoast b{font-weight:500}
+.ntoast p{margin-top:3px;font-size:12.5px;line-height:1.45;color:var(--dim)}
+.ntoast .linkbtn{margin-top:6px}
+.ncard{position:relative;width:min(480px,calc(100vw - 48px));border-radius:16px;overflow:hidden;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 30px 80px -10px rgba(0,0,0,.6);animation:menu 320ms var(--out) both}
+.ncard img{display:block;width:100%;max-height:260px;object-fit:cover}
+.ncard .nclose{position:absolute;top:10px;right:10px;background:color-mix(in srgb,var(--sheet) 80%,transparent)}
+.ncard .nbody{display:flex;flex-direction:column;gap:10px;padding:20px 22px 18px}
+.ncard h2{font-size:19px;font-weight:500;letter-spacing:-.015em}
+.ncard p{font-size:13.5px;line-height:1.55;color:var(--dim)}
+.linkbtn{padding:0;font-size:12.5px;color:var(--ink);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px}
+/* The beta tag in the name row, and the report sheet it opens. */
+.sbbeta{margin-left:auto;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:500;letter-spacing:.02em;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2);transition:color 140ms var(--out),box-shadow 140ms var(--out)}
+@media (hover:hover){.sbbeta:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--faint)}}
+.report .quiet{font-size:12.5px;color:var(--faint);margin-top:2px}
+.report .kinds{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.report .kinds button{height:34px;border-radius:9px;font-size:12.5px;box-shadow:inset 0 0 0 1px var(--line);transition:box-shadow 140ms var(--out),background-color 140ms var(--out)}
+.report .kinds button b{font-weight:500}
+.report .kinds button.on{box-shadow:inset 0 0 0 1px var(--ink);background:var(--hover)}
+.report .field{max-width:none}
+.report textarea{padding:9px 10px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line2);font:13px/1.5 var(--sans);resize:vertical;min-height:92px}
+.report textarea:focus{box-shadow:inset 0 0 0 1px var(--ink)}
+.reportctx{max-height:140px;overflow:auto;padding:10px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:11.5px/1.5 var(--mono);color:var(--dim);white-space:pre-wrap;word-break:break-word}
+.attachline{display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--dim)}
+.attachline label{display:flex;align-items:center;gap:7px}
+.reportbtn{margin-left:8px;padding:0 8px;height:22px;border-radius:6px;font-size:11.5px;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2);vertical-align:1px}
+@media (hover:hover){.reportbtn:hover{color:var(--ink)}}
+
+/* The room title takes clicks and a caret even though the header drags the window. */
+.roomhead h1,.roomhead input{-webkit-app-region:no-drag}
+/* Windows and Linux draw their window buttons over the top right; keep header buttons clear. */
+html[data-platform=win32] .roomhead,html[data-platform=linux] .roomhead,
+html[data-platform=win32] .panelhead,html[data-platform=linux] .panelhead,
+html[data-platform=win32] .bbar,html[data-platform=linux] .bbar{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)}

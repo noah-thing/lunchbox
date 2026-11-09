@@ -9,7 +9,7 @@ type Hooks = {
   defaults(): { crew: string[]; workspace: string }
 }
 
-type Msg = { message_id: number; chat: { id: number; first_name?: string; username?: string }; text?: string }
+type Msg = { message_id: number; chat: { id: number; type?: string; first_name?: string; username?: string }; text?: string }
 type Update = { update_id: number; message?: Msg; callback_query?: { id: string; data?: string; message?: Msg } }
 
 export type RemoteStatus = { on: boolean; token: boolean; paired: boolean; name?: string; bot?: string; code: string; error?: string }
@@ -118,7 +118,7 @@ export class Remote {
   private async handle(u: Update) {
     if (u.callback_query) {
       const q = u.callback_query
-      if (q.message?.chat.id !== this.conf.chat) return
+      if (!q.message || !this.conf.chat || q.message.chat.id !== this.conf.chat) return
       const [kind, room, ref, i] = (q.data ?? '').split(':')
       if (kind === 'd') this.engine.decide(room, ref, Number(i), this.access)
       if (kind === 'r') { this.room = room; await this.reply(this.conf.chat, `Now talking to “${this.store.room(room)?.name ?? 'that room'}”.`) }
@@ -129,6 +129,8 @@ export class Remote {
     if (!m?.text) return
     const text = m.text.trim()
     if (!this.conf.chat) {
+      // Only a private chat can pair, so a group the bot sits in never gets control.
+      if (m.chat.type && m.chat.type !== 'private') return
       // Six digits can be guessed; five wrong tries end pairing until a new code is made.
       if (this.tries >= 5) return
       if (text.replace(/^\/start\s*/, '') === this.code) {

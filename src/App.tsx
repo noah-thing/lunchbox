@@ -12,6 +12,10 @@ import { Settings } from './views/Settings'
 import { Flows } from './views/Flows'
 import { Pool } from './views/Pool'
 import { WaitingPage } from './views/Waiting'
+import { ReportSheet } from './views/Report'
+import { Notices } from './ui/Notices'
+import { Guard } from './ui/Guard'
+import { openReport, type ReportOpen } from './lib/report'
 import { Savings } from './views/Savings'
 import { Library } from './views/Library'
 import { Browser, useBrowser } from './views/Browser'
@@ -54,6 +58,9 @@ function reveal(change: () => void, at?: { x: number; y: number }) {
   t.finished.finally(() => root.classList.remove('revealing'))
 }
 
+// A toast that reports a failure keeps its Report this button and stays a little longer.
+const failure = (t: string) => /\b(fail(ed|s)?|error|could ?n[o']t|cannot|can't|not found|denied|refused|unable|timed out|crash)/i.test(t)
+
 export function App() {
   const [theme, setThemeState] = useState<'dark' | 'light'>(saved('theme', 'dark'))
   const [look, setLookState] = useState<Look>(() => (new URLSearchParams(location.search).get('look') as Look | null) ?? saved('look', 'lunchbox'))
@@ -63,6 +70,12 @@ export function App() {
   const [view, setView] = useState<View>({ name: 'new' })
   const [palette, setPalette] = useState(false)
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
+  const [report, setReport] = useState<ReportOpen | null>(null)
+  useEffect(() => {
+    const open = (e: Event) => setReport((e as CustomEvent<ReportOpen>).detail ?? {})
+    addEventListener('lb:report', open)
+    return () => removeEventListener('lb:report', open)
+  }, [])
   const [access, setAccessState] = useState<Access>(saved('access', 'workspace'))
   const [workspace, setWorkspaceState] = useState<string>(saved('workspace', ''))
   const loaded = useApp((s) => s.loaded)
@@ -89,6 +102,7 @@ export function App() {
     desk.call('theme', theme === 'dark')
   }, [theme])
   useLayoutEffect(() => { document.documentElement.dataset.look = look; keep('look', look) }, [look])
+  useLayoutEffect(() => { document.documentElement.dataset.platform = /^Win/.test(navigator.platform) ? 'win32' : /Mac/.test(navigator.platform) ? 'darwin' : 'linux' }, [])
   const searchButton = useRef<HTMLButtonElement>(null)
   const listed = useRef(new Set<string>())
   const first = useRef(true)
@@ -108,7 +122,7 @@ export function App() {
   const say = useCallback((text: string) => setToast({ text, id: Date.now() }), [])
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), 2800)
+    const t = setTimeout(() => setToast(null), toast && failure(toast.text) ? 7000 : 2800)
     return () => clearTimeout(t)
   }, [toast])
 
@@ -186,7 +200,10 @@ export function App() {
     <div className={`app${arriving ? ' arriving' : ''}`}>
       <aside className="sidebar">
         <div className="sbtop" />
-        <button className="sbbrand" onClick={() => go({ name: 'new' })} title="Home"><Logo size={16} /><b>Lunchbox</b></button>
+        <div className="sbbrand">
+          <button className="sbhome" onClick={() => go({ name: 'new' })} title="Home"><Logo size={16} /><b>Lunchbox</b></button>
+          <button className="sbbeta" onClick={() => openReport()} title="Lunchbox is in beta. Tell us what breaks and what you want.">Beta</button>
+        </div>
         <button className={`sbitem${on('new') ? ' on' : ''}`} onClick={() => go({ name: 'new' })}>{on('new') && sel}<IconPlus />New room<kbd>{mod}N</kbd></button>
         <button ref={searchButton} className={`sbitem${palette ? ' on' : ''}`} onClick={() => openPalette(true)}><IconSearch />Search<kbd>{mod}K</kbd></button>
         <div className="sbgap" />
@@ -224,11 +241,12 @@ export function App() {
       </aside>
 
       <main className="sheet">
+        <Guard key={view.name}>
         {/* Pages scroll, so only a strip along the top moves the window. A scroll area that is
             also a drag region swallows the wheel on macOS. */}
         {!['room', 'browser', 'new'].includes(view.name) && <div className="sheetdrag" aria-hidden="true" />}
         {view.name === 'room' && <RoomView key={view.id} id={view.id} focus={view.focus} access={access} setAccess={setAccess} open={(id) => go({ name: 'room', id })} say={say} />}
-        {view.name === 'new' && <NewRoom key={view.skill?.id ?? view.pack ?? 'new'} skill={view.skill} pack={view.pack} text={view.text} onCreated={(id) => go({ name: 'room', id })} go={go} access={access} setAccess={setAccess} workspace={workspace} setWorkspace={setWorkspace} />}
+        {view.name === 'new' && <NewRoom key={view.skill?.id ?? view.pack ?? 'new'} skill={view.skill} pack={view.pack} text={view.text} onCreated={(id) => go({ name: 'room', id })} go={go} say={say} access={access} setAccess={setAccess} workspace={workspace} setWorkspace={setWorkspace} />}
         {view.name === 'agents' && <Agents say={say} />}
         {view.name === 'flows' && <Flows key={view.edit ?? view.template ?? 'list'} edit={view.edit} template={view.template} go={go} say={say} workspace={workspace || env.cwd} />}
         {view.name === 'pool' && <Pool go={go} say={say} />}
@@ -237,10 +255,18 @@ export function App() {
         {view.name === 'library' && <Library go={go} say={say} />}
         {view.name === 'browser' && <Browser say={say} covered={palette} />}
         {view.name === 'settings' && <Settings theme={theme} setTheme={setTheme} look={look} setLook={setLook} say={say} restart={() => flow(() => { keep('ready', false); setReady(false) })} />}
+        </Guard>
       </main>
 
+      <Notices />
+      {report && <ReportSheet open={report} close={() => setReport(null)} say={say} />}
       {palette && <Palette commands={commands} close={() => openPalette(false)} openHit={openHit} anchor={searchButton} />}
-      {toast && <div key={toast.id} className="toast">{toast.text}</div>}
+      {toast && (
+        <div key={toast.id} className={`toast${failure(toast.text) ? ' long' : ''}`}>
+          {toast.text}
+          {failure(toast.text) && <button className="reportbtn" onClick={() => openReport({ context: toast.text })}>Report this</button>}
+        </div>
+      )}
     </div>
   )
 }
