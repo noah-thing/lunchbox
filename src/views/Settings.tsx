@@ -108,6 +108,10 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <Toggle on={settings.notify} set={(v) => reload.settings({ notify: v })} label="Notifications" />
           </div>
           <div className="setting">
+            <div className="grow"><b>Plan limits</b><span>Read how much of each plan is left from the login its own tool already has. The login only ever goes to the company that issued it.</span></div>
+            <Toggle on={settings.planLimits !== false} set={(v) => reload.settings({ planLimits: v })} label="Plan limits" />
+          </div>
+          <div className="setting">
             <div className="grow"><b>Checkpoints</b><span>Save the folder before every message so any change can be rewound. Kept outside the project, in its own history.</span></div>
             <Toggle on={settings.snapshots !== false} set={(v) => reload.settings({ snapshots: v })} label="Checkpoints" />
           </div>

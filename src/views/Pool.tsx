@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from 'react'
 import { CATEGORIES, rating } from '../../shared/route'
-import type { AgentInfo, Usage } from '../../shared/types'
+import type { AgentInfo, PlanWindow, Usage } from '../../shared/types'
 import { Mark, Meter } from '../ui/bits'
 import { IconShare } from '../ui/icons'
 import { clock, desk, money, now, reason, reload, tokens, unavailable, useApp } from '../lib/desk'
@@ -41,7 +41,7 @@ export function Pool({ go, say }: { go: (v: View) => void; say: (t: string) => v
         </section>
 
         <section className="group rise" style={{ '--i': 3 } as CSSProperties}>
-          <h2>Allowance<span className="quiet">what each agent has left today</span></h2>
+          <h2>Allowance<span className="quiet">what each plan has left, from the providers themselves</span></h2>
           <div className="settings">
             {present.map((a) => <Allowance key={a.id} a={a} />)}
             {!present.length && <div className="setting"><span className="grow">No agents yet.</span><button className="btn small quiet" onClick={() => go({ name: 'agents' })}>Connect agents</button></div>}
@@ -94,24 +94,62 @@ function Days({ days }: { days: { day: string; cost: number; tokens: number }[] 
 
 function Allowance({ a }: { a: AgentInfo }) {
   const ledger = useApp((s) => s.ledger)
+  const limits = useApp((s) => s.limits[a.id])
   const budget = useApp((s) => s.settings.budgets[a.id] ?? 0)
   const used = ledger?.today[a.id]
   const spent = ledger?.spent[a.id]
   const why = unavailable(a)
   const out = spent && spent.until > Date.now()
+  const windows = limits?.windows ?? []
   const left = budget > 0 ? Math.max(0, 1 - (used?.cost ?? 0) / budget) : out ? 0 : 1
+  const via = a.via === 'cli' ? (limits?.plan ? `${limits.plan} plan` : 'Your plan') : a.via === 'local' ? 'This computer, free' : 'Your API key'
+  const line = why && !out ? why : `${via}${used ? ` · ${tokens(used.input + used.output + used.cached)} tokens today` : ' · nothing used today'}`
   return (
     <div className="setting allowance">
       <Mark seed={a.mark} size={20} />
       <div className="grow">
         <b>{a.name}</b>
-        <span>{why && !out ? why : `${a.via === 'cli' ? 'Your plan' : a.via === 'local' ? 'This computer, free' : 'Your API key'}${used ? ` · ${money(used.cost)} · ${tokens(used.input + used.output)} tokens today` : ' · nothing used today'}`}</span>
+        <span>{line}</span>
+        {limits?.error && !windows.length && <span className="limitnote">{limits.error}</span>}
       </div>
-      <span className={`state${why ? out ? ' warn' : ' off' : ''}`}>{out ? `Back at ${clock(spent!.until)}` : why ? 'Unavailable' : 'Ready'}</span>
-      <Meter value={left} cells={16} tone={left < 0.2 ? 'warn' : undefined} />
-      <span className="mono quiet amount">{budget > 0 ? `${money(budget)}/day` : 'no cap'}</span>
+      {windows.length ? (
+        <div className="windows">
+          {windows.map((w) => <WindowRow key={w.id} w={w} stale={limits?.stale} at={limits?.at} />)}
+        </div>
+      ) : (
+        <>
+          <span className={`state${why ? out ? ' warn' : ' off' : ''}`}>{out ? `Back at ${clock(spent!.until)}` : why ? 'Unavailable' : 'Ready'}</span>
+          <Meter value={left} cells={16} tone={left < 0.2 ? 'warn' : undefined} />
+          <span className="mono quiet amount">{budget > 0 ? `${money(budget)}/day` : a.via === 'api' ? 'no cap' : a.via === 'local' ? 'free' : 'no limits'}</span>
+        </>
+      )}
     </div>
   )
+}
+
+// One plan window: what is left, when it resets, and what the whole window holds once measured.
+function WindowRow({ w, stale, at }: { w: PlanWindow; stale?: boolean; at?: number }) {
+  const left = Math.max(0, 1 - w.used)
+  const tip = w.tokens
+    ? `About ${tokens(w.tokens)} tokens fit in this window, measured from ${w.samples} steps of your own turns. Use of the same plan elsewhere at the same time makes this read low.`
+    : `Lunchbox measures how many tokens this window holds as the percentage moves during your turns. ${w.samples ? `${w.samples} of 3 steps so far.` : 'No steps yet.'}`
+  return (
+    <div className="window" title={stale && at ? `As of the last Codex run, ${clock(at)}` : undefined}>
+      <span className="wlabel">{w.label}</span>
+      <Meter value={left} cells={14} tone={left < 0.15 ? 'warn' : undefined} />
+      <span className="wleft">{Math.round(left * 100)}% left</span>
+      <span className="wreset">{w.resets ? `resets ${when(w.resets)}` : ''}</span>
+      <span className="wtotal" title={tip}>{w.tokens ? `≈ ${tokens(w.tokens)}` : 'measuring'}</span>
+    </div>
+  )
+}
+
+function when(t: number) {
+  const d = new Date(t)
+  const today = new Date()
+  if (d.toDateString() === today.toDateString()) return clock(t)
+  if (t - Date.now() < 6 * 86400e3) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${clock(t)}`
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 function Ratings({ agents }: { agents: AgentInfo[] }) {

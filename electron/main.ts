@@ -17,6 +17,7 @@ import { Browser, type Device } from './browser'
 import { Toolbox } from './tools'
 import { Store, type Cipher } from './store'
 import { cancelPull, pull, start } from './local'
+import { Limits } from './limits'
 
 app.setName('Lunchbox')
 
@@ -34,6 +35,7 @@ const cipher: Cipher = {
 
 let store: Store
 let engine: Engine
+let limits: Limits
 let flows: Flows
 let remote: Remote
 let browser: Browser
@@ -112,6 +114,8 @@ function wire() {
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
   h('agents', () => engine.agents)
   h('agents:refresh', () => engine.refresh())
+  h('limits', () => limits.get())
+  h('limits:refresh', () => limits.poll().then(() => limits.get()))
   h('local:start', async (id: string) => {
     const r = await start(id)
     await engine.refresh()
@@ -297,7 +301,8 @@ app.whenReady().then(async () => {
     ...(store.settings.browser !== false && access !== 'plan' ? browser.tools(who, folder) : []),
     ...toolbox.tools(),
   ]
-  engine = new Engine(store, { emit, notify, packs, tools }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
+  limits = new Limits(store, (l) => { emit('limits', l); emit('ledger', engine.ledger()) }, () => engine.agents.filter((a) => a.found && a.via === 'cli').map((a) => a.id))
+  engine = new Engine(store, { emit, notify, packs, tools, turned: (who, u) => limits.turned(who, u) }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
   flows = new Flows(store, engine, { emit, notify })
   remote = new Remote(store, engine, { emit, defaults })
   wire()
@@ -305,10 +310,11 @@ app.whenReady().then(async () => {
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
   createWindow()
   await engine.refresh()
+  limits.start()
   flows.start()
   remote.start()
   toolbox.startAll()
 })
-app.on('before-quit', () => { flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
+app.on('before-quit', () => { limits?.stop(); flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
 app.on('window-all-closed', () => { if (!mac) app.quit() })
 app.on('activate', () => { if (!win) createWindow() })

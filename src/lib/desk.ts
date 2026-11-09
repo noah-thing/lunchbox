@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { Access, AgentInfo, Env, Flow, FlowState, Kind, Ledger, Pack, RoomSummary, Settings, Skill, Spent } from '../../shared/types'
+import type { Access, AgentInfo, Env, Flow, FlowState, Kind, Ledger, Pack, RoomSummary, Settings, Skill, Spent, PlanLimits } from '../../shared/types'
 
 export type { Access, Kind }
 export type LedgerView = Ledger & { spent: Record<string, Spent>; budgets: Record<string, number> }
@@ -37,6 +37,7 @@ type State = {
   rooms: RoomSummary[]
   settings: Settings
   ledger: LedgerView | null
+  limits: Record<string, PlanLimits>
   skills: Skill[]
   packs: Pack[]
   flows: Flow[]
@@ -46,7 +47,7 @@ type State = {
 
 let state: State = {
   env: EMPTY.env as Env,
-  agents: [], rooms: [], ledger: null, skills: [], packs: [], flows: [], running: [], loaded: false,
+  agents: [], rooms: [], ledger: null, limits: {}, skills: [], packs: [], flows: [], running: [], loaded: false,
   settings: { models: {}, budgets: {}, disabled: [], notify: true, defaultCrew: [] },
 }
 const subs = new Set<() => void>()
@@ -70,6 +71,8 @@ export function boot() {
     desk.on('agents', (agents) => set({ agents }))
     desk.on('rooms', (rooms) => set({ rooms }))
     desk.on('ledger', (ledger) => set({ ledger }))
+    desk.on('limits', (limits) => set({ limits }))
+    desk.call('limits').then((limits) => limits && set({ limits }))
     desk.on('skills', (skills) => set({ skills }))
     desk.on('flows', (f) => set({ flows: f.flows, running: f.running }))
     const [env, agents, rooms, settings, ledger, skills, packs, flows] = await Promise.all(

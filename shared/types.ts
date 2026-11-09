@@ -127,6 +127,11 @@ export type Live = {
 
 export type Spent = { until: number; reason: string }
 
+// One limit window of a plan as its provider reports it. used is 0 to 1. tokens is Lunchbox's
+// measured estimate of how many tokens the whole window holds, once it has enough samples.
+export type PlanWindow = { id: string; label: string; used: number; resets?: number; tokens?: number; samples?: number }
+export type PlanLimits = { agent: string; plan?: string; windows: PlanWindow[]; at: number; error?: string; reached?: boolean; stale?: boolean }
+
 export type Pack = {
   id: string
   name: string
@@ -161,6 +166,7 @@ export type Settings = {
   tools?: Record<string, { on: boolean; input?: string }>
   browser?: boolean
   remote?: { on: boolean; chat?: number; name?: string; access?: Access }
+  planLimits?: boolean
 }
 
 export type FlowStep = { text: string; to?: string }

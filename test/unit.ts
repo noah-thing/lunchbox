@@ -341,3 +341,20 @@ test('savings: the ledger sums per day, per agent and per room', async () => {
   assert.ok(Math.abs((t.rooms.r1.saved ?? 0) - 0.02) < 1e-12)
   assert.equal(t.rooms.r1.input, 1700)
 })
+
+test('plan limits: tokens per window are measured between whole percent steps', async () => {
+  const { step, estimate } = await import('../electron/limits')
+  let c = { pct: 20, since: 0, samples: [] as number[] }
+  c = { ...c, since: 30000 }
+  c = step(c, 20.4)
+  assert.equal(c.samples.length, 0, 'no sample until the percentage moves a whole step')
+  c = step(c, 22)
+  assert.deepEqual(c.samples, [15000], '30k tokens over two percent')
+  c = step({ ...c, since: 0 }, 23)
+  assert.equal(c.samples.length, 1, 'a step with none of our tokens in it is someone else using the plan')
+  c = step({ ...c, since: 14000 }, 24)
+  c = step({ ...c, since: 16000 }, 25)
+  assert.equal(estimate(c.samples), 1500000, 'median of 14k, 15k and 16k per percent')
+  assert.deepEqual(step({ ...c, since: 500 }, 2).since, 0, 'a reset starts over')
+  assert.equal(estimate([1, 2]), undefined, 'needs three steps before showing a total')
+})

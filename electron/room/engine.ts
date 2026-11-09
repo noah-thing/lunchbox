@@ -18,6 +18,7 @@ import { check, suggest } from './proof'
 
 type Hooks = {
   emit(channel: string, payload: unknown): void
+  turned?(agent: string, usage: Usage): void
   notify(title: string, body: string, room: string): void
   packs(): Pack[]
   // Tools from outside the room: the built-in browser and any MCP servers the person connected.
@@ -532,6 +533,7 @@ export class Engine {
       const kept = Math.round((p.full - p.sent) / 4)
       this.store.record(who, room, kept > 0 ? { ...r.usage, kept } : r.usage)
       this.hooks.emit('ledger', this.ledger())
+      this.hooks.turned?.(who, r.usage)
     }
     if (resumed && r.error && !r.text && !r.limit && /session|resume|conversation|thread|not found|unexpected|no such|invalid/i.test(r.error)) {
       this.store.update(room, (m) => { delete m.sessions[who] })
