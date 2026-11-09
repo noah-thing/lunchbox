@@ -136,6 +136,8 @@ export type PlanWindow = {
   total?: number; unit?: 'tokens' | 'requests'
   // Grok's pool is shared with Grok's other products; this is Grok Build's part of what is used.
   share?: number
+  // The size in what the provider actually spends: dollars at list price, or Codex credits.
+  allowance?: number; currency?: 'usd' | 'credits'
 }
 export type PlanLimits = { agent: string; plan?: string; windows: PlanWindow[]; at: number; error?: string; reached?: boolean; stale?: boolean }
 

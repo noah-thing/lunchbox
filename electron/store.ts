@@ -38,7 +38,7 @@ export class Store {
   private flushTimer: NodeJS.Timeout | null = null
   settings: Settings
   spent: Record<string, Spent>
-  calib: Record<string, { tokens: number; at: number; share?: number }[]>
+  calib: Record<string, { at: number; pct: number; units: number; start: number }[]>
   health: Record<string, string>
   skills: Skill[]
   flows: Flow[]
@@ -51,10 +51,10 @@ export class Store {
     mkdirSync(join(dir, 'packs'), { recursive: true })
     for (const meta of readJson<RoomMeta[]>(join(dir, 'rooms.json'), [])) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
-    const state = readJson<{ calib?: Record<string, { tokens: number; at: number; share?: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
+    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
     // Older builds stored a different shape here; only lists are kept.
-    this.calib = Object.fromEntries(Object.entries(state.calib ?? {}).filter(([, v]) => Array.isArray(v)))
+    this.calib = Object.fromEntries(Object.entries(state.calib ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.filter((r) => r && 'start' in r) : []]))
     this.health = state.health ?? {}
     this.arena = state.arena ?? {}
     this.ratings = state.ratings ?? {}

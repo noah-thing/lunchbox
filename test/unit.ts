@@ -342,16 +342,29 @@ test('savings: the ledger sums per day, per agent and per room', async () => {
   assert.equal(t.rooms.r1.input, 1700)
 })
 
-test('plan limits: window size is fresh tokens over the share used, the largest recent one shown', async () => {
-  const { size, best } = await import('../electron/limits')
-  assert.equal(size(2_000_000, 0.2), 10_000_000)
-  assert.equal(size(90_000, 0.03), 3_000_000)
-  assert.equal(size(10_000, 0), undefined, 'nothing used yet, nothing to divide by')
-  assert.equal(size(0, 0.4), undefined, 'no tokens on this computer, nothing to measure from')
-  const now = Date.now()
-  // The reading at the highest share is the least affected by whole-percent rounding.
-  assert.equal(best([{ tokens: 8e6, at: now - 3600e3, share: 0.04 }, { tokens: 10e6, at: now - 2 * 86400e3, share: 0.62 }, { tokens: 12e6, at: now, share: 0.03 }], now), 10e6)
-  assert.equal(best([{ tokens: 30e6, at: now - 70 * 86400e3 }], now), undefined, 'older than two months no longer counts')
+test('plan limits: windows are sized in cost per percent, trusting the upper measurements', async () => {
+  const { windowSize, roughSize } = await import('../electron/limits')
+  const w = (start: number, pts: [number, number][]) => pts.map(([pct, units], i) => ({ at: start + i * 60e3, pct, units, start }))
+  // Three clean windows of about 120 credits and one where another computer used the plan,
+  // which made the percentage climb with fewer credits here.
+  const readings = [
+    ...w(1, [[2, 2.4], [30, 36]]),
+    ...w(2, [[0, 0], [50, 61]]),
+    ...w(3, [[10, 12], [40, 47]]),
+    ...w(4, [[5, 3], [60, 20]]),
+  ]
+  const size = windowSize(readings, 8)!
+  assert.ok(size > 115 && size < 125, `about 120 credits, got ${size}`)
+  assert.equal(windowSize(w(5, [[1, 1], [3, 3]]), 8), undefined, 'too little movement to trust')
+  assert.equal(roughSize(30, 25), 120)
+  assert.equal(roughSize(10, 0), undefined)
+})
+
+test('plan limits: Codex credits follow the published rates per model', async () => {
+  const { codexCredits } = await import('../shared/prices')
+  assert.equal(codexCredits('gpt-6-astra', { fresh: 1e6, cached: 0, output: 0 }), 250)
+  assert.equal(codexCredits('gpt-6.1-terra', { fresh: 0, cached: 1e6, output: 1e6 }), 1.25 + 125)
+  assert.equal(codexCredits('some-new-model', { fresh: 1e6, cached: 0, output: 0 }), 50, 'unlisted models count like GPT-6 Sol')
 })
 
 test('plan limits: tallies read logs once and pick up only what was added', async () => {
@@ -367,7 +380,9 @@ test('plan limits: tallies read logs once and pick up only what was added', asyn
   const { update, used } = await import('../electron/tally')
   const tally = { files: {} }
   await update('claude', tally, Date.now() - 3600e3)
-  assert.deepEqual(used(tally, Date.now() - 3600e3), { all: 5130, fresh: 130 }, 'a message written twice counts once')
+  const u = used(tally, Date.now() - 3600e3)
+  assert.deepEqual([u.all, u.fresh], [5130, 130], 'a message written twice counts once')
+  assert.ok(u.units > 0, 'priced at list rates')
   appendFileSync(file, line('b', t, { input_tokens: 5, output_tokens: 5 }))
   await update('claude', tally, Date.now() - 3600e3)
   assert.equal(used(tally, Date.now() - 3600e3).fresh, 140)

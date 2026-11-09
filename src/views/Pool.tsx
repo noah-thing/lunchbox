@@ -134,13 +134,14 @@ function WindowRow({ w, stale, at }: { w: PlanWindow; stale?: boolean; at?: numb
   const size = w.total
     ? `${count(w.total * left)} of ${count(w.total)}${w.unit === 'requests' ? ' requests' : ''}`
     : 'not used yet'
+  const spend = w.allowance ? (w.currency === 'credits' ? `${Math.round(w.allowance).toLocaleString()} credits` : `$${w.allowance.toFixed(w.allowance < 10 ? 2 : 0)} at list prices`) : ''
   const tip = w.unit === 'requests'
     ? `Google publishes this limit. Requests are counted from Gemini CLI's own log of today's replies.`
     : w.total
-      ? `Fresh tokens this window holds: new input, cache writes and output. Measured from this computer's logs against the share ${w.share !== undefined ? 'Grok Build has used of the pool' : 'the provider reports used'}, using the reading taken at the highest share, the most precise one, from the last two months. Cache reads are left out because they barely count toward plan limits.`
-      : `This plan has not been used on this computer yet. Its size is worked out from the tokens the first turns use.`
+      ? `This window holds about ${spend}, about ${count(w.total)} tokens at the mix of models you use. Measured from how far the ${w.share !== undefined ? 'Grok Build share of the pool' : 'percentage'} moved against what this computer's logs spent, over the last month. Use on another computer or the web counts toward the plan but not these logs, so the upper measurements are the ones trusted.`
+      : `This plan has not been used on this computer yet. Its size is worked out from what the first turns spend.`
   return (
-    <div className="window" title={stale && at ? `As of the last Codex run, ${clock(at)}` : undefined}>
+    <div className={`window${stale ? ' stale' : ''}`} title={stale && at ? `Last read at ${clock(at)}` : undefined}>
       <span className="wlabel">{w.label}</span>
       <Meter value={left} cells={14} tone={left < 0.15 ? 'warn' : undefined} />
       <span className="wleft">{Math.round(left * 100)}% left</span>

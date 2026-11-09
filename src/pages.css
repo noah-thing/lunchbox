@@ -374,3 +374,4 @@ input[type=number].select{width:64px}
 .window .wreset{font:11px var(--mono);color:var(--faint)}
 .window .wtotal{font:11.5px var(--mono);color:var(--ink);text-align:right;cursor:help}
 .allowance .amount{white-space:nowrap}
+.window.stale .wleft,.window.stale .wtotal{color:var(--dim)}

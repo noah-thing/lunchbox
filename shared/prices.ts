@@ -40,3 +40,27 @@ export function claudeCost(model: string, u: { input: number; read: number; outp
   if (!p) return null
   return (u.input * p.input + u.short * p.input * 1.25 + (u.hour ?? 0) * p.input * 2 + u.read * p.read + u.output * p.output) / 1e6
 }
+
+// Codex credits per million tokens, input / cached input / output, from OpenAI's Codex pricing
+// page. Plan windows are spent in these credits, which is why one GPT-6 Astra call can use as
+// much of a window as ten GPT-6.1 Terra calls. Unlisted models count like GPT-6 Sol.
+const CODEX: [RegExp, number, number, number][] = [
+  [/gpt-6-astra/, 250, 25, 1250],
+  [/gpt-6\.1-sol/, 50, 2.5, 250],
+  [/gpt-6\.1-terra/, 25, 1.25, 125],
+  [/gpt-6-sol/, 50, 5, 250],
+  [/gpt-6(\.1)?-luna/, 2.5, 0.25, 12.5],
+  [/gpt-5\.6-sol/, 100, 10, 500],
+  [/gpt-5\.6-terra/, 50, 5, 300],
+  [/gpt-5\.6-luna/, 5, 0.5, 30],
+]
+
+export function codexCredits(model: string, u: { fresh: number; cached: number; output: number }) {
+  const [, i, c, o] = CODEX.find(([re]) => re.test(model)) ?? [null, 50, 5, 250]
+  return (u.fresh * i + u.cached * c + u.output * o) / 1e6
+}
+
+// What a Claude Code message would cost at list price. Unlisted models count like Sonnet 5.
+export function claudeValue(model: string, u: { input: number; read: number; output: number; short: number; hour?: number }) {
+  return claudeCost(model, u) ?? claudeCost('claude-sonnet-5', u)!
+}
