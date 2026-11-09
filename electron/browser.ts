@@ -78,7 +78,15 @@ export class Browser {
     const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:browser', backgroundThrottling: false } })
     view.setBackgroundColor('#00000000')
     const wc = view.webContents
-    wc.setWindowOpenHandler(({ url }) => { wc.loadURL(url); return { action: 'deny' } })
+    // Pages open new windows in the same view, and only on the web: never file:, app or
+    // javascript: schemes, whether a person clicks or a page or an agent asks.
+    const web = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(169\.254\.|0\.0\.0\.0|\[?::\]?)/i.test(u)
+    wc.setWindowOpenHandler(({ url }) => { if (web(url)) wc.loadURL(url); return { action: 'deny' } })
+    wc.on('will-navigate', (e, url) => { if (!web(url)) e.preventDefault() })
+    wc.on('will-redirect', (e, url) => { if (!web(url)) e.preventDefault() })
+    // Camera, microphone, location, notifications: no page in the agent browser gets them.
+    wc.session.setPermissionRequestHandler((_w, _p, done) => done(false))
+    wc.session.setPermissionCheckHandler(() => false)
     for (const e of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'] as const) wc.on(e as 'did-start-loading', () => this.changed())
     win.contentView.addChildView(view)
     this.view = view
@@ -146,7 +154,14 @@ export class Browser {
 
   async open(url: string) {
     const wc = this.ensure().webContents
-    const target = /^[a-z][\w+.-]*:/i.test(url) ? url : /^localhost|^127\.|^\d+\.\d+\.\d+\.\d+/.test(url) ? `http://${url}` : /\s/.test(url) || !url.includes('.') ? `https://duckduckgo.com/?q=${encodeURIComponent(url)}` : `https://${url}`
+    const u = url.trim()
+    // localhost:3000 looks like a scheme to a naive test, so a host and port is checked first.
+    const target = /^(localhost|127\.\d+\.\d+\.\d+|\d+\.\d+\.\d+\.\d+)(:\d+)?(\/|$)/i.test(u) ? `http://${u}`
+      : /^https?:\/\//i.test(u) ? u
+      : /^[a-z][\w+.-]*:/i.test(u) && !/^[\w.-]+:\d+/.test(u) ? null
+      : /\s/.test(u) || !u.includes('.') ? `https://duckduckgo.com/?q=${encodeURIComponent(u)}` : `https://${u}`
+    // Only web pages: file:, javascript: and app schemes never load here.
+    if (!target) return wc.getURL()
     await wc.loadURL(target).catch(() => {})
     this.changed()
     return wc.getURL()

@@ -34,7 +34,7 @@ function morph(box: HTMLElement, clip: HTMLElement, glow: HTMLElement, rows: HTM
 export type Command = { label: string; hint: string; group: 'Rooms' | 'Go to' | 'Actions' | 'Skills' | 'Flows'; run: () => void }
 type Item = { key: string; label: string; hint: string; group: string; run: () => void }
 
-const GROUPS = ['Rooms', 'Messages', 'Skills', 'Go to', 'Actions']
+const GROUPS = ['Rooms', 'Messages', 'Skills', 'Flows', 'Go to', 'Actions']
 
 export function Palette({ commands, close, openHit, anchor }: { commands: Command[]; close: () => void; openHit: (h: Hit) => void; anchor?: RefObject<HTMLElement | null> }) {
   const [q, setQ] = useState('')
@@ -97,7 +97,7 @@ export function Palette({ commands, close, openHit, anchor }: { commands: Comman
               if (e.key === 'Enter' && ordered[sel]) pick(ordered[sel])
               if (e.key === 'Escape' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) { e.preventDefault(); dismiss() }
             }} />
-          <kbd>esc</kbd>
+          <button className="pclose" onClick={dismiss} title="Close" aria-label="Close search"><kbd>esc</kbd></button>
         </div>
         <div className="plist" ref={list}>
           {ordered.map((c, i) => {

@@ -5,7 +5,7 @@ import { Band } from '../ui/Band'
 import { Loader, Mark } from '../ui/bits'
 import { IconFolder, IconFolderPlus } from '../ui/icons'
 import { Menu } from '../ui/Access'
-import { agentOf, ago, desk, machine, short, unavailable, upcoming, useApp, type Access } from '../lib/desk'
+import { agentOf, ago, desk, machine, short, unavailable, upcoming, useApp, type Access, reason } from '../lib/desk'
 import type { View } from '../App'
 import { Composer } from './Composer'
 
@@ -59,7 +59,8 @@ function defaultCrew(ids: string[], preferred: string[]) {
 
 const skillText = (s: Skill) => `${s.brief}\n\nSteps that worked last time:\n${s.steps.map((x) => `- ${x}`).join('\n')}`
 
-export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorkspace, skill, pack: startPack, text }: {
+export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setWorkspace, skill, pack: startPack, text }: {
+  say: (t: string) => void
   onCreated: (id: string) => void; go: (v: View) => void; access: Access; setAccess: (a: Access) => void; workspace: string; setWorkspace: (w: string) => void; skill?: Skill; pack?: string; text?: string
 }) {
   const agents = useApp((s) => s.agents)
@@ -85,11 +86,18 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
   const start = async (text: string, files?: string[]) => {
     if (!crew.length || starting) return
     setStarting(true)
-    const meta = await desk.call('room:create', { crew, workspace, pack, about: text })
-    if (meta && workspace) remember(workspace)
-    if (!meta) return setStarting(false)
-    await desk.call('room:send', meta.id, text, access, arena, files)
-    onCreated(meta.id)
+    // If the room can't be made, the person keeps what they wrote and hears why.
+    try {
+      const meta = await desk.call('room:create', { crew, workspace, pack, about: text })
+      if (!meta) throw new Error('The room could not be created. Check that the folder can be written to.')
+      if (workspace) remember(workspace)
+      await desk.call('room:send', meta.id, text, access, arena, files)
+      onCreated(meta.id)
+    } catch (e) {
+      setStarting(false)
+      setDraft({ text, n: Date.now() })
+      say(reason(e))
+    }
   }
   const shownPacks = packs.filter((p, i) => i < 4 || p.id === pack)
   const morePacks = packs.filter((p) => !shownPacks.includes(p))
@@ -109,7 +117,8 @@ export function NewRoom({ onCreated, go, access, setAccess, workspace, setWorksp
           ) : (
             <div className="noagents">
               <b>No agent is ready yet.</b>
-              <span>Install Claude Code, Codex, Grok or Gemini CLI, or add an API key in Agents. Lunchbox picks them up on its own.</span>
+              <span>Install Claude Code, Codex, Grok or Gemini CLI, or add an API key or a local model. Lunchbox picks them up on its own.</span>
+              <button className="btn small" onClick={() => go({ name: 'agents' })}>Set up an agent</button>
             </div>
           )}
         </div>

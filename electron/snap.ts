@@ -78,7 +78,7 @@ export class Snapshots {
           rmSync(this.repo(workspace), { recursive: true, force: true })
           return null
         }
-        await git(['commit', '-q', '--allow-empty', '--no-verify', '-m', label.slice(0, 200)])
+        await git(['-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '--no-verify', '-m', label.slice(0, 200)])
         return { ref: (await git(['rev-parse', 'HEAD'])).trim() }
       } catch {
         return null

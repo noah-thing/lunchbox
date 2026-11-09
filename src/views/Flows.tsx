@@ -183,7 +183,7 @@ function Editor({ initial, go, say }: { initial: Draft; go: (v: View) => void; s
           </ol>
           <div className="row">
             <button className="btn small quiet" onClick={() => set({ steps: [...d.steps, { text: '' }] })}><IconPlus />Add a step</button>
-            <span className="hint">Write <code>{'{{date}}'}</code> for today, <code>{'{{last}}'}</code> for how the previous run ended.</span>
+            <span className="hint">Write <code>{'{{date}}'}</code> for today, <code>{'{{previous}}'}</code> for what the step before answered, <code>{'{{last}}'}</code> for how the last run ended.</span>
           </div>
         </section>
 

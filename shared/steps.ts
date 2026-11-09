@@ -8,14 +8,23 @@ const SHELL = /^(?:\$|run_terminal_command|run_shell_command|Bash|shell|exec_com
 
 export function searchOf(now: string): Search | null {
   const s = now.replace(SHELL, '').replace(/^mcp__lunchbox__/, '')
-  const m = s.match(/^(x[-_]search|search_x|web[-_]?search|search_web)\s+(?:"([^"]+)"|(\S+))(.*)$/i)
+  // Commands quote the query; the room's own tools pass it bare, so a bare query runs to the first flag.
+  const m = s.match(/^(x[ _-]?search:?|x_keyword_search|search_x|web[-_]?search|websearch|google_web_search|search_web)(?:\s+(?:"([^"]+)"|([^-][^]*?)))?(\s+--.*|)\s*$/i)
   if (!m) return null
   const filters: string[] = []
+  // X's own operators: since:2026-11-02 reads as a filter, not part of the words searched.
+  let query = (m[2] ?? m[3] ?? '').trim()
+  const date = query.match(/\bsince:(\d{4}-\d{2}-\d{2})\b/)
+  if (date) {
+    query = query.replace(date[0], '').trim()
+    filters.push(`since ${new Date(`${date[1]}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`)
+  }
+  m[4] = m[4] ?? ''
   if (/--top\b/.test(m[4])) filters.push('Top posts')
   if (/--latest\b/.test(m[4])) filters.push('Latest posts')
   const since = m[4].match(/--since\s+(\d+)([dhw])/)
   if (since) filters.push(`last ${since[1]} ${{ d: 'days', h: 'hours', w: 'weeks' }[since[2] as 'd' | 'h' | 'w']}`)
-  return { source: /^x|_x$/i.test(m[1]) ? 'X' : 'the web', query: m[2] ?? m[3], filters }
+  return { source: /^x|_x$/i.test(m[1]) ? 'X' : 'the web', query, filters }
 }
 
 export function stepOf(now: string): Step {

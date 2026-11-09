@@ -6,8 +6,10 @@ import { Loader, Mark, Meter, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
-import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
-import { agentOf, clock, desk, KIND_LABEL, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
+import { roomCard } from '../ui/roomcard'
+import { openReport } from '../lib/report'
+import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
+import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
 import { Composer } from './Composer'
 
@@ -24,6 +26,7 @@ type Actions = {
   changed(ev: string): Promise<string[]>
   rewind(target: { event?: string; ref?: string }): void
   review(ev: string): void
+  ask(text: string): void
 }
 
 const remembered = (key: string, fallback: boolean) => {
@@ -79,7 +82,21 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel() }
-      if (e.key === 'Escape' && data?.live.turns.length && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
+      // j and k move between messages when nothing is being typed.
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName ?? '') || (e.target as HTMLElement)?.isContentEditable
+      if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'j' || e.key === 'k')) {
+        const list = [...document.querySelectorAll<HTMLElement>('.transcript .column > .ev, .transcript .column > .mine')]
+        if (!list.length) return
+        const box = document.querySelector('.transcript')!.getBoundingClientRect()
+        const cur = list.findIndex((el) => el.classList.contains('kfocus'))
+        const from = cur >= 0 ? cur : list.findIndex((el) => el.getBoundingClientRect().bottom > box.top + 40)
+        const next = list[Math.max(0, Math.min(list.length - 1, from + (e.key === 'j' ? 1 : -1)))]
+        list.forEach((el) => el.classList.remove('kfocus'))
+        next.classList.add('kfocus')
+        next.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }
+      // Esc refuses a pending command first; only with nothing waiting does it stop the turn.
+      if (e.key === 'Escape' && data?.live.turns.length && !data.live.runs.some((r) => r.state === 'asking') && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
@@ -103,6 +120,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     answer: (run, a) => desk.call('run:answer', run, a),
     kill: (run) => desk.call('run:kill', run),
     pin: (ev) => { desk.call('room:pin', id, ev); say('Pinned to shared memory') },
+    ask: (text) => desk.call('room:send', id, text, access, false),
     fork: async (ev) => { const copy = await desk.call('room:fork', id, ev); if (copy) open(copy.id) },
     checkpoint: (ev) => !!meta.checkpoints?.some((c) => c.event === ev),
     changed: async (ev) => (await desk.call('room:changed', id, ev).catch(() => [])) ?? [],
@@ -127,7 +145,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
           {meta.forkedFrom && <button className="tag" onClick={() => open(meta.forkedFrom!.room)}>fork</button>}
           <span className="spacer" />
           <button className="ghostbtn mono" onClick={pick} title={meta.workspace}><IconFolder />{short(meta.workspace)}</button>
-          <RoomMenu id={id} meta={meta} canReplay={events.length > 1} replay={() => setReplay(0)} open={open} say={say} />
+          <RoomMenu id={id} meta={meta} events={events} canReplay={events.length > 1} replay={() => setReplay(0)} open={open} say={say} />
           <button className={`iconbtn${panel ? ' on' : ''}`} onClick={togglePanel} aria-label="Room panel" aria-pressed={panel} title="Room panel"><IconPanel /></button>
         </header>
         {replay !== null && (
@@ -157,6 +175,8 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
 
 function Title({ name, rename }: { name: string; rename: (n: string) => void }) {
   const [editing, setEditing] = useState(false)
+  // The room menu's Rename opens the same inline field as a double click.
+  useEffect(() => { const on = () => setEditing(true); addEventListener('lb:rename', on); return () => removeEventListener('lb:rename', on) }, [])
   const [value, setValue] = useState(name)
   useEffect(() => setValue(name), [name])
   if (!editing) return <h1 onDoubleClick={() => setEditing(true)} title="Double click to rename">{name}</h1>
@@ -167,8 +187,9 @@ function Title({ name, rename }: { name: string; rename: (n: string) => void }) 
   )
 }
 
-function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta: RoomMeta; canReplay: boolean; replay: () => void; open: (r: string) => void; say: (t: string) => void }) {
+function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: string; meta: RoomMeta; events: Event[]; canReplay: boolean; replay: () => void; open: (r: string) => void; say: (t: string) => void }) {
   const [sure, setSure] = useState(false)
+  const agents = useApp((s) => s.agents)
   return (
     <Menu bare label="Room actions" button={<IconMore />} className="right">
       {(close) => (
@@ -182,12 +203,25 @@ function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta
           <button className="item" onClick={async () => { close(); const c = await desk.call('room:fork', id, ''); if (c) open(c.id) }}>
             <span className="grow"><b>Fork room</b><span>Try another direction, keep this one as it is</span></span>
           </button>
+          <button className="item" onClick={() => { close(); dispatchEvent(new Event('lb:rename')) }}>
+            <span className="grow"><b>Rename</b><span>{meta.name}</span></span>
+          </button>
+          <button className="item" onClick={() => { desk.call('room:mark', id, { pinned: !meta.pinned }); close(); say(meta.pinned ? 'Unpinned' : 'Pinned to the top of your rooms') }}>
+            <span className="grow"><b>{meta.pinned ? 'Unpin' : 'Pin to top'}</b><span>Keep it above the rest of your rooms</span></span>
+            {meta.pinned && <i className="check" />}
+          </button>
+          <button className="item" onClick={() => { desk.call('room:mark', id, { archived: !meta.archived }); close(); say(meta.archived ? 'Back in your rooms' : 'Archived. Find it under Archived in the sidebar.') }}>
+            <span className="grow"><b>{meta.archived ? 'Unarchive' : 'Archive'}</b><span>{meta.archived ? 'Bring it back to your rooms' : 'Out of the list, nothing deleted'}</span></span>
+          </button>
           <button className="item" onClick={() => { desk.call('reveal', meta.workspace); close() }}>
             <span className="grow"><b>Open folder</b><span>{short(meta.workspace)}</span></span>
           </button>
           <div className="sep" />
           <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'html')) say('Replay saved. Open it in any browser and press Play.') }}>
             <span className="grow"><b>Export replay</b><span>One HTML file that plays the room back</span></span>
+          </button>
+          <button className="item" onClick={() => { close(); roomCard(meta, events, agents, say) }}>
+            <span className="grow"><b>Share as image</b><span>One card for X: the crew, the handoffs, what was proved</span></span>
           </button>
           <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'md')) say('Saved as Markdown') }}>
             <span className="grow"><b>Export as Markdown</b><span>The conversation as plain text</span></span>
@@ -309,7 +343,9 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} />)
     last = t.who
   }
-  for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} /></Ev>)
+  // Only the first command waiting for an answer takes the keyboard, so one key never answers two.
+  const first = live?.runs.find((r) => r.state === 'asking')?.id
+  for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} keys={r.id === first} /></Ev>)
 
   return (
     <div className="transcript" ref={box}
@@ -364,7 +400,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
         <Ev id={e.id} mark={<Mark seed={a.mark} size={16} />} grouped={grouped} className="turn">
           {!grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
           {e.text && <Rich text={e.text} />}
-          {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}</div>}
+          {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}{e.error !== 'Stopped' && <button className="reportbtn" onClick={() => openReport({ context: `${a.short}: ${e.error}` })}>Report this</button>}</div>}
           <Acts acts={e.acts} />
           {e.proof?.map((p) => (
             <div key={p.claim} className={`proof${p.ok ? '' : ' bad'}`}><i />{p.ok ? 'Proved' : 'Not proved'}: {p.claim}<span>{p.text.replace(/`/g, '')}</span></div>
@@ -406,6 +442,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
         <Ev id={e.id} mark={<span className="gutdot" />} className="note">
           <span className="switch"><Mark seed={agentOf(e.from, agents).mark} size={12} /><i className="wire" />{e.to && <Mark seed={agentOf(e.to, agents).mark} size={12} />}</span>
           <span>{wallText(e, agents)}</span>
+          {!/limit|turned off|budget/.test(e.reason) && <button className="reportbtn" onClick={() => openReport({ context: wallText(e, agents) })}>Report this</button>}
         </Ev>
       )
     case 'decide': {
@@ -553,7 +590,7 @@ function SearchLive({ search, elapsed }: { search: Search; elapsed: string }) {
     <div className="xsearch live">
       <header>
         <SourceIcon search={search} />
-        <span className="shimmer">Searching {search.source}</span><span>for</span><span className="query">“{search.query}”</span>
+        <span className="shimmer">Searching {search.source}</span>{search.query && <><span>for</span><span className="query">“{search.query}”</span></>}
         <span className="meta">{[...search.filters, elapsed].join(' · ')}</span>
       </header>
       <div className="dotfield" aria-hidden><i className="dots" /><i className="dots lit" /></div>
@@ -589,24 +626,23 @@ function Ident({ seed }: { seed: string }) {
 
 function Sources({ search, out }: { search: Search; out?: string }) {
   const { total, posts } = postsOf(out)
-  if (!posts.length) return null
   const shown = posts.slice(0, 4)
   return (
     <div className="xsearch done">
       <header>
         <SourceIcon search={search} />
-        <b>Searched {search.source}</b><span>for</span><span className="query">“{search.query}”</span>
+        <b>Searched {search.source}</b>{search.query && <><span>for</span><span className="query">“{search.query}”</span></>}
         {search.filters.length > 0 && <span className="meta">{search.filters.join(' · ')}</span>}
       </header>
-      <div className="posts">
+      {shown.length > 0 && <div className="posts">
         {shown.map((p, i) => (
           <article key={p.handle + i} className="post" style={{ '--i': i } as CSSProperties}>
             <div className="by"><Ident seed={p.handle} /><b>@{p.handle}</b><small><IconHeart />{p.likes}</small></div>
             <p>{p.text}</p>
           </article>
         ))}
-      </div>
-      {total && <footer>Top {shown.length} of {total}</footer>}
+      </div>}
+      {total && shown.length > 0 && <footer>Top {shown.length} of {total}</footer>}
     </div>
   )
 }
@@ -665,8 +701,11 @@ function actLabel(a: Act) {
 function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   const [open, setOpen] = useState(false)
   if (!acts.length) return null
-  const shown = (a: Act) => (a.t === 'cmd' && !!searchOf(a.command) && postsOf(a.out).posts.length > 0) || (a.t === 'tool' && /make_image$/.test(a.name))
-  const found = acts.flatMap((a) => (a.t === 'cmd' && shown(a) ? [<Sources key={a.command} search={searchOf(a.command)!} out={a.out} />] : []))
+  // Searches show as their own card: commands with posts in their output, and the search tools
+  // every CLI has, which report only what was searched.
+  const searched = (a: Act) => (a.t === 'cmd' ? (postsOf(a.out).posts.length ? searchOf(a.command) : null) : a.t === 'tool' && /^(x|web)_search$/.test(a.name) ? searchOf(`${a.name} ${a.detail ?? ''}`) : null)
+  const shown = (a: Act) => !!searched(a) || (a.t === 'tool' && /make_image$/.test(a.name))
+  const found = acts.flatMap((a, i) => { const q = searched(a); return q ? [<Sources key={`s${i}`} search={q} out={a.t === 'cmd' ? a.out : undefined} />] : [] })
   acts = acts.filter((a) => !shown(a))
   if (!acts.length) return <>{found}</>
   const cmds = acts.filter((a) => a.t === 'cmd').length
@@ -725,8 +764,35 @@ function Tools({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; a
       <span className="spacer" />
       {text && <button onClick={() => navigator.clipboard.writeText(text)} title="Copy"><IconCopy /></button>}
       {text && <button onClick={() => actions.pin(e.id)} title="Pin to shared memory"><IconPin /></button>}
+      {text && <Review e={e} actions={actions} />}
       <button onClick={() => actions.fork(e.id)} title="Fork the room from here"><IconFork /></button>
     </div>
+  )
+}
+
+// A second opinion on one answer: another agent checks it before you build on it.
+function Review({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; actions: Actions }) {
+  const agents = useApp((s) => s.agents)
+  const author = e.kind === 'say' ? e.who : e.to
+  const others = agents.filter((a) => a.ready && a.id !== author)
+  if (!others.length) return null
+  const name = agentOf(author, agents).short
+  return (
+    <Menu bare label="Have another agent review this" button={<IconReview />} className="up">
+      {(close) => (
+        <>
+          <div className="menuhead">Review {name}'s answer with</div>
+          {others.map((a) => (
+            <button key={a.id} className="item" onClick={() => {
+              close()
+              actions.ask(`@${a.id} Review ${name}'s answer above before I use it. Check the facts, the code and any claim that something works. List only real problems, most serious first, or say plainly that it holds up.`)
+            }}>
+              <Mark seed={a.mark} size={14} /><span className="grow"><b>{a.short}</b><span>{a.good}</span></span>
+            </button>
+          ))}
+        </>
+      )}
+    </Menu>
   )
 }
 
@@ -762,18 +828,19 @@ function Arena({ id, done, going, picked, agents, pick }: { id: string; done: Sa
 type RunView = { id?: string; command: string; cwd: string; state: LiveRun['state'] | 'done' | 'denied'; verdict?: Verdict; out: string; code?: number | null; ms?: number; how?: string }
 
 // A command in the room: what it is, what the mode made of it, and its output.
-function RunBlock({ run, answer, kill }: { run: RunView; answer?: Actions['answer']; kill?: Actions['kill'] }) {
+function RunBlock({ run, answer, kill, keys = true }: { run: RunView; answer?: Actions['answer']; kill?: Actions['kill']; keys?: boolean }) {
   const asking = run.state === 'asking'
   useEffect(() => {
-    if (!asking || !answer || !run.id) return
+    if (!asking || !answer || !run.id || !keys) return
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'TEXTAREA') return
-      if (e.key === 'Enter') answer(run.id!, 'once')
-      if (e.key === 'Escape') answer(run.id!, 'deny')
+      // ⌘Enter runs it, so pressing Enter on some other button never approves a command.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); answer(run.id!, 'once') }
+      if (e.key === 'Escape') { e.preventDefault(); answer(run.id!, 'deny') }
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
-  }, [asking, run.id, answer])
+  }, [asking, run.id, answer, keys])
   const failed = run.state === 'done' && run.code !== 0
   const v = run.verdict
   const status =
@@ -797,7 +864,7 @@ function RunBlock({ run, answer, kill }: { run: RunView; answer?: Actions['answe
         <div className="ask">
           <span>This {v?.reason}. Run it in <code>{short(run.cwd)}</code>?</span>
           <div className="row">
-            <button className="btn small" onClick={() => answer(run.id!, 'once')}>Run <kbd>↵</kbd></button>
+            <button className="btn small" onClick={() => answer(run.id!, 'once')}>Run <kbd>{mod}↵</kbd></button>
             {v?.kind !== 'danger' && <button className="btn small quiet" onClick={() => answer(run.id!, 'always')}>Always in this folder</button>}
             <button className="btn small quiet" onClick={() => answer(run.id!, 'deny')}>Don’t run</button>
           </div>
@@ -875,6 +942,39 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
 }
 
 // What this room cost, who spent it, and what the shared memory saved.
+// How long each agent's prompt cache stays warm. Providers keep a cached prompt for about five
+// minutes after it was last used; a message after that pays for the whole room again.
+const CACHE_MS = 5 * 60e3
+function CacheClock({ events, agents }: { events: Event[]; agents: AgentInfo[] }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
+  const last = new Map<string, number>()
+  for (const e of events) {
+    if (e.kind !== 'say' && e.kind !== 'hands') continue
+    const u = e.usage
+    if (!u || !(u.cached > 0 || (u.written ?? 0) > 0)) continue
+    last.set(e.kind === 'say' ? e.who : e.to, e.at)
+  }
+  const warm = [...last.entries()].map(([who, at]) => ({ who, left: at + CACHE_MS - now })).filter((x) => x.left > -60e3)
+  if (!warm.length) return null
+  const fmt = (ms: number) => `${Math.floor(ms / 60e3)}:${String(Math.floor((ms % 60e3) / 1000)).padStart(2, '0')}`
+  return (
+    <div className="cacheclock" title="A message while the cache is warm only pays for what is new. After it cools, the next message reads the whole room again.">
+      {warm.map(({ who, left }) => {
+        const a = agentOf(who, agents)
+        return (
+          <div key={who} className={`cclock${left <= 0 ? ' cold' : left < 60e3 ? ' soon' : ''}`}>
+            <Mark seed={a.mark} size={12} />
+            <span className="grow">{a.short} cache</span>
+            <i style={{ '--k': Math.max(0, Math.min(1, left / CACHE_MS)) } as CSSProperties} />
+            <span className="mono">{left > 0 ? `warm ${fmt(left)}` : 'cooled'}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; agents: AgentInfo[] }) {
   const rows = useMemo(() => {
     const by = new Map<string, { cost: number; tokens: number; turns: number; ms: number }>()
@@ -908,6 +1008,7 @@ function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; ag
           </div>
         )
       })}
+      <CacheClock events={events} agents={agents} />
       <div className="memfoot">
         {saved > 0 && `Shared memory kept ${tokens(saved)} tokens from being sent again. `}
         {checks > 0 ? `${checks} checkpoint${checks > 1 ? 's' : ''} of the folder; hover your message to rewind.` : ''}

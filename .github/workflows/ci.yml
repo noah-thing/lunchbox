@@ -22,3 +22,28 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # The README badge in the same style as the others. Shields cannot read a private repo, so CI
+  # draws its own and keeps it on the badges branch, away from main's history.
+  badge:
+    needs: check
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Draw and publish the badge
+        env:
+          RESULT: ${{ needs.check.result }}
+        run: |
+          status=$([ "$RESULT" = success ] && echo passing || echo failing)
+          mkdir badges && cd badges
+          git init -q -b badges
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch -q --depth 1 origin badges && git checkout -q -B badges FETCH_HEAD || true
+          cat > ci.svg <<SVG
+          <svg xmlns="http://www.w3.org/2000/svg" width="80" height="20" role="img" aria-label="ci: $status"><title>ci: $status</title><g shape-rendering="crispEdges"><rect width="23" height="20" fill="#121110"/><rect x="23" width="57" height="20" fill="#F2F0EA"/></g><g text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110"><text transform="scale(.1)" x="115" y="140" textLength="130" fill="#F2F0EA">ci</text><text transform="scale(.1)" x="515" y="140" textLength="470" fill="#121110">$status</text></g></svg>
+          SVG
+          git add ci.svg
+          git -c user.name="github-actions" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -q -m "ci: $status" || exit 0
+          git push -q origin badges

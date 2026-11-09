@@ -1,4 +1,5 @@
 import type { Access, Act, AgentInfo, Event, Pack, RoomMeta } from '../../shared/types'
+import { habitRules } from '../../shared/habits'
 
 const ACCESS: Record<Access, string> = {
   plan: 'Plan. Read only: do not edit files or run commands that change anything. Investigate and propose.',
@@ -23,7 +24,8 @@ const connected = (tools: string[]) => {
   return groups.size ? `Connected tools from: ${[...groups].join(', ')}. Use them when they fit better than guessing.` : ''
 }
 
-export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = []) {
+export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = [], habits: string[] = []) {
+  const rules = habitRules(habits)
   const mates = crew
     .filter((a) => a.id !== me.id)
     .map((a) => `- @${a.id}  ${a.short} (${a.maker}): ${a.good}${a.tools ? '' : '. Text only, no files or commands'}`)
@@ -43,6 +45,7 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
       '- Write for the person: short and plain. Do not repeat what others already said.',
     ].filter(Boolean).join('\n'),
     pack ? `Room focus, ${pack.name}: ${pack.brief}` : '',
+    rules.length ? `How this person wants the work done:\n${rules.join('\n')}` : '',
   ].filter(Boolean).join('\n\n')
 }
 
@@ -76,10 +79,16 @@ const STEP = 12
 // what changed; any other agent gets the whole memory every turn.
 export function prompt(meta: RoomMeta, events: Event[], me: string, task: string, name: (id: string) => string, resumed: boolean) {
   const seen = meta.seen[me] ?? {}
-  const given = resumed ? meta.blocks.filter((b) => b.v > (seen[b.id] ?? 0)) : meta.blocks
+  // Memory that only grows is trimmed: the newest eight crewmate answers and the last thirty
+  // decisions. Everything else in memory is kept whole.
+  const answers = meta.blocks.filter((b) => b.id.startsWith('answer-'))
+  const old = new Set(answers.slice(0, -8).map((b) => b.id))
+  const blocks = meta.blocks.filter((b) => !old.has(b.id)).map((b) => (b.id === 'decisions' ? { ...b, text: b.text.split('\n').slice(-30).join('\n') } : b))
+  const given = resumed ? blocks.filter((b) => b.v > (seen[b.id] ?? 0)) : blocks
   const memory = given.map((b) => `## ${b.title}\n${b.text.slice(0, 6000)}`).join('\n\n')
   const from = resumed ? meta.heard[me] ?? 0 : 0
-  const lines = events.slice(from).map((e) => line(e, name))
+  // A resumed session already holds what this agent said itself; only the others' turns are new.
+  const lines = events.slice(from).filter((e) => !(resumed && e.kind === 'say' && e.who === me)).map((e) => line(e, name))
   let start = lines.length
   for (let size = 0; start > 0; start--) {
     const l = lines[start - 1]
@@ -87,7 +96,9 @@ export function prompt(meta: RoomMeta, events: Event[], me: string, task: string
     if (size + l.length > BUDGET && size > 0) break
     size += l.length
   }
-  if (start > 0) start = Math.min(lines.length, Math.ceil(start / STEP) * STEP)
+  // Rounded to steps so the cached prefix stays put, but never past the newest line. A resumed
+  // delta has no prefix to protect, so it is never rounded away.
+  if (start > 0 && !resumed) start = Math.min(Math.max(0, lines.length - 1), Math.ceil(start / STEP) * STEP)
   const history = lines.slice(start).filter((l): l is string => !!l)
   const head = history.length ? `${resumed ? 'Since your last turn' : start ? 'The conversation so far, latest part' : 'The conversation so far'}:` : ''
   const tail = [

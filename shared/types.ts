@@ -86,12 +86,17 @@ export type RoomMeta = {
   checkpoints?: Checkpoint[]
   project?: boolean
   flow?: string
+  pinned?: boolean
+  archived?: boolean
 }
 
 // The folder as it was just before a message was handled, kept in a shadow git repository.
 export type Checkpoint = { ref: string; event: string; at: number; files?: number }
 
-export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack' | 'flow'> & { busy: boolean; waiting: boolean }
+export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack' | 'flow' | 'pinned' | 'archived'> & { busy: boolean; waiting: boolean }
+
+// Everything across the rooms that is waiting for a person: decisions and commands to approve.
+export type Waiting = { room: string; name: string; items: ({ kind: 'decide'; ref: string; text: string; options: string[] } | { kind: 'run'; id: string; command: string; reason: string })[] }
 
 export type LiveTurn = {
   id: string
@@ -182,6 +187,25 @@ export type Settings = {
   browser?: boolean
   remote?: { on: boolean; chat?: number; name?: string; access?: Access }
   planLimits?: boolean
+  connectors?: Connector[]
+  habits?: string[]
+  dismissed?: string[]
+  autoUpdate?: boolean
+  feedIssued?: number
+}
+
+// Anything not built in: an API that speaks the OpenAI or Anthropic format, or a command-line
+// agent run with a prompt. Keys live in the keychain under `conn:<id>`, never in settings.
+export type Connector = {
+  id: string
+  name: string
+  kind: 'openai' | 'anthropic' | 'cli'
+  base?: string
+  model?: string
+  command?: string
+  args?: string
+  output?: 'text' | 'stream-json'
+  good?: string
 }
 
 export type FlowStep = { text: string; to?: string }
@@ -212,3 +236,30 @@ export type Day = { day: string; cost: number; tokens: number; input: number; ca
 export type Hit = { room: string; roomName: string; event?: string; text: string }
 
 export type Env = { home: string; platform: string; version: string; cwd: string; data: string }
+
+// A message pushed to every copy of the app from the signed feed, no update needed. A toast sits in
+// the corner, a card is a designed pop-up for big news, a banner runs across the top of the page.
+export type Notice = {
+  id: string
+  kind: 'toast' | 'card' | 'banner'
+  title: string
+  body?: string
+  image?: string
+  action?: { label: string; url: string }
+  // Who sees it: versions from and to (inclusive), platforms, and a window in time.
+  from?: string
+  to?: string
+  platforms?: ('darwin' | 'win32' | 'linux')[]
+  after?: string
+  until?: string
+}
+
+export type UpdateState =
+  | { state: 'idle' | 'checking' | 'none' }
+  | { state: 'available'; version: string }
+  | { state: 'downloading'; version: string; progress: number }
+  | { state: 'ready'; version: string }
+  | { state: 'manual'; version: string; url: string }
+  | { state: 'error'; error: string }
+
+export type Report = { kind: 'bug' | 'idea' | 'question'; text: string; contact?: string; context?: string; diagnostics?: string }

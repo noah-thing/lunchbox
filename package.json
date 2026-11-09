@@ -34,6 +34,7 @@
     "@vitejs/plugin-react": "6.1.2",
     "electron": "^45.2.1",
     "electron-builder": "^26.18.0",
+    "electron-updater": "^6.8.11",
     "esbuild": "^0.28.2",
     "playwright-core": "^1.65.0",
     "react": "19.3.1",
@@ -89,7 +90,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Lunchbox-Setup-${version}.${ext}"
     },
     "linux": {
       "icon": "build/icon-1024.png",
@@ -100,6 +102,15 @@
         "AppImage",
         "deb"
       ]
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "noah-thing",
+        "repo": "lunchbox-releases",
+        "releaseType": "release"
+      }
+    ],
+    "artifactName": "Lunchbox-${version}-${os}-${arch}.${ext}"
   }
 }

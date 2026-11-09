@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 // One clean room for the README, played by the stand-in agents through the real engine:
@@ -97,7 +97,7 @@ export async function showcase(name, input, args, say, sleep, pause) {
     reply = DONE
   } else if (input.includes('crewmates answered above')) {
     // The banner comes from the room's image tool, which hands the drawing to Codex.
-    const url = args.includes('--mcp-config') ? JSON.parse(args[args.indexOf('--mcp-config') + 1]).mcpServers.lunchbox.url : null
+    const url = args.includes('--mcp-config') ? JSON.parse(((v) => (v.trim().startsWith('{') ? v : readFileSync(v, 'utf8')))(args[args.indexOf('--mcp-config') + 1])).mcpServers.lunchbox.url : null
     if (url) {
       wait(1400 + Math.floor(Math.random() * 500), 0)
       stream(BRIEF)

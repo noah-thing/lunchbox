@@ -318,12 +318,12 @@ export class Limits {
 
   // A full window takes the agent out of rotation until it resets, the same way a hit limit does.
   private gate(id: string, l: PlanLimits) {
-    const full = l.windows.filter((w) => w.used >= 0.995 && w.resets)
+    const full = l.windows.filter((w) => w.used >= 0.995 && w.resets && w.resets > Date.now())
     const spent = this.store.spent[id]
     if (full.length || l.reached) {
       const until = Math.max(...full.map((w) => w.resets!), Date.now() + HOUR)
       this.store.spent[id] = { until, reason: 'plan limit reached' }
-    } else if (spent?.reason === 'plan limit reached') {
+    } else if (spent?.reason === 'plan limit reached' && l.windows.length && !l.error) {
       delete this.store.spent[id]
     }
   }

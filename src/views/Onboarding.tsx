@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from
 import type { AgentInfo } from '../../shared/types'
 import { Mark } from '../ui/bits'
 import { Band } from '../ui/Band'
+import { Logo } from '../ui/Logo'
 import { IconFolder } from '../ui/icons'
 import { flow } from '../App'
 import { desk, isDesktop, machine, short, useApp } from '../lib/desk'
@@ -62,6 +63,7 @@ function Welcome({ onNext }: { onNext: () => void }) {
   useEnter(onNext)
   return (
     <div className="obpage first">
+      <Logo size={36} className="oblogo rise" />
       <h1 className="rise" style={r(0)}>Every AI you use, working as one.</h1>
       <p className="rise" style={r(1)}>Bring the agents already on {machine()} into one room. They share what they know, ask each other for help and check each other’s work.</p>
       <div className="obfacts rise" style={r(2)}>
@@ -87,7 +89,7 @@ function Agents({ onNext, setLabel, setBusy }: { onNext: () => void; setLabel: (
       const all = (found as AgentInfo[] | null) ?? cached
       setList(all.filter((a) => a.via !== 'api').sort((a, b) => Number(b.found) - Number(a.found)))
       setBusy(false)
-    })
+    }).catch(() => { if (alive) { setList(cached.filter((a) => a.via !== 'api')); setBusy(false) } })
     return () => { alive = false }
   }, [])
   const rescan = () => desk.call('agents:refresh').then((all: AgentInfo[]) => {
@@ -187,7 +189,7 @@ const INSTALL: Record<string, { cmd?: string; url: string }> = {
   grok: { url: 'https://x.ai' },
   ollama: { url: 'https://ollama.com/download' },
   lmstudio: { url: 'https://lmstudio.ai' },
-  llamacpp: { cmd: 'brew install llama.cpp', url: 'https://github.com/ggml-org/llama.cpp' },
+  llamacpp: { cmd: navigator.platform.startsWith('Win') ? 'winget install llama.cpp' : /Mac/.test(navigator.platform) ? 'brew install llama.cpp' : undefined, url: 'https://github.com/ggml-org/llama.cpp' },
 }
 
 function Missing({ a }: { a: AgentInfo }) {

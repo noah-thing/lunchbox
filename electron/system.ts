@@ -12,6 +12,8 @@ function capture(file: string, args: string[], timeout = 6000, env = process.env
 // Apps started from the Dock or a desktop launcher never see the PATH a shell profile sets up,
 // which is where npm, Homebrew and ~/.local/bin usually come from. Ask a login shell once.
 let cached = ''
+// Check again looks afresh, so a tool installed while the app was open is found.
+export function resetPath() { cached = '' }
 export async function loginPath() {
   if (cached) return cached
   const first = process.env.LUNCHBOX_PATH?.split(delimiter) ?? []
@@ -30,8 +32,11 @@ export async function env(extra: Record<string, string> = {}) {
 
 export async function which(bin: string) {
   const e = await env()
+  if (!/^[\w.@+-]+$/.test(bin)) return ''
   const out = isWin ? await capture('where.exe', [bin], 4000, e) : await capture('/bin/sh', ['-c', `command -v ${bin}`], 4000, e)
-  return out.split(/\r?\n/)[0]?.trim() || ''
+  const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  // npm puts an extensionless shell shim first on Windows, which cannot be started directly.
+  return (isWin && lines.find((l) => /\.(exe|cmd|bat|com)$/i.test(l))) || lines[0] || ''
 }
 
 export async function version(path: string) {
@@ -56,7 +61,10 @@ export function launch(path: string, args: string[], options: SpawnOptions) {
   return spawn(path, args, { ...options, windowsHide: true })
 }
 
-export function stop(child: { pid?: number; kill: (s?: NodeJS.Signals) => boolean }) {
-  if (isWin && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true })
-  else child.kill('SIGTERM')
+// Stop asks politely, then insists: a process that ignores SIGTERM, or left children behind, is
+// killed after three seconds so nothing keeps running or holds the room's queue.
+export function stop(child: { pid?: number; exitCode?: number | null; kill: (s?: NodeJS.Signals) => boolean }) {
+  if (isWin && child.pid) return void spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true })
+  child.kill('SIGTERM')
+  setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL') }, 3000).unref?.()
 }

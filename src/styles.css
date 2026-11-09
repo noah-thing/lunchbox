@@ -96,6 +96,16 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .app{height:100%;display:grid;grid-template-columns:232px 1fr}
 .sidebar{display:flex;flex-direction:column;padding:0 8px 8px;min-height:0}
 .sbtop{height:44px;flex:none;-webkit-app-region:drag}
+/* The name row heads the sidebar: mark over the icon column, name over the labels. */
+.sbbrand{display:flex;align-items:center;gap:6px;height:30px;margin:-4px 0 10px;padding-right:6px}
+.sbhome{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px;font-size:13.5px;color:var(--ink);transition:background-color 140ms var(--out)}
+.sbhome b{font-weight:600;letter-spacing:-.01em}
+.sbhome .logo{flex:none}
+@media (hover:hover){.sbhome:hover{background:var(--hover)}}
+.oblogo{display:block;margin-bottom:22px;color:var(--ink)}
+.about{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12.5px;color:var(--faint)}
+.about b{font-weight:500;color:var(--dim)}
+.about .logo{color:var(--dim)}
 .sbitem,.sbroom{position:relative;display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px;color:var(--dim);transition:color 140ms var(--out),background-color 140ms var(--out),transform 120ms var(--out)}
 .sbitem>*,.sbroom>*{position:relative}
 .sbitem svg{flex:none}
@@ -317,8 +327,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .memfoot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:12px;line-height:1.45;color:var(--faint)}
 
 /* New room: the code band, labelled with the crew, above the question. */
-.newroom{height:100%;display:flex;flex-direction:column;justify-content:center;padding:4vh 24px 2vh;-webkit-app-region:drag}
-.newroom>*{-webkit-app-region:no-drag}
+.newroom{height:100%;display:flex;flex-direction:column;justify-content:center;padding:4vh 24px 2vh}
 .newbody{width:100%;max-width:var(--col);margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .newbody .band{margin-bottom:16px}
 .newbody h1{font-size:30px;font-weight:500;letter-spacing:-.02em;line-height:1.15}
@@ -399,7 +408,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 @media (hover:hover){.obback:hover{color:var(--ink)}}
 
 /* Palette and toast */
-.scrim{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.32);display:flex;justify-content:center;padding-top:15vh;animation:fadein 220ms var(--out) both}
+.scrim{position:fixed;inset:0;z-index:40;-webkit-app-region:no-drag;background:rgba(0,0,0,.32);display:flex;justify-content:center;padding-top:15vh;animation:fadein 220ms var(--out) both}
 [data-theme=light] .scrim{background:rgba(20,20,18,.14)}
 .palette{position:relative;width:600px;align-self:flex-start}
 .pglow{position:absolute;inset:0;border-radius:14px;box-shadow:0 32px 80px -12px rgba(0,0,0,.6);pointer-events:none}
@@ -410,6 +419,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .pinput{display:flex;align-items:center;gap:12px;height:52px;padding:0 16px;border-bottom:1px solid var(--line);color:var(--faint);flex:none}
 .pinput input{flex:1;height:100%;font-size:14.5px;color:var(--ink)}
 .pinput input::placeholder{color:var(--faint)}
+.pinput .pclose{display:flex;padding:4px;margin:-4px;border-radius:6px;cursor:pointer}
+@media (hover:hover){.pinput .pclose:hover kbd{color:var(--ink);box-shadow:inset 0 0 0 1px var(--faint)}}
 .pinput kbd{margin:0;padding:2px 6px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2);opacity:1;color:var(--faint);font-size:10.5px}
 .plist{overflow:auto;padding:6px}
 .pgroup{padding:10px 12px 4px;font:11px var(--mono);color:var(--faint)}
@@ -421,6 +432,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .plist small{margin-left:auto;flex:none;max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:11px var(--mono);color:var(--faint)}
 .plist .empty{padding:20px 12px;color:var(--faint);text-align:center}
 .toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:var(--ink);color:var(--ground);font-size:12.5px;animation:toast 2.6s var(--out) both}
+.toast.long{animation:land 260ms var(--out) both;display:flex;align-items:center;max-width:min(620px,calc(100vw - 48px))}
+.toast .reportbtn{color:var(--ground);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ground) 30%,transparent);flex:none}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,6px)}8%,88%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
 
 /* Live rooms */
@@ -654,6 +667,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 
 /* Search: one card from the moment it starts to what it found */
 .xsearch{margin:8px 0 2px;max-width:600px;border-radius:12px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);overflow:hidden;animation:land 320ms var(--out) both}
+/* Results replace the running search in the same place: the card itself stays, only the posts arrive. */
+.xsearch.done{animation:none}
 .xsearch header{display:flex;align-items:center;gap:7px;height:40px;padding:0 14px;font-size:12.5px;color:var(--dim);white-space:nowrap}
 .xsearch .src{display:grid;place-items:center;width:14px;color:var(--dim);flex:none}
 .xsearch .src svg{width:12px;height:12px}
@@ -663,6 +678,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .xsearch .meta{margin-left:auto;padding-left:12px;color:var(--faint);font-feature-settings:"tnum"}
 .xsearch .dotfield{position:relative;height:52px;border-top:1px solid var(--line)}
 .xsearch .posts{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.xsearch .posts:last-child{border-bottom:0}
 .xsearch .post{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px 14px 13px;background:var(--well);animation:land 520ms var(--out) both;animation-delay:calc(var(--i) * 140ms)}
 .xsearch .post .by{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px}
 .xsearch .post .by b{font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -680,3 +696,106 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .picture{max-width:560px}
 .picture .frame.loaded img{animation:reveal 900ms cubic-bezier(.22,1,.36,1) both}
 @keyframes reveal{from{clip-path:inset(0 100% 0 0 round 12px);filter:blur(6px)}to{clip-path:inset(0 0 0 0 round 12px);filter:blur(0)}}
+
+/* Sidebar: rooms that need you, pinned rooms, the archive. Amber only for waiting. */
+.sbitem.needsyou{color:var(--warn)}
+.sbitem.needsyou small{color:var(--warn)}
+.sbpin{display:flex;color:var(--faint)}
+.sbpin svg{width:11px;height:11px}
+.sbarchived{height:26px;padding:0 8px;margin-top:6px;border-radius:6px;font-size:11.5px;color:var(--faint);text-align:left;transition:color 140ms var(--out)}
+@media (hover:hover){.sbarchived:hover{color:var(--dim)}}
+.sbroom.archived{opacity:.6}
+.inboxrow .grow b.mono{font:12.5px var(--mono)}
+.inboxrow .grow span{display:block;margin-top:3px;font-size:12px;color:var(--faint)}
+
+/* Cache clock in the receipt: a thin bar that drains as the cache cools. */
+.cacheclock{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.cclock{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)}
+.cclock i{position:relative;width:54px;height:3px;border-radius:2px;background:var(--line);overflow:hidden}
+.cclock i::after{content:"";position:absolute;inset:0;background:var(--ink);transform-origin:left;transform:scaleX(var(--k));transition:transform 1s linear}
+.cclock .mono{font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum";min-width:66px;text-align:right}
+.cclock.cold{opacity:.5}
+/* The review menu opens up and to the left, from the message's tool row. */
+.menuwrap.up .menu{left:auto;right:0;width:270px;transform-origin:bottom right}
+.menuhead{padding:7px 10px 5px;font-size:11.5px;color:var(--faint)}
+.msgtools .menuwrap{display:flex}
+/* The message j and k landed on: a quiet bar in the gutter. */
+.kfocus{position:relative}
+.kfocus::before{content:"";position:absolute;left:-14px;top:2px;bottom:2px;width:2px;border-radius:1px;background:var(--ink);opacity:.5}
+
+/* Pushed messages and updates: a banner over the page, toasts in the corner, a card for big news. */
+.nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:land 320ms var(--out) both}
+.nbanner b{font-weight:500}
+.nbanner span span{color:var(--dim)}
+.ntoasts{position:fixed;top:14px;right:14px;z-index:46;display:flex;flex-direction:column;gap:8px;width:320px}
+.ntoast{display:flex;align-items:flex-start;gap:8px;padding:12px 8px 12px 14px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:land 320ms var(--out) both}
+.ntoast b{font-weight:500}
+.ntoast p{margin-top:3px;font-size:12.5px;line-height:1.45;color:var(--dim)}
+.ntoast .linkbtn{margin-top:6px}
+.ncard{position:relative;width:min(480px,calc(100vw - 48px));border-radius:16px;overflow:hidden;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 30px 80px -10px rgba(0,0,0,.6);animation:menu 320ms var(--out) both}
+.ncard img{display:block;width:100%;max-height:260px;object-fit:cover}
+.ncard .nclose{position:absolute;top:10px;right:10px;background:color-mix(in srgb,var(--sheet) 80%,transparent)}
+.ncard .nbody{display:flex;flex-direction:column;gap:10px;padding:20px 22px 18px}
+.ncard h2{font-size:19px;font-weight:500;letter-spacing:-.015em}
+.ncard p{font-size:13.5px;line-height:1.55;color:var(--dim)}
+.linkbtn{padding:0;font-size:12.5px;color:var(--ink);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px}
+/* The beta tag in the name row, and the report sheet it opens. */
+.sbbeta{margin-left:auto;padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:500;letter-spacing:.02em;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2);transition:color 140ms var(--out),box-shadow 140ms var(--out)}
+@media (hover:hover){.sbbeta:hover{color:var(--ink);box-shadow:inset 0 0 0 1px var(--faint)}}
+.reportctx{max-height:140px;overflow:auto;padding:10px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:11.5px/1.5 var(--mono);color:var(--dim);white-space:pre-wrap;word-break:break-word}
+/* Feedback sheet: calm panels like the composer, a sliding segmented control, the app's toggle. */
+.sheetcard.fb{width:min(520px,calc(100vw - 48px));gap:16px;padding:24px}
+.fbhead{display:flex;align-items:flex-start;gap:12px}
+.fbhead h2{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:500;letter-spacing:-.015em}
+.fbhead p{margin-top:5px;font-size:13px;line-height:1.5;color:var(--dim)}
+.fbtag{padding:1px 7px;border-radius:9px;font-size:10.5px;font-weight:500;letter-spacing:.02em;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2)}
+.fbkinds{position:relative;display:grid;grid-template-columns:repeat(3,1fr);padding:3px;border-radius:11px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
+.fbkinds button{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:7px;height:34px;border-radius:8px;font-size:12.5px;color:var(--dim);transition:color 160ms var(--out)}
+.fbkinds button.on{color:var(--ink)}
+.fbkinds svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.fbpill{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px) / 3);border-radius:8px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 1px 2px rgba(0,0,0,.25);transform:translateX(calc(var(--at) * 100%));transition:transform 260ms var(--out)}
+.fbbox,.fbline{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:12px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);transition:box-shadow 160ms var(--out)}
+.fbbox:focus-within,.fbline:focus-within{box-shadow:inset 0 0 0 1px var(--faint)}
+.fbbox>span{font-size:12.5px;font-weight:500;color:var(--ink)}
+.fbbox textarea{min-height:96px;resize:none;background:none;border:0;padding:0;font:14px/1.55 var(--sans);color:var(--ink)}
+.fbbox textarea::placeholder,.fbline input::placeholder{color:var(--faint)}
+.fbline{flex-direction:row;align-items:center;gap:12px;padding:0 14px;height:42px}
+.fbline>span{flex:none;font-size:12.5px;color:var(--dim)}
+.fbline input{flex:1;min-width:0;height:100%;background:none;border:0;font:13px var(--sans);color:var(--ink)}
+.fbctx{display:flex;flex-direction:column;gap:6px}
+.fbctx>span{font-size:11.5px;color:var(--faint)}
+.fbctx pre,.fbpeek{max-height:120px;overflow:auto;padding:10px 12px;border-radius:10px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:11.5px/1.5 var(--mono);color:var(--dim);white-space:pre-wrap;word-break:break-word}
+.fbattach{display:flex;align-items:center;gap:14px}
+.fbattach b{display:block;font-size:13px;font-weight:500}
+.fbattach span{display:block;margin-top:2px;font-size:12px;color:var(--faint)}
+.fbattach .linkbtn{font-size:12px;color:var(--dim)}
+.fbfoot{display:flex;align-items:center;gap:8px;padding-top:4px}
+.fbfoot>span{font-size:11.5px;line-height:1.45;color:var(--faint)}
+.fbsend kbd{margin-left:6px;font-size:10.5px;opacity:.6}
+.fbdone{display:flex;flex-direction:column;align-items:center;gap:8px;padding:28px 12px 24px;text-align:center;animation:land 320ms var(--out) both}
+.fbdone svg{width:40px;height:40px;fill:none;stroke:var(--ink);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;margin-bottom:6px}
+.fbdone svg path{stroke-dasharray:16;stroke-dashoffset:16;animation:fbtick 420ms 160ms var(--out) forwards}
+@keyframes fbtick{to{stroke-dashoffset:0}}
+.fbdone b{font-size:16px;font-weight:500}
+.fbdone span{font-size:13px;color:var(--dim)}
+.reportbtn{margin-left:8px;padding:0 8px;height:22px;border-radius:6px;font-size:11.5px;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line2);vertical-align:1px}
+@media (hover:hover){.reportbtn:hover{color:var(--ink)}}
+
+/* The room title takes clicks and a caret even though the header drags the window. */
+.roomhead h1,.roomhead input{-webkit-app-region:no-drag}
+/* Windows and Linux draw their window buttons over the top right; keep header buttons clear. */
+html[data-platform=win32] .roomhead,html[data-platform=linux] .roomhead,
+html[data-platform=win32] .panelhead,html[data-platform=linux] .panelhead,
+html[data-platform=win32] .bbar,html[data-platform=linux] .bbar{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)}
+html[data-platform=win32] .ntoasts,html[data-platform=linux] .ntoasts,html[data-platform=win32] .nbanner,html[data-platform=linux] .nbanner{top:56px}
+/* Made by, at the foot of Settings. */
+.maker{display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px}
+.makerby{color:var(--faint)}
+.makerx{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--line);transition:box-shadow 140ms var(--out),background-color 140ms var(--out)}
+@media (hover:hover){.makerx:hover{background:var(--hover);box-shadow:inset 0 0 0 1px var(--line2)}}
+.makerx img{width:24px;height:24px;border-radius:50%;object-fit:cover}
+.makername{display:flex;align-items:center;gap:3px}
+.makername b{font-weight:600}
+.makername svg{width:14px;height:14px}
+.makerhandle{color:var(--dim)}
+.makergh{color:var(--dim)}

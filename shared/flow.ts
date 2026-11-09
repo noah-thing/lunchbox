@@ -44,8 +44,11 @@ export function describe(f: Pick<Flow, 'every' | 'at' | 'day'>) {
 
 // {{date}} is today, {{last}} is what the previous run ended with, so a flow can say
 // "what changed since {{last}}" and pick up where it stopped.
-export function fill(text: string, vars: { date: string; last?: string }) {
-  return text.replace(/\{\{\s*date\s*\}\}/g, vars.date).replace(/\{\{\s*last\s*\}\}/g, vars.last?.trim() || 'nothing yet, this is the first run')
+export function fill(text: string, vars: { date: string; last?: string; previous?: string }) {
+  return text
+    .replace(/\{\{\s*date\s*\}\}/g, vars.date)
+    .replace(/\{\{\s*last\s*\}\}/g, vars.last?.trim() || 'nothing yet, this is the first run')
+    .replace(/\{\{\s*previous\s*\}\}/g, vars.previous?.trim() || 'nothing yet, this is the first step')
 }
 
 export type Group = 'code' | 'research' | 'writing' | 'business' | 'personal'
@@ -115,7 +118,7 @@ export const TEMPLATES: Template[] = [
   },
   {
     id: 'site-qa', group: 'code', name: 'Website QA', line: 'Clicks through the site and reports what broke',
-    every: 'day', at: '06:30', crew: ['claude'], pack: 'qa',
+    every: 'day', at: '06:30', crew: ['claude'], pack: 'software',
     steps: [{ text: 'Open the site this folder builds in the Lunchbox browser. Visit every page linked from the home page on desktop and phone sizes. Report console errors, broken links, layout breaks and slow pages, with screenshots.' }],
   },
 

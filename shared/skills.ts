@@ -268,4 +268,4 @@ export const PLAYBOOKS: Playbook[] = [
 ]
 
 export const fillPlaybook = (p: Playbook, input: string) =>
-  p.prompt.includes('{{input}}') ? p.prompt.replace(/\{\{input\}\}/g, input.trim() || '(see below)') : input.trim() ? `${p.prompt}\n\n${input.trim()}` : p.prompt
+  p.prompt.includes('{{input}}') ? p.prompt.replace(/\{\{input\}\}/g, input.trim() || 'what I describe next') : input.trim() ? `${p.prompt}\n\n${input.trim()}` : p.prompt

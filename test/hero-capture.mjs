@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
 
 // Raw footage for the launch video: the renderer's own frames, each with its timestamp, plus a
 // timeline of where and when each moment happens on screen. The edit zooms to those moments.
@@ -40,10 +41,25 @@ try {
   const cdp = await page.context().newCDPSession(page)
   let n = 0
   const t0 = Date.now()
+  // CAPTURE_MP4=1 writes one 60 fps video instead of a folder of frames: the newest frame is
+  // repeated until the next arrives, so the video runs in real time and needs little disk.
+  const FPS = 60
+  const enc = process.env.CAPTURE_MP4 ? spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(FPS), '-i', '-', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '14', '-pix_fmt', 'yuv420p', join(dir, 'screen.mp4')], { stdio: ['pipe', 'inherit', 'inherit'] }) : null
+  let latest = null
+  let written = 0
+  const pump = () => {
+    if (!enc || !latest) return
+    const due = Math.floor(((Date.now() - t0) / 1000) * FPS)
+    while (written < due) { enc.stdin.write(latest); written++ }
+  }
+  const clock = enc && setInterval(pump, 1000 / FPS / 2)
   cdp.on('Page.screencastFrame', async (f) => {
-    const name = `${String(n++).padStart(5, '0')}.jpg`
-    writeFileSync(join(frames, name), Buffer.from(f.data, 'base64'))
-    timeline.frames.push({ name, t: (Date.now() - t0) / 1000 })
+    const buf = Buffer.from(f.data, 'base64')
+    if (enc) { pump(); latest = buf; n++ } else {
+      const name = `${String(n++).padStart(5, '0')}.jpg`
+      writeFileSync(join(frames, name), buf)
+      timeline.frames.push({ name, t: (Date.now() - t0) / 1000 })
+    }
     await cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {})
   })
   // CAPTURE_W=1440 CAPTURE_Q=70 for a quick look that fits on a small disk.
@@ -56,6 +72,28 @@ try {
     timeline.marks.push({ name, t: (Date.now() - t0) / 1000, box })
   }
 
+  // Where the moments are on screen, ten times a second, in window coordinates: the edit's camera
+  // follows these instead of a fixed box, since the conversation moves as it grows.
+  await page.evaluate((t0) => {
+    window.__track = []
+    const pick = {
+      composer: () => document.querySelector('.composer'),
+      plan: () => document.querySelector('.transcript .ev.turn'),
+      search: () => [...document.querySelectorAll('.xsearch')].pop(),
+      image: () => [...document.querySelectorAll('.developing, .picture')].pop(),
+      handoff: () => [...document.querySelectorAll('.transcript .ev.hands')].pop(),
+      last: () => [...document.querySelectorAll('.transcript .ev')].pop(),
+      work: () => [...document.querySelectorAll('.workline')].pop(),
+    }
+    setInterval(() => {
+      const at = { t: (Date.now() - t0) / 1000 }
+      for (const [k, f] of Object.entries(pick)) {
+        const r = f()?.getBoundingClientRect()
+        if (r) at[k] = [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]
+      }
+      window.__track.push(at)
+    }, 100)
+  }, t0)
   // Any frame where the conversation moves up while nobody scrolled is a jump; list them all.
   await page.evaluate(() => {
     window.__jumps = []
@@ -91,8 +129,10 @@ try {
   await page.waitForTimeout(3000)
   timeline.marks.push({ name: 'end', t: (Date.now() - t0) / 1000, box: null })
   timeline.jumps = await page.evaluate(() => window.__jumps)
+  timeline.track = await page.evaluate(() => window.__track)
   console.log('jumps', JSON.stringify(timeline.jumps))
   await cdp.send('Page.stopScreencast')
+  if (enc) { clearInterval(clock); pump(); enc.stdin.end(); await new Promise((r) => enc.on('close', r)); timeline.fps = FPS }
 } catch (e) {
   console.error(e)
   process.exitCode = 1

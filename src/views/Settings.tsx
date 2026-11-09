@@ -1,5 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { Loader, Mark } from '../ui/bits'
+import { Logo } from '../ui/Logo'
+import { Maker } from '../ui/Maker'
 import { ACCESS, desk, reason, reload, short, unavailable, useApp, type RemoteStatus } from '../lib/desk'
 import type { Look } from '../App'
 import { Toggle } from './Flows'
@@ -80,8 +82,8 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <div className="seg">{(['dark', 'light'] as const).map((t) => <button key={t} className={t === theme ? 'on' : ''} onClick={(e) => setTheme(t, e)}>{t === 'dark' ? 'Dark' : 'Light'}</button>)}</div>
           </div>
           <div className="setting">
-            <div className="grow"><b>Look</b><span>Lunchbox floats the work on a sheet. Neyra is flat panes, hairlines and square corners.</span></div>
-            <div className="seg">{(['lunchbox', 'neyra'] as const).map((l) => <button key={l} className={l === look ? 'on' : ''} onClick={() => setLook(l)}>{l === 'lunchbox' ? 'Lunchbox' : 'Neyra'}</button>)}</div>
+            <div className="grow"><b>Look</b><span>Lunchbox floats the work on a soft sheet. Square is flat panes, hairlines and square corners.</span></div>
+            <div className="seg">{(['lunchbox', 'neyra'] as const).map((l) => <button key={l} className={l === look ? 'on' : ''} onClick={() => setLook(l)}>{l === 'lunchbox' ? 'Lunchbox' : 'Square'}</button>)}</div>
           </div>
         </div>
       </section>
@@ -110,6 +112,10 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
           <div className="setting">
             <div className="grow"><b>Plan limits</b><span>Read how much of each plan is left from the login its own tool already has. The login only ever goes to the company that issued it.</span></div>
             <Toggle on={settings.planLimits !== false} set={(v) => reload.settings({ planLimits: v })} label="Plan limits" />
+          </div>
+          <div className="setting">
+            <div className="grow"><b>Install updates automatically</b><span>New versions download in the background and install when you restart. Off, Lunchbox still tells you when one is out.</span></div>
+            <Toggle on={settings.autoUpdate !== false} set={(v) => reload.settings({ autoUpdate: v })} label="Install updates automatically" />
           </div>
           <div className="setting">
             <div className="grow"><b>Checkpoints</b><span>Save the folder before every message so any change can be rewound. Kept outside the project, in its own history.</span></div>
@@ -141,7 +147,8 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <button className="btn small quiet" onClick={restart}>Show again</button>
           </div>
         </div>
-        <p className="hint mono">Lunchbox {env.version}</p>
+        <p className="about"><Logo size={16} /><b>Lunchbox</b><span>{env.version}</span></p>
+        <Maker />
       </section>
     </div>
   )

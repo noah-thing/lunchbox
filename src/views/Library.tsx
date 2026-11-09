@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CATALOG, GROUPS, type CatalogTool } from '../../shared/catalog'
 import { FIELDS, PLAYBOOKS, fillPlaybook, type Field, type Playbook } from '../../shared/skills'
+import { HABITS } from '../../shared/habits'
 import type { Pack } from '../../shared/types'
 import { Loader, Mark } from '../ui/bits'
 import { IconClose, IconSearch, IconShare } from '../ui/icons'
@@ -9,13 +10,14 @@ import { agentOf, desk, reason, reload, useApp } from '../lib/desk'
 import type { View } from '../App'
 import { Toggle } from './Flows'
 
-type Tab = 'playbooks' | 'tools' | 'packs' | 'skills'
+type Tab = 'playbooks' | 'tools' | 'packs' | 'habits' | 'skills'
 export type ToolState = { id: string; state: 'off' | 'starting' | 'ready' | 'error'; tools: { name: string; description: string }[]; error?: string; missing?: string[] }
 
 const TABS: { id: Tab; name: string }[] = [
   { id: 'playbooks', name: 'Playbooks' },
   { id: 'tools', name: 'Tools' },
   { id: 'packs', name: 'Packs' },
+  { id: 'habits', name: 'Habits' },
   { id: 'skills', name: 'Your skills' },
 ]
 
@@ -25,7 +27,7 @@ export function Library({ go, say }: { go: (v: View) => void; say: (t: string) =
   useEffect(() => { sessionStorage.setItem('lb.libtab', tab) }, [tab])
   const skills = useApp((s) => s.skills)
   const packs = useApp((s) => s.packs)
-  const counts: Record<Tab, number> = { playbooks: PLAYBOOKS.length, tools: CATALOG.length, packs: packs.length, skills: skills.length }
+  const counts: Record<Tab, number> = { playbooks: PLAYBOOKS.length, tools: CATALOG.length, packs: packs.length, habits: HABITS.length, skills: skills.length }
 
   return (
     <div className="page">
@@ -46,10 +48,30 @@ export function Library({ go, say }: { go: (v: View) => void; say: (t: string) =
           {tab === 'playbooks' && <Playbooks q={q} go={go} />}
           {tab === 'tools' && <Tools q={q} say={say} />}
           {tab === 'packs' && <Packs q={q} go={go} say={say} />}
+          {tab === 'habits' && <Habits q={q} />}
           {tab === 'skills' && <Skills q={q} go={go} say={say} />}
         </div>
       </div>
     </div>
+  )
+}
+
+// Habits: how the crew works, switched on one by one. Each adds a line to what every agent is told.
+function Habits({ q }: { q: string }) {
+  const on = useApp((s) => s.settings.habits) ?? []
+  const set = (id: string, v: boolean) => reload.settings({ habits: v ? [...on, id] : on.filter((x) => x !== id) })
+  return (
+    <>
+      <p className="hint">Habits change how every agent works in every room. They are off until you turn them on, so the crew only works your way when you ask it to.</p>
+      <div className="settings">
+        {HABITS.filter((h) => match(q, h.name, h.line)).map((h) => (
+          <div key={h.id} className="setting">
+            <div className="grow"><b>{h.name}</b><span>{h.line}</span></div>
+            <Toggle on={on.includes(h.id)} set={(v) => set(h.id, v)} label={h.name} />
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 

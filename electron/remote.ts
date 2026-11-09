@@ -1,4 +1,5 @@
 import { randomInt } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 import type { Access } from '../shared/types'
 import type { Engine } from './room/engine'
 import type { Store } from './store'
@@ -8,7 +9,7 @@ type Hooks = {
   defaults(): { crew: string[]; workspace: string }
 }
 
-type Msg = { message_id: number; chat: { id: number; first_name?: string; username?: string }; text?: string }
+type Msg = { message_id: number; chat: { id: number; type?: string; first_name?: string; username?: string }; text?: string }
 type Update = { update_id: number; message?: Msg; callback_query?: { id: string; data?: string; message?: Msg } }
 
 export type RemoteStatus = { on: boolean; token: boolean; paired: boolean; name?: string; bot?: string; code: string; error?: string }
@@ -24,6 +25,7 @@ export class Remote {
   private offset = 0
   private room: string | null = null
   private code = String(randomInt(100000, 999999))
+  private tries = 0
   private bot = ''
   private error = ''
 
@@ -74,6 +76,7 @@ export class Remote {
   unpair() {
     this.store.saveSettings({ remote: { on: this.conf.on, access: this.conf.access } })
     this.code = String(randomInt(100000, 999999))
+    this.tries = 0
     this.changed()
   }
 
@@ -115,7 +118,7 @@ export class Remote {
   private async handle(u: Update) {
     if (u.callback_query) {
       const q = u.callback_query
-      if (q.message?.chat.id !== this.conf.chat) return
+      if (!q.message || !this.conf.chat || q.message.chat.id !== this.conf.chat) return
       const [kind, room, ref, i] = (q.data ?? '').split(':')
       if (kind === 'd') this.engine.decide(room, ref, Number(i), this.access)
       if (kind === 'r') { this.room = room; await this.reply(this.conf.chat, `Now talking to “${this.store.room(room)?.name ?? 'that room'}”.`) }
@@ -126,12 +129,17 @@ export class Remote {
     if (!m?.text) return
     const text = m.text.trim()
     if (!this.conf.chat) {
+      // Only a private chat can pair, so a group the bot sits in never gets control.
+      if (m.chat.type && m.chat.type !== 'private') return
+      // Six digits can be guessed; five wrong tries end pairing until a new code is made.
+      if (this.tries >= 5) return
       if (text.replace(/^\/start\s*/, '') === this.code) {
         this.store.saveSettings({ remote: { ...this.conf, chat: m.chat.id, name: m.chat.first_name || m.chat.username } })
         this.changed()
         return this.reply(m.chat.id, 'Paired with Lunchbox. Write to talk to your latest room, /rooms to pick another, /new to start one, /stop to stop the work.')
       }
-      return this.reply(m.chat.id, 'Send the six digit code shown in Lunchbox, Settings, Phone.')
+      if (/^\/start\s*\d|^\d{4,}$/.test(text)) this.tries++
+      return this.reply(m.chat.id, this.tries >= 5 ? 'Too many wrong codes. Make a new one in Lunchbox, Settings, Phone.' : 'Send the six digit code shown in Lunchbox, Settings, Phone.')
     }
     if (m.chat.id !== this.conf.chat) return
 
@@ -156,6 +164,7 @@ export class Remote {
       if (!goal) return this.reply(m.chat.id, 'Say what the room is for, like /new find out what people think of our launch')
       const d = this.hooks.defaults()
       if (!d.crew.length) return this.reply(m.chat.id, 'No agent is ready on the computer.')
+      mkdirSync(d.workspace, { recursive: true })
       const meta = this.engine.create({ crew: d.crew, workspace: d.workspace })
       this.room = meta.id
       this.engine.send(meta.id, goal, this.access, { from: 'phone' })

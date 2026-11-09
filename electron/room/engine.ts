@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { sentence } from '../../shared/steps'
 import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
-import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage } from '../../shared/types'
+import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
 import { classify, route, type Category } from '../../shared/route'
 import { detect, run } from '../agents'
@@ -11,7 +11,7 @@ import type { Hands, Tool } from '../hands'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
 import { clearMemory, writeMemory } from './project'
-import { execute, type Ran } from '../shell'
+import { execute, kill, type Ran } from '../shell'
 import type { Snapshots } from '../snap'
 import type { Store } from '../store'
 import { prompt, protocol } from './context'
@@ -35,8 +35,9 @@ type Task =
 type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string> }
 type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
-const MAX_HOPS = 8
-const IMAGE_MODEL = 'gpt-6-astra'
+// Failures of one command in one turn before the loop guard stops it.
+const LOOP = 3
+const MAX_HOPS = 24
 // Grok Build only loads MCP servers from config files, which the room does not touch.
 const BORROWS = new Set(['claude', 'codex', 'gemini'])
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
@@ -49,6 +50,8 @@ export class Engine {
   private queues = new Map<string, Promise<unknown>>()
   private gens = new Map<string, number>()
   private flushed = new Set<string>()
+  // The protocol last sent to each resumed session, so an unchanged one is not sent again.
+  private protos = new Map<string, string>()
   private allowed = new Map<string, Set<string>>()
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
@@ -78,10 +81,13 @@ export class Engine {
   }
 
   // The next crewmate who can take the work, in crew order, preferring one with the same hands.
-  private fallback(meta: RoomMeta, from: string) {
+  // The next one in the crew who can take the work. When the whole crew is out, anyone else that
+  // is set up and ready takes it, so a wall never ends the task. The asker never answers itself.
+  private fallback(meta: RoomMeta, from: string, asker?: string) {
     const needTools = this.agent(from)?.tools
     const order = [...meta.crew.slice(meta.crew.indexOf(from) + 1), ...meta.crew.slice(0, Math.max(0, meta.crew.indexOf(from)))]
-    const ok = order.filter((id) => id !== from && !this.why(id))
+    const outside = this.agents.filter((a) => !meta.crew.includes(a.id) && a.ready).map((a) => a.id)
+    const ok = [...order, ...outside].filter((id) => id !== from && id !== asker && !this.why(id))
     return ok.find((id) => !needTools || this.agent(id)?.tools) ?? ok[0] ?? null
   }
 
@@ -119,7 +125,7 @@ export class Engine {
   summaries(): RoomSummary[] {
     return this.store.list().map((m) => {
       const l = this.live(m.id)
-      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, flow: m.flow, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
+      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, flow: m.flow, pinned: m.pinned, archived: m.archived, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
     })
   }
 
@@ -230,6 +236,28 @@ export class Engine {
     return meta
   }
 
+  mark(room: string, patch: { pinned?: boolean; archived?: boolean }) {
+    this.store.update(room, (m) => {
+      if (patch.pinned !== undefined) m.pinned = patch.pinned || undefined
+      // An archived room leaves the list; pinning it again would only hide it twice.
+      if (patch.archived !== undefined) { m.archived = patch.archived || undefined; if (patch.archived) m.pinned = undefined }
+    })
+    this.list()
+  }
+
+  // Every decision and command waiting for a person, across all rooms, newest room first.
+  inbox(): Waiting[] {
+    return this.store.list().flatMap((m) => {
+      const events = this.store.events(m.id)
+      const chosen = new Set(events.filter((e) => e.kind === 'chose').map((e) => (e as { ref: string }).ref))
+      const items: Waiting['items'] = [
+        ...events.flatMap((e) => (e.kind === 'decide' && !chosen.has(e.id) ? [{ kind: 'decide' as const, ref: e.id, text: e.text, options: e.options.map((o) => o.label) }] : [])),
+        ...this.live(m.id).runs.filter((r) => r.state === 'asking').map((r) => ({ kind: 'run' as const, id: r.id, command: r.command, reason: r.verdict?.reason ?? '' })),
+      ]
+      return items.length ? [{ room: m.id, name: m.name, items }] : []
+    })
+  }
+
   rename(room: string, name: string) {
     this.store.update(room, (m) => { m.name = name.trim() || m.name })
     this.list()
@@ -270,6 +298,11 @@ export class Engine {
     return copy
   }
 
+  // Quitting the app stops every agent and command, so nothing keeps editing files afterwards.
+  stopAll() {
+    for (const room of this.lives.keys()) this.stop(room)
+  }
+
   // Stopping is instant from the user's side: what each agent wrote so far lands in the room now
   // and the live turns clear, while the processes are killed and exit in their own time.
   stop(room: string) {
@@ -277,6 +310,9 @@ export class Engine {
     for (const p of this.procs.get(room) ?? []) p.stop()
     this.procs.get(room)?.clear()
     const live = this.live(room)
+    // Commands too: a running one is killed and one waiting for approval is refused, so the
+    // room's queue never hangs on a question nobody will answer.
+    for (const r of live.runs) kill(r.id)
     for (const lt of live.turns) {
       this.flushed.add(lt.id)
       if (lt.text.trim()) this.add(room, { kind: 'say', who: lt.who, text: lt.text.trim(), acts: lt.acts, error: 'Stopped' })
@@ -316,7 +352,11 @@ export class Engine {
       return
     }
     const head = text.match(/^\s*((?:@[\w-]+[\s,]*)+)/)?.[1] ?? ''
-    const mentioned = meta.crew.filter((id) => new RegExp(`@${id}(?![\\w-])`, 'i').test(head))
+    // @ reaches any agent that is set up, by id or by name. One from outside the crew joins it.
+    const named = (a: AgentInfo) => [a.id, a.short.toLowerCase().replace(/[^a-z0-9]+/g, '-')]
+    const mentioned = this.agents.filter((a) => a.ready && named(a).some((h) => new RegExp(`@${h}(?![\\w-])`, 'i').test(head))).map((a) => a.id)
+    const joining = mentioned.filter((id) => !meta.crew.includes(id))
+    if (joining.length) this.setCrew(room, [...meta.crew, ...joining])
     const first = !this.store.events(room).some((e) => e.kind === 'you')
     const cat = classify(text)
     const lead = mentioned[0] ?? this.lead(meta, cat)
@@ -331,9 +371,15 @@ export class Engine {
       if (arena) {
         const id = uid()
         const crew = meta.crew.filter((c) => !this.why(c))
+        if (!crew.length) this.add(room, { kind: 'note', tone: 'warn', text: 'Nobody in the crew can answer right now. Each agent is out, turned off or over its budget; see Pool for when they are back.' })
         await Promise.all(crew.map((who) => this.turn(room, who, { kind: 'reply' }, access, { ...ctx, arena: id })))
       } else {
         await this.conversation(room, lead, { kind: 'reply' }, access, ctx)
+        // Everyone else named at the start answers in turn, each seeing what came before.
+        for (const who of mentioned.slice(1)) {
+          if ((this.gens.get(room) ?? 0) !== gen) break
+          await this.conversation(room, who, { kind: 'reply' }, access, ctx)
+        }
       }
       this.settle(room)
     })
@@ -399,7 +445,8 @@ export class Engine {
     const meta = this.store.room(room)
     if (!meta) return
     if (this.waiting(room)) this.hooks.notify(meta.name, 'Needs you', room)
-    else this.hooks.notify(meta.name, 'Done', room)
+    // A flow says once when it is finished, not after every step.
+    else if (!meta.flow) this.hooks.notify(meta.name, 'Done', room)
   }
 
   private async conversation(room: string, who: string, task: Task, access: Access, ctx: Ctx) {
@@ -467,7 +514,8 @@ export class Engine {
     } else {
       const ask = `Generate this image with your image tool and save it as ${path}${size ? ` at ${size}` : ''}. Reply with the path only.\n\nImage: ${prompt}`
       // Quiet: the image itself is what the room shows, not the instruction that produced it.
-      const said = await this.consult(room, from, 'codex', ask, access, ctx, { codex: this.store.settings.imageModel || IMAGE_MODEL }, true, prompt, size).catch((e: Error) => e.message)
+      // The person's own Codex model draws the image unless they picked one for images.
+      const said = await this.consult(room, from, 'codex', ask, access, ctx, this.store.settings.imageModel ? { codex: this.store.settings.imageModel } : undefined, true, prompt, size).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
     this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage })
@@ -485,18 +533,17 @@ export class Engine {
       return this.turn(room, next, task, access, ctx)
     }
     const me = this.agent(who)!
-    const crew = meta.crew.map((id) => this.agent(id)).filter((a): a is AgentInfo => !!a && !this.why(a.id))
+    const crew = meta.crew.map((id) => this.agent(id)).filter((a): a is AgentInfo => !!a)
     if (!crew.some((a) => a.id === who)) crew.unshift(me)
     const pack = this.hooks.packs().find((p) => p.id === meta.pack)
     const session = meta.sessions[who]
-    const resumed = !!session && me.via === 'cli' && who !== 'gemini'
+    // Only the CLIs Lunchbox knows how to resume get a delta; a connector always gets the whole room.
+    const resumed = !!session && ['claude', 'codex', 'grok'].includes(who)
     const events = this.store.events(room)
-    const p = prompt(meta, events, who, this.task(task), this.name, resumed)
-    this.store.update(room, (m) => {
-      m.seen[who] = p.seen
-      m.saved.full += p.full
-      m.saved.sent += p.sent
-    })
+    // Crewmates who are out right now are named in the request, not the protocol, so the cached
+    // protocol stays the same when someone hits a limit and comes back.
+    const out = meta.crew.filter((id) => id !== who && this.why(id)).map(this.name)
+    const p = prompt(meta, events, who, this.task(task) + (out.length ? `\n(Out right now, so do not ask them: ${out.join(', ')}.)` : ''), this.name, resumed)
 
     const live = this.live(room)
     const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now(), image: task.kind === 'answer' && task.quiet ? true : undefined, label: task.kind === 'answer' ? task.label : undefined, size: task.kind === 'answer' ? task.size : undefined }
@@ -511,12 +558,30 @@ export class Engine {
       : []
     const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
+    const fails = new Map<string, number>()
+    let looped = ''
+    const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits)
     const running = run(who, {
-      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name)), cwd: meta.workspace, access,
+      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || this.protos.get(`${room}:${who}`) !== system, cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
-      if (u.acts) { lt.acts.push(...u.acts); lt.now = undefined; live.doing = `${me.short} is thinking` }
+      if (u.acts) {
+        lt.acts.push(...u.acts)
+        lt.now = undefined
+        live.doing = `${me.short} is thinking`
+        // The loop guard: the same command failing three times means the agent is going round in
+        // circles, spending the plan. Stop the turn and let the person decide.
+        for (const a of u.acts) {
+          // An edit in between means the agent is fixing, not looping; a pass clears the count.
+          if (a.t === 'edit') { fails.clear(); continue }
+          if (a.t !== 'cmd' || a.exit === null) continue
+          if (a.exit === 0) { fails.delete(a.command); continue }
+          const n = (fails.get(a.command) ?? 0) + 1
+          fails.set(a.command, n)
+          if (n >= LOOP && !looped) { looped = a.command; running.stop() }
+        }
+      }
       if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
       this.changed(room)
     })
@@ -529,6 +594,24 @@ export class Engine {
     live.turns = live.turns.filter((t) => t !== lt)
     if (live.active === who) live.active = live.turns[live.turns.length - 1]?.who ?? null
     this.changed(room)
+    if (looped) {
+      this.store.record(who, room, r.usage)
+      this.hooks.emit('ledger', this.ledger())
+      if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
+      this.flushed.delete(lt.id)
+      this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts.length ? r.acts : lt.acts, usage: r.usage, ms: r.ms })
+      const other = this.fallback(meta, who)
+      this.add(room, {
+        kind: 'decide',
+        text: `${me.short} ran \`${looped}\` ${LOOP} times and it failed each time, so Lunchbox paused it before it spends more of your plan.`,
+        options: [
+          { label: 'Try another way', action: { type: 'ask', who, text: `@${who} \`${looped}\` failed ${LOOP} times. Step back, find the cause first, and try a different approach. Say what you changed.` } },
+          ...(other ? [{ label: `Hand it to ${this.name(other)}`, action: { type: 'ask' as const, who: other, text: `@${other} ${me.short} got stuck: \`${looped}\` failed ${LOOP} times. Look at why and fix it.` } }] : []),
+          { label: 'Leave it', action: { type: 'accept' } },
+        ],
+      })
+      return null
+    }
 
     if (r.usage.input + r.usage.output + r.usage.cached > 0) {
       // Memory the agent already had and was not sent again, in tokens at about four characters each.
@@ -549,6 +632,12 @@ export class Engine {
     }
     if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
 
+    // A reply that got partway before the limit is kept, and the limit still counts.
+    if (r.text && r.limit) {
+      this.store.spent[who] = { until: r.limit.until, reason: 'limit' }
+      this.store.saveState()
+      this.hooks.emit('ledger', this.ledger())
+    }
     if (!r.text && (r.limit || r.error)) {
       if (r.error) r.error = plain(r.error)
       if (r.limit) this.store.spent[who] = { until: r.limit.until, reason: r.error ?? 'limit' }
@@ -557,9 +646,10 @@ export class Engine {
       if (r.limit) this.hooks.emit('ledger', this.ledger())
       else this.refresh()
       // In side by side everyone is already answering, so a failed slot stays empty and says why.
-      const next = ctx.arena ? null : this.fallback(meta, who)
+      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' ? task.from : undefined)
       this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
       if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
+      if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
       return null
     }
     if (this.store.health[who]) {
@@ -596,7 +686,14 @@ export class Engine {
         })
       }
     }
-    this.store.update(room, (m) => { m.heard[who] = events.length })
+    // Only a turn that happened counts as delivered: memory and savings move on success.
+    this.store.update(room, (m) => {
+      m.heard[who] = events.length
+      m.seen[who] = p.seen
+      m.saved.full += p.full
+      m.saved.sent += p.sent
+    })
+    this.protos.set(`${room}:${who}`, system)
 
     const edited = r.acts.filter((a) => a.t === 'edit').map((a) => (a as { path: string }).path)
     if (edited.length) {

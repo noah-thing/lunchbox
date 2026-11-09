@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { extname, join, resolve, sep } from 'node:path'
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
-import type { Access, Flow, Settings, Skill } from '../shared/types'
-import { modelsFor } from './agents'
+import type { Access, Connector, Flow, Report, Settings, Skill } from '../shared/types'
+import { installed, modelsFor, testConnector, useConnectors } from './agents'
 import { markdown, replay } from './export'
 import { Flows } from './flows'
 import { fetchPack, importPack, loadPacks, packJson, removePack } from './packs'
@@ -12,6 +12,9 @@ import { Hands } from './hands'
 import { Remote } from './remote'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
+import { resetPath } from './system'
+import { Updates } from './updates'
+import { catchErrors, diagnostics, flush, logError, send } from './report'
 import { Snapshots } from './snap'
 import { Browser, type Device } from './browser'
 import { Toolbox } from './tools'
@@ -40,6 +43,7 @@ let flows: Flows
 let remote: Remote
 let browser: Browser
 let toolbox: Toolbox
+let updates: Updates | undefined
 const packs = () => loadPacks(store.packFiles())
 const name = (id: string) => engine.agents.find((a) => a.id === id)?.short ?? id
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'room'
@@ -81,6 +85,8 @@ function createWindow() {
     ...(mac
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 15 } }
       : { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 44 } }),
+    // Windows and Linux take the window and taskbar icon from here; macOS from the app bundle.
+    ...(mac ? {} : { icon: join(__dirname, '../build/icon-1024.png') }),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   })
   win.once('ready-to-show', () => win?.show())
@@ -113,7 +119,7 @@ function wire() {
 
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
   h('agents', () => engine.agents)
-  h('agents:refresh', () => engine.refresh())
+  h('agents:refresh', () => { resetPath(); return engine.refresh() })
   h('limits', () => limits.get())
   h('limits:refresh', () => limits.poll().then(() => limits.get()))
   h('local:start', async (id: string) => {
@@ -137,11 +143,13 @@ function wire() {
     return engine.create({ ...opts, workspace: folder })
   })
   h('room:rename', (id: string, name: string) => engine.rename(id, name))
+  h('room:mark', (id: string, patch: { pinned?: boolean; archived?: boolean }) => engine.mark(id, patch))
+  h('inbox', () => engine.inbox())
   h('room:remove', (id: string) => engine.remove(id))
   h('room:fork', (id: string, at: string) => engine.fork(id, at))
   h('room:crew', (id: string, crew: string[]) => engine.setCrew(id, crew))
   h('room:workspace', (id: string, path: string) => engine.setWorkspace(id, path))
-  h('room:send', (id: string, text: string, access: Access, arena: boolean, files?: string[]) => { engine.send(id, text, access, { arena, files }) })
+  h('room:send', (id: string, text: string, access: Access, arena: boolean, files?: string[]) => { engine.send(id, text, access, { arena, files: files?.length ? into(id, files) : files }) })
   h('room:project', (id: string, on: boolean) => engine.setProject(id, on))
   h('room:rewind', (id: string, target: { event?: string; ref?: string }) => engine.rewind(id, target))
   h('room:changed', (id: string, event: string) => engine.changedSince(id, event))
@@ -227,17 +235,30 @@ function wire() {
   h('settings', () => store.settings)
   h('settings:set', async (patch: Partial<Settings>) => {
     store.saveSettings(patch)
-    if (patch.models || patch.disabled) await engine.refresh()
+    if (patch.connectors) useConnectors(store.settings.connectors)
+    if (patch.autoUpdate !== undefined) updates?.setAuto(patch.autoUpdate)
+    if (patch.models || patch.disabled || patch.connectors) await engine.refresh()
     if (patch.budgets) emit('ledger', engine.ledger())
     return store.settings
   })
   h('spent:clear', (id: string) => { delete store.spent[id]; store.saveState(); emit('ledger', engine.ledger()) })
-  h('keys', () => Object.fromEntries(Object.entries(store.keys()).map(([k, v]) => [k, `${v.slice(0, 4)}…${v.slice(-4)}`])))
+  h('keys', () => Object.fromEntries(Object.entries(store.keys()).filter(([k]) => !k.startsWith('tool:')).map(([k, v]) => [k, v.length >= 20 ? `${v.slice(0, 4)}…${v.slice(-4)}` : '••••••••'])))
   h('keys:set', async (provider: string, key: string) => {
     store.setKey(provider, key.trim())
     return engine.refresh()
   })
   h('keys:secure', () => safeStorage.isEncryptionAvailable())
+  h('update', () => updates?.state)
+  h('update:check', () => updates?.check())
+  h('update:install', () => updates?.install())
+  h('update:download', () => updates?.download())
+  h('notices', () => updates?.shown() ?? [])
+  h('notice:dismiss', (id: string) => updates?.dismiss(String(id)))
+  h('report:diagnostics', () => diagnostics(engine.agents))
+  h('report:send', (r: Report) => send(r, store.dir))
+  h('error:log', (message: string) => logError('window', String(message).slice(0, 4000)))
+  h('connector:test', (c: Connector, key: string) => testConnector(c, key ?? ''))
+  h('connector:installed', (bins: string[]) => installed(Array.isArray(bins) ? bins : []))
   h('packs', () => packs())
   h('packs:import', async () => {
     if (!win) return null
@@ -291,6 +312,32 @@ function wire() {
   })
 }
 
+catchErrors()
+
+// Attachments go inside the room's folder, where every agent may read them, under a plain name a
+// model won't mangle; the folder is kept out of the project's git status.
+function into(room: string, files: string[]) {
+  const ws = store.room(room)?.workspace
+  if (!ws) return files
+  const dir = join(ws, '.lunchbox', 'attachments')
+  return files.map((f) => {
+    try {
+      if (!existsSync(f) || statSync(f).isDirectory() || statSync(f).size > 200e6) return f
+      if (!relative(ws, f).startsWith('..') && !isAbsolute(relative(ws, f))) return f
+      mkdirSync(dir, { recursive: true })
+      const exclude = join(ws, '.git', 'info', 'exclude')
+      if (existsSync(join(ws, '.git', 'info')) && !(existsSync(exclude) && readFileSync(exclude, 'utf8').includes('.lunchbox/'))) appendFileSync(exclude, '\n.lunchbox/\n')
+      const ext = extname(f).replace(/[^.\w]/g, '').slice(0, 10)
+      const name = `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${basename(f, extname(f)).normalize('NFKD').replace(/[^\w.-]+/g, '-').slice(0, 40)}${ext}`
+      const to = join(dir, name)
+      copyFileSync(f, to)
+      return to
+    } catch {
+      return f
+    }
+  })
+}
+
 app.whenReady().then(async () => {
   store = new Store(join(app.getPath('userData'), 'data'), cipher)
   const hands = new Hands()
@@ -308,13 +355,17 @@ app.whenReady().then(async () => {
   wire()
   const icon = join(__dirname, '../build/icon-1024.png')
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
+  useConnectors(store.settings.connectors)
   createWindow()
+  updates = new Updates(store, emit)
+  updates.start()
+  flush(store.dir).catch(() => {})
   await engine.refresh()
   limits.start()
   flows.start()
   remote.start()
   toolbox.startAll()
 })
-app.on('before-quit', () => { limits?.stop(); flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
+app.on('before-quit', () => { engine?.stopAll(); limits?.stop(); flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
 app.on('window-all-closed', () => { if (!mac) app.quit() })
 app.on('activate', () => { if (!win) createWindow() })

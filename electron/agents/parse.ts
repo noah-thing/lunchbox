@@ -34,9 +34,25 @@ function claudeSaved(models: Record<string, any> | undefined) {
   return known.length ? known.reduce((a, b) => a + b, 0) : undefined
 }
 
+// A command-line agent with no structured output: everything it prints is the answer.
+export function textOut() {
+  const turn = newTurn()
+  return {
+    turn,
+    line: () => null,
+    raw: (s: string): Update => {
+      const delta = (turn.text ? '\n' : '') + s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+      turn.text += delta
+      return { delta }
+    },
+  }
+}
+
 export const newTurn = (): Turn => ({ text: '', final: '', acts: [], usage: { input: 0, output: 0, cached: 0, cost: 0 }, denied: [] })
 
 const SHELL_TOOLS = new Set(['Bash', 'run_terminal_command', 'run_shell_command', 'shell', 'exec_command'])
+const X_SEARCH = /^(x[ _-]?search:?|x_keyword_search|x_semantic_search|search_x)$/i
+const WEB_SEARCH = /^(websearch|web_search|google_web_search|search_web)$/i
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'search_replace', 'write_file', 'replace', 'edit_file', 'create_file'])
 
 const clip = (s: string, n = 4000) => (s.length > n ? '…' + s.slice(-n) : s)
@@ -65,6 +81,19 @@ export function toAct(name: string, input: Record<string, unknown>, raw: string,
   if (SHELL_TOOLS.has(name)) {
     const code = output.match(/exit(?:ed with)? code:?\s*(-?\d+)/i)
     return { t: 'cmd', command: String(input.command ?? ''), exit: exit ?? (code ? Number(code[1]) : failed ? 1 : 0), out: clip(output, 1500) }
+  }
+  // Every CLI names its search differently. Grok only says "X search:" when it starts and puts the
+  // query in the result, so the act carries the query from wherever it is.
+  if (X_SEARCH.test(name) || WEB_SEARCH.test(name)) {
+    let query = detail(input)
+    let mode = ''
+    try {
+      const j = JSON.parse(raw)
+      const inner = typeof j.input === 'string' ? JSON.parse(j.input) : j.input ?? {}
+      query = inner.query ?? query
+      mode = inner.mode ? ` --${String(inner.mode).toLowerCase()}` : ''
+    } catch {}
+    return { t: 'tool', name: X_SEARCH.test(name) ? 'x_search' : 'web_search', detail: `${query}${mode}`.trim(), ok: !failed }
   }
   if (EDIT_TOOLS.has(name)) return { t: 'edit', path: String(input.file_path ?? input.path ?? input.target_file ?? ''), change: name === 'Write' || name === 'write_file' || name === 'create_file' ? 'write' : 'edit' }
   return { t: 'tool', name, detail: detail(input), ok: !failed }
