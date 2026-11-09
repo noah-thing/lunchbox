@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
 import { plan } from '../../shared/plan'
-import { Loader, Mark, Meter, Strip } from '../ui/bits'
+import { Loader, Mark, Meter, Strip, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Rich } from '../ui/Rich'
-import { IconCopy, IconFolder, IconFork, IconMore, IconPanel, IconPin, IconSplit } from '../ui/icons'
-import { agentOf, clock, desk, KIND_LABEL, money, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
+import { IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconRewind, IconSplit } from '../ui/icons'
+import { agentOf, clock, desk, KIND_LABEL, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
+import { Changes } from './Changes'
 import { Composer } from './Composer'
 
 type Data = { meta: RoomMeta; events: Event[]; live: Live }
@@ -18,6 +19,10 @@ type Actions = {
   kill(run: string): void
   pin(ev: string): void
   fork(ev: string): void
+  checkpoint(ev: string): boolean
+  changed(ev: string): Promise<string[]>
+  rewind(target: { event?: string; ref?: string }): void
+  review(ev: string): void
 }
 
 const remembered = (key: string, fallback: boolean) => {
@@ -32,6 +37,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   const [panel, setPanel] = useState(() => remembered('panel', innerWidth >= 1280))
   const [replay, setReplay] = useState<number | null>(null)
   const [arena, setArena] = useState(false)
+  const [review, setReview] = useState<string | null>(null)
   const early = useRef<Event[]>([])
   const agents = useApp((s) => s.agents)
 
@@ -88,8 +94,18 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     kill: (run) => desk.call('run:kill', run),
     pin: (ev) => { desk.call('room:pin', id, ev); say('Pinned to shared memory') },
     fork: async (ev) => { const copy = await desk.call('room:fork', id, ev); if (copy) open(copy.id) },
+    checkpoint: (ev) => !!meta.checkpoints?.some((c) => c.event === ev),
+    changed: async (ev) => (await desk.call('room:changed', id, ev).catch(() => [])) ?? [],
+    rewind: async (target) => {
+      try {
+        const r = await desk.call('room:rewind', id, target)
+        say(target.ref ? 'Rewind undone' : `Folder rewound${r?.removed ? `, ${r.removed} new file${r.removed > 1 ? 's' : ''} removed` : ''}`)
+      } catch (e) { say(reason(e)) }
+    },
+    review: (ev) => setReview(ev),
   }
-  const send = (text: string) => desk.call('room:send', id, text, access, arena)
+  const reviewed = review ? events.find((e) => e.id === review) : undefined
+  const send = (text: string, files?: string[]) => desk.call('room:send', id, text, access, arena, files)
   const pick = async () => { const p = await desk.call('pick'); if (p) desk.call('room:workspace', id, p) }
   const shown = replay === null ? events : events.slice(0, replay)
 
@@ -115,12 +131,16 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
         <div className="dock">
           <Composer
             crew={meta.crew} setCrew={(c) => desk.call('room:crew', id, c)} onSend={send} access={access} setAccess={setAccess}
-            busy={busy} onStop={() => desk.call('room:stop', id)} arena={arena} setArena={setArena} pack={meta.pack}
+            busy={busy} onStop={() => desk.call('room:stop', id)} arena={arena} setArena={setArena} pack={meta.pack} folder={meta.workspace}
             placeholder={meta.crew.length > 1 ? 'Message the room. @ to address one agent, ! to run a command.' : 'Message the room. Start with ! to run a command.'}
           />
         </div>
       </section>
       {panel && <Panel meta={meta} events={events} live={live} agents={agents} />}
+      {review && (
+        <Changes room={id} event={review} title={reviewed?.kind === 'you' ? reviewed.text.split('\n')[0].slice(0, 80) : 'this message'}
+          close={() => setReview(null)} rewind={() => actions.rewind({ event: review })} />
+      )}
     </div>
   )
 }
@@ -154,6 +174,23 @@ function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta
           </button>
           <button className="item" onClick={() => { desk.call('reveal', meta.workspace); close() }}>
             <span className="grow"><b>Open folder</b><span>{short(meta.workspace)}</span></span>
+          </button>
+          <div className="sep" />
+          <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'html')) say('Replay saved. Open it in any browser and press Play.') }}>
+            <span className="grow"><b>Export replay</b><span>One HTML file that plays the room back</span></span>
+          </button>
+          <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'md')) say('Saved as Markdown') }}>
+            <span className="grow"><b>Export as Markdown</b><span>The conversation as plain text</span></span>
+          </button>
+          <button className="item" onClick={async () => {
+            close()
+            try {
+              const written: string[] = await desk.call('room:project', id, !meta.project)
+              say(meta.project ? 'Stopped writing memory to the project' : `Room memory is now kept in ${written.join(', ')}`)
+            } catch (e) { say(reason(e)) }
+          }}>
+            <span className="grow"><b>{meta.project ? 'Stop writing to AGENTS.md' : 'Keep memory in AGENTS.md'}</b><span>{meta.project ? 'Removes the section Lunchbox added' : 'So the same agents know it outside Lunchbox too'}</span></span>
+            {meta.project && <i className="check" />}
           </button>
           <div className="sep" />
           <button className={`item danger${sure ? ' sure' : ''}`} onClick={() => { if (!sure) return setSure(true); desk.call('room:remove', id); close() }} onMouseLeave={() => setSure(false)}>
@@ -248,9 +285,14 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
     case 'you':
       return (
         <div className="mine" data-id={e.id}>
+          {e.from && <span className="to">{e.from === 'flow' ? <><IconClock />from a flow</> : <><IconPhone />from your phone</>}</span>}
           {e.to && <span className="to">to {e.to.map((w) => agentOf(w, agents).short).join(', ')}</span>}
           {e.arena && <span className="to"><IconSplit />side by side</span>}
-          <div className="bubble"><Rich text={e.text} /></div>
+          <div className="bubble">
+            <Rich text={e.text} />
+            {e.files && <div className="attached">{e.files.map((f) => <span key={f} className="file" title={f}><Thumb path={f} /><span>{f.split(/[\\/]/).pop()}</span></span>)}</div>}
+          </div>
+          {actions.checkpoint(e.id) && <Rewind id={e.id} actions={actions} />}
         </div>
       )
     case 'say': {
@@ -326,7 +368,12 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
     case 'pick':
       return <Ev id={e.id} mark={<span className="gutdot" />} className="note"><span>You kept {agentOf(e.who, agents).short}’s answer. It is in the room’s memory as a decision.</span></Ev>
     case 'note':
-      return <Ev id={e.id} mark={<span className={`gutdot${e.tone === 'bad' ? ' bad' : e.tone === 'warn' ? ' warn' : ''}`} />} className={`note${e.tone ? ' ' + e.tone : ''}`}><span><Rich text={e.text} /></span></Ev>
+      return (
+        <Ev id={e.id} mark={<span className={`gutdot${e.tone === 'bad' ? ' bad' : e.tone === 'warn' ? ' warn' : ''}`} />} className={`note${e.tone ? ' ' + e.tone : ''}`}>
+          <span><Rich text={e.text} /></span>
+          {e.undo && <button className="btn small quiet" onClick={() => actions.rewind({ ref: e.undo })}>Undo</button>}
+        </Ev>
+      )
     case 'crew':
       return (
         <Ev id={e.id} mark={<span className="gutdot" />} className="note">
@@ -419,11 +466,31 @@ function Acts({ acts, live = false }: { acts: Act[]; live?: boolean }) {
   )
 }
 
+// Under your message: which files changed since it was sent, and a way back to before it.
+function Rewind({ id, actions }: { id: string; actions: Actions }) {
+  const [files, setFiles] = useState<string[] | null>(null)
+  const [sure, setSure] = useState(false)
+  const look = () => { if (files === null) actions.changed(id).then(setFiles) }
+  return (
+    <div className="rewind" onMouseEnter={look} onFocus={look} onMouseLeave={() => setSure(false)}>
+      <button className={sure ? 'sure' : ''} onClick={() => { if (!sure) return setSure(true); setSure(false); setFiles(null); actions.rewind({ event: id }) }}
+        title="Put the folder back the way it was before this message">
+        <IconRewind />{sure ? `Rewind ${files?.length ? `${files.length} file${files.length > 1 ? 's' : ''}` : 'the folder'}?` : 'Rewind'}
+      </button>
+      {!sure && (
+        <button onClick={() => actions.review(id)} title="Files changed in answer to this message, with diffs">
+          <IconDiff />{files && files.length > 0 ? `${files.length} changed since` : 'Changes'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function Tools({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; actions: Actions }) {
   const text = e.kind === 'say' ? e.text : e.answer
   const u = e.usage
   return (
-    <div className="tools">
+    <div className="msgtools">
       {e.ms ? <span>{(e.ms / 1000).toFixed(1)} s</span> : null}
       {u && u.input + u.output > 0 ? <span>{tokens(u.input + u.output + u.cached)} tokens{u.cached ? `, ${Math.round((u.cached / (u.input + u.cached)) * 100)}% cached` : ''}</span> : null}
       {u && u.cost > 0 ? <span>{money(u.cost)}</span> : null}
@@ -574,7 +641,50 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
       )}
 
       <Memory meta={meta} crew={crew} />
+      <Receipt meta={meta} events={events} agents={agents} />
     </aside>
+  )
+}
+
+// What this room cost, who spent it, and what the shared memory saved.
+function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; agents: AgentInfo[] }) {
+  const rows = useMemo(() => {
+    const by = new Map<string, { cost: number; tokens: number; turns: number; ms: number }>()
+    for (const e of events) {
+      if (e.kind !== 'say' && e.kind !== 'hands') continue
+      const who = e.kind === 'say' ? e.who : e.to
+      const r = by.get(who) ?? { cost: 0, tokens: 0, turns: 0, ms: 0 }
+      r.cost += e.usage?.cost ?? 0
+      r.tokens += (e.usage?.input ?? 0) + (e.usage?.output ?? 0) + (e.usage?.cached ?? 0)
+      r.turns += 1
+      r.ms += e.ms ?? 0
+      by.set(who, r)
+    }
+    return [...by.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].tokens - a[1].tokens)
+  }, [events])
+  if (!rows.length) return null
+  const total = rows.reduce((n, [, r]) => n + r.cost, 0)
+  const saved = Math.max(0, meta.saved.full - meta.saved.sent) / 4
+  const checks = meta.checkpoints?.length ?? 0
+  return (
+    <section>
+      <h2>Receipt<small>{money(total) || 'free'}</small></h2>
+      {rows.map(([who, r]) => {
+        const a = agentOf(who, agents)
+        return (
+          <div key={who} className="receipt">
+            <Mark seed={a.mark} size={12} />
+            <span className="grow">{a.short}<small>{r.turns} turn{r.turns > 1 ? 's' : ''} · {(r.ms / 1000).toFixed(0)} s</small></span>
+            <span className="mono">{tokens(r.tokens)}</span>
+            <span className="mono amount">{r.cost ? money(r.cost) : a.via === 'cli' ? 'plan' : 'free'}</span>
+          </div>
+        )
+      })}
+      <div className="memfoot">
+        {saved > 0 && `Shared memory kept ${tokens(saved)} tokens from being sent again. `}
+        {checks > 0 ? `${checks} checkpoint${checks > 1 ? 's' : ''} of the folder; hover your message to rewind.` : ''}
+      </div>
+    </section>
   )
 }
 

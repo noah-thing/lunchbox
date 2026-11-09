@@ -13,13 +13,21 @@ const TOOL_LINES: Record<string, string> = {
   search_web: 'search_web finds current information with sources.',
   make_image: 'make_image creates an image and saves it in the folder.',
   remember: 'remember saves a finding to the shared memory.',
+  browser_open: 'browser_open, browser_click and browser_type drive the Lunchbox browser the person is watching; use it to check what you build on localhost and take browser_screenshot to show it.',
+}
+
+// Connected MCP servers are named after their id: "github_create_issue" comes from GitHub.
+const connected = (tools: string[]) => {
+  const own = new Set([...Object.keys(TOOL_LINES), 'room_memory'])
+  const groups = new Set(tools.filter((t) => !own.has(t) && !t.startsWith('browser_')).map((t) => t.split('_')[0]))
+  return groups.size ? `Connected tools from: ${[...groups].join(', ')}. Use them when they fit better than guessing.` : ''
 }
 
 export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = []) {
   const mates = crew
     .filter((a) => a.id !== me.id)
     .map((a) => `- @${a.id}  ${a.short} (${a.maker}): ${a.good}${a.tools ? '' : '. Text only, no files or commands'}`)
-  const borrowed = tools.map((t) => TOOL_LINES[t]).filter(Boolean)
+  const borrowed = [...tools.map((t) => TOOL_LINES[t]).filter(Boolean), connected(tools)].filter(Boolean)
   return [
     `You are ${me.short}, one of several AI agents working with one person in a shared room in Lunchbox.`,
     `Room: ${meta.name}. Folder: ${meta.workspace}. Access: ${ACCESS[access]}`,
@@ -57,32 +65,42 @@ export function line(e: Event, name: (id: string) => string): string | null {
 }
 
 const BUDGET = 24000
+// Older turns leave the window in steps of this many events, not one at a time, so the start of
+// the conversation stays byte for byte the same for many turns and provider caches keep hitting.
+const STEP = 12
 
-// Memory first, then conversation. With a resumed session the agent already holds everything up
-// to its last turn, so only what happened since is sent.
+// The conversation first, oldest to newest, because it only ever grows at the end: that makes it
+// the cacheable prefix. Shared memory and the task change every turn, so they come last.
+// An agent with a resumed session already holds everything up to its last turn and gets only
+// what changed; any other agent gets the whole memory every turn.
 export function prompt(meta: RoomMeta, events: Event[], me: string, task: string, name: (id: string) => string, resumed: boolean) {
   const seen = meta.seen[me] ?? {}
-  const fresh = meta.blocks.filter((b) => b.v > (seen[b.id] ?? 0))
-  const memory = fresh.map((b) => `## ${b.title}\n${b.text.slice(0, 6000)}`).join('\n\n')
+  const given = resumed ? meta.blocks.filter((b) => b.v > (seen[b.id] ?? 0)) : meta.blocks
+  const memory = given.map((b) => `## ${b.title}\n${b.text.slice(0, 6000)}`).join('\n\n')
   const from = resumed ? meta.heard[me] ?? 0 : 0
-  const rows: string[] = []
-  let size = 0
-  for (let i = events.length - 1; i >= from; i--) {
-    const l = line(events[i], name)
+  const lines = events.slice(from).map((e) => line(e, name))
+  let start = lines.length
+  for (let size = 0; start > 0; start--) {
+    const l = lines[start - 1]
     if (!l) continue
-    if (size + l.length > BUDGET && rows.length) break
-    rows.unshift(l)
+    if (size + l.length > BUDGET && size > 0) break
     size += l.length
   }
-  const parts = [
+  if (start > 0) start = Math.min(lines.length, Math.ceil(start / STEP) * STEP)
+  const history = lines.slice(start).filter((l): l is string => !!l)
+  const head = history.length ? `${resumed ? 'Since your last turn' : start ? 'The conversation so far, latest part' : 'The conversation so far'}:` : ''
+  const tail = [
     memory ? `Shared memory, ${resumed ? 'changed since you last looked' : 'everything the room knows'}:\n\n${memory}` : '',
-    rows.length ? `${resumed ? 'Since your last turn' : 'The conversation so far'}:\n\n${rows.join('\n\n')}` : '',
     task,
-  ]
+  ].filter(Boolean).join('\n\n---\n\n')
+  const sent = given.reduce((n, b) => n + Math.min(b.text.length, 6000), 0)
+  const full = meta.blocks.reduce((n, b) => n + Math.min(b.text.length, 6000), 0)
   return {
-    text: parts.filter(Boolean).join('\n\n---\n\n'),
-    sent: fresh.reduce((n, b) => n + Math.min(b.text.length, 6000), 0),
-    full: meta.blocks.reduce((n, b) => n + Math.min(b.text.length, 6000), 0),
+    text: [head && `${head}\n\n${history.join('\n\n')}`, tail].filter(Boolean).join('\n\n---\n\n'),
+    history: head ? [head, ...history] : [],
+    tail,
+    sent,
+    full,
     seen: Object.fromEntries(meta.blocks.map((b) => [b.id, b.v])),
   }
 }

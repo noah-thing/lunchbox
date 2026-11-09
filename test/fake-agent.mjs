@@ -50,7 +50,8 @@ let reply
 if (input.includes('asks you:')) reply = '212 posts this week. Most complain about limits.'
 else if (input.includes('crewmates answered above')) reply = 'Limits are the top complaint.\n- [x] Research\nAll tests pass.'
 else if (input.includes('prove that')) reply = 'I could not run them here.'
-else reply = 'Let me check what people say first.\n- [ ] Research\n- [ ] Build\n@grok: what are people saying about AI agent limits?'
+// Whoever leads asks a crewmate, never itself, so the handoff happens whichever agent the router picks.
+else reply = `Let me check what people say first.\n- [ ] Research\n- [ ] Build\n@${name === 'grok' ? 'claude' : 'grok'}: what are people saying about AI agent limits?`
 
 const session = `${name}-session`
 say({ type: 'system', subtype: 'init', session_id: session, model: 'fake' })
@@ -62,4 +63,8 @@ if (input.includes('asks you:')) {
 }
 for (const word of reply.split(/(?<= )/)) say({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: word } } })
 say({ type: 'assistant', message: { content: [{ type: 'text', text: reply }] } })
-say({ type: 'result', subtype: 'success', is_error: false, result: reply, session_id: session, total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 50 } })
+// Shaped like a real Claude Code turn: the long system prompt comes back from cache, the new prompt is written.
+const fresh = Math.round(input.length / 4)
+const usage = { input_tokens: 6, output_tokens: Math.round(reply.length / 4), cache_read_input_tokens: 14200, cache_creation_input_tokens: fresh }
+const modelUsage = { 'claude-sonnet-5-5': { inputTokens: 6, outputTokens: usage.output_tokens, cacheReadInputTokens: 14200, cacheCreationInputTokens: fresh } }
+say({ type: 'result', subtype: 'success', is_error: false, result: reply, session_id: session, total_cost_usd: 0.01, usage, modelUsage })

@@ -29,7 +29,10 @@ export type AgentInfo = {
   mark: string
 }
 
-export type Usage = { input: number; output: number; cached: number; cost: number }
+// cached: input tokens served from a provider's prompt cache. written: tokens stored into it.
+// saved: dollars the cache saved where the price is known. kept: shared memory tokens Lunchbox
+// did not need to send again because the agent already had them.
+export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; kept?: number }
 
 export type Act =
   | { t: 'cmd'; command: string; exit: number | null; out?: string }
@@ -82,7 +85,7 @@ export type RoomMeta = {
 // The folder as it was just before a message was handled, kept in a shadow git repository.
 export type Checkpoint = { ref: string; event: string; at: number; files?: number }
 
-export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack'> & { busy: boolean; waiting: boolean }
+export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack' | 'flow'> & { busy: boolean; waiting: boolean }
 
 export type LiveTurn = {
   id: string
@@ -149,6 +152,8 @@ export type Settings = {
   imageModel?: string
   route?: 'best' | 'order'
   snapshots?: boolean
+  tools?: Record<string, { on: boolean; input?: string }>
+  browser?: boolean
   remote?: { on: boolean; chat?: number; name?: string; access?: Access }
 }
 
@@ -174,7 +179,8 @@ export type Flow = {
 
 export type FlowState = { flow: string; room: string; step: number; of: number }
 
-export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: { day: string; cost: number; tokens: number }[] }
+export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: Day[]; rooms: Record<string, Usage> }
+export type Day = { day: string; cost: number; tokens: number; input: number; cached: number; saved: number; kept: number }
 
 export type Hit = { room: string; roomName: string; event?: string; text: string }
 

@@ -9,6 +9,9 @@ import { dots } from './glyphs'
 
 const FAMILIES = ['0', '|', '\\', '-', 'l', '!', '*', '^', '~', ':', 'i', '/']
 const LH = 16
+// Brightness is drawn in steps: each row becomes one string per step, so a frame is a few dozen
+// fillText calls instead of one per character. Monospace keeps the spaced strings in register.
+const STEPS = 8
 
 const hash = (x: number, y: number) => {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
@@ -80,16 +83,22 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
       const l0 = Math.floor((cols - text.length) / 2) - 2, l1 = l0 + text.length + 4
 
       const sweep = ((t * 9) % (cols + 60)) - 30
+      const line: string[][] = Array.from({ length: STEPS }, () => [])
       for (let r = 0; r < rows; r++) {
         const y = r * LH + LH / 2
+        for (let s = 0; s < STEPS; s++) line[s].length = 0
+        const put = (c: number, ch: string, a: number) => {
+          const s = Math.max(0, Math.min(STEPS - 1, Math.round(a * (STEPS - 1))))
+          const row = line[s]
+          while (row.length < c) row.push(' ')
+          row.push(ch)
+        }
         for (let c = 0; c < cols; c++) {
-          const x = c * cw
           if (text && r >= mid - 1 && r <= mid + 1 && c >= l0 && c < l1) {
             if (r === mid && c >= l0 + 2 && c < l1 - 2) {
               const i = c - l0 - 2
               const settled = sec - labelAt > 0.06 + i * 0.022
-              ctx.globalAlpha = 0.92
-              ctx.fillText(settled ? text[i] : FAMILIES[Math.floor(hash(c, sec * 30) * FAMILIES.length)], x, y)
+              put(c, settled ? text[i] : FAMILIES[Math.floor(hash(c, sec * 30) * FAMILIES.length)], 0.92)
             }
             continue
           }
@@ -110,26 +119,38 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
             if (inWord) { a = a * (1 - k) + 0.95 * k; if (k > 0.5) out = '0' }
             else a *= 1 - 0.6 * k
           }
-          ctx.globalAlpha = Math.min(1, a)
-          ctx.fillText(out, x, y)
+          put(c, out, Math.min(1, a))
+        }
+        for (let s = 1; s < STEPS; s++) {
+          if (!line[s].length) continue
+          ctx.globalAlpha = s / (STEPS - 1)
+          ctx.fillText(line[s].join(''), 0, y)
         }
       }
       ctx.globalAlpha = 1
     }
 
+    // Only runs while the band can be seen and the window is in front.
+    let visible = true
     const loop = (now: number) => {
+      raf = 0
+      if (!visible || document.hidden) return
       raf = requestAnimationFrame(loop)
       if (now - last < 40) return
       last = now
       draw(now)
     }
+    const wake = () => { if (!raf && visible && !document.hidden && !still()) { prev = performance.now(); raf = requestAnimationFrame(loop) } }
 
     size()
-    const ro = new ResizeObserver(() => { size(); if (still()) draw(performance.now()) })
+    const ro = new ResizeObserver(() => { size(); draw(performance.now()) })
     ro.observe(el)
+    const seen = new IntersectionObserver(([e]) => { visible = e.isIntersecting; wake() })
+    seen.observe(el)
+    document.addEventListener('visibilitychange', wake)
     if (still()) { wordK = props.current.word ? 1 : 0; wordAt = -10; draw(performance.now()) }
-    else raf = requestAnimationFrame(loop)
-    return () => { cancelAnimationFrame(raf); ro.disconnect() }
+    else wake()
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); seen.disconnect(); document.removeEventListener('visibilitychange', wake) }
   }, [rows])
 
   return <canvas ref={canvas} className={`band ${className}`} style={{ height: rows * LH }} aria-hidden="true" />

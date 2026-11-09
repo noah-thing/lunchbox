@@ -5,6 +5,9 @@ import { test } from 'node:test'
 import { claudeLike, codex, limitOf, reason } from '../electron/agents/parse'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
+import { chat, PROVIDERS } from '../electron/agents/http'
+import { cacheSaving } from '../shared/prices'
+import { createServer } from 'node:http'
 import { asks, plan } from '../shared/plan'
 import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
@@ -113,6 +116,76 @@ test('context: a resumed agent only gets what changed', () => {
   assert.ok(!p.text.includes('Make a site'))
   assert.ok(p.text.includes('Make it blue') && p.text.includes('Changed files'))
   assert.ok(p.sent < p.full)
+})
+
+test('context: an agent without a session gets the whole memory every turn', () => {
+  const meta: RoomMeta = {
+    id: 'r', name: 'Room', created: 0, updated: 0, crew: ['claude-api'], workspace: '/tmp', sessions: {}, heard: {},
+    seen: { 'claude-api': { brief: 1 } }, saved: { full: 0, sent: 0 },
+    blocks: [{ id: 'brief', title: 'Brief', text: 'Make a site', v: 1, at: 0 }],
+  }
+  const p = prompt(meta, [ev({ kind: 'you', text: 'Go on' })], 'claude-api', 'Go.', (id) => id, false)
+  assert.ok(p.tail.includes('Make a site'), 'a stateless agent must not lose the brief')
+  assert.equal(p.sent, p.full)
+})
+
+test('context: the conversation stays a stable prefix from turn to turn, even past the window', () => {
+  const meta: RoomMeta = { id: 'r', name: 'Room', created: 0, updated: 0, crew: ['claude-api'], workspace: '/tmp', sessions: {}, heard: {}, seen: {}, saved: { full: 0, sent: 0 }, blocks: [] }
+  const events: Event[] = []
+  let kept = 0, turns = 0, previous: string[] = []
+  for (let i = 0; i < 120; i++) {
+    events.push(ev({ kind: 'you', text: `Message ${i} ` + 'words '.repeat(80) }))
+    const { history } = prompt(meta, events, 'claude-api', 'Go.', (id) => id, false)
+    if (previous.length) {
+      turns++
+      if (previous.every((l, j) => history[j] === l)) kept++
+    }
+    previous = history
+  }
+  // Past the window the start moves in steps, so nearly every turn can read its prefix from cache.
+  assert.ok(kept / turns > 0.85, `prefix kept on ${kept} of ${turns} turns`)
+})
+
+test('cache: Anthropic requests carry a breakpoint on the last history block and report the saving', async () => {
+  let body: any = null
+  const server = createServer((req, res) => {
+    let raw = ''
+    req.on('data', (c) => { raw += c })
+    req.on('end', () => {
+      body = JSON.parse(raw)
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.end([
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":40,"cache_read_input_tokens":10000,"cache_creation_input_tokens":200}}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Done."}}',
+        'data: {"type":"message_delta","usage":{"output_tokens":3}}',
+        '',
+      ].join('\n\n'))
+    })
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()))
+  const base = PROVIDERS.anthropic.base
+  PROVIDERS.anthropic.base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  try {
+    const r = await chat('anthropic', 'k', 'claude-opus-5-5', 'Rules', 'Memory and task', AbortSignal.timeout(5000), () => {}, ['Head', 'Person: one', 'Claude: two'], 'r:claude-api')
+    const blocks = body.messages[0].content
+    assert.equal(blocks.length, 4)
+    assert.deepEqual(blocks[2].cache_control, { type: 'ephemeral' }, 'breakpoint on the last history block')
+    assert.equal(blocks[3].cache_control, undefined, 'the changing part is never cached')
+    assert.equal(blocks[3].text, 'Memory and task')
+    assert.equal(r.usage.cached, 10000)
+    assert.equal(r.usage.written, 200)
+    assert.equal(r.usage.saved, cacheSaving('claude-opus-5-5', 10000, 200))
+    assert.ok((r.usage.saved ?? 0) > 0.03)
+  } finally {
+    PROVIDERS.anthropic.base = base
+    server.close()
+  }
+})
+
+test('cache: savings are only priced for models with a known price', () => {
+  assert.equal(cacheSaving('gpt-unknown', 1000, 0), null)
+  assert.ok((cacheSaving('claude-sonnet-5-5', 1_000_000, 0) ?? 0) > 1.7)
+  assert.ok((cacheSaving('claude-sonnet-5-5', 0, 1_000_000) ?? 0) < 0, 'a cold write costs extra')
 })
 
 test('route: messages are sorted into kinds of work', () => {

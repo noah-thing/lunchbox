@@ -138,6 +138,13 @@ test('room: checkpoints, rewind and project memory', { skip: process.platform ==
   writeFileSync(join(work, 'page.html'), '<h1>hello</h1>')
   writeFileSync(join(work, 'extra.css'), 'h1{}')
   assert.deepEqual((await engine.changedSince(room.id, first.id)).sort(), ['extra.css', 'page.html'])
+  const diff = await engine.changesFor(room.id, first.id)
+  const page = diff.find((f) => f.path === 'page.html')!
+  assert.equal(page.status, 'modified')
+  assert.deepEqual([page.added, page.removed], [1, 1])
+  assert.match(page.patch, /^-<h1>v1<\/h1>$/m)
+  assert.match(page.patch, /^\+<h1>hello<\/h1>$/m)
+  assert.equal(diff.find((f) => f.path === 'extra.css')?.status, 'added')
 
   const r = await engine.rewind(room.id, { event: first.id })
   assert.equal(read(join(work, 'page.html'), 'utf8'), '<h1>v1</h1>')

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { extname, join } from 'node:path'
+import { extname, join, resolve, sep } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
 import type { Access, Flow, Settings, Skill } from '../shared/types'
 import { modelsFor } from './agents'
@@ -13,6 +13,8 @@ import { Remote } from './remote'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
 import { Snapshots } from './snap'
+import { Browser, type Device } from './browser'
+import { Toolbox } from './tools'
 import { Store, type Cipher } from './store'
 
 app.setName('Lunchbox')
@@ -33,6 +35,8 @@ let store: Store
 let engine: Engine
 let flows: Flows
 let remote: Remote
+let browser: Browser
+let toolbox: Toolbox
 const packs = () => loadPacks(store.packFiles())
 const name = (id: string) => engine.agents.find((a) => a.id === id)?.short ?? id
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'room'
@@ -113,6 +117,15 @@ function wire() {
   h('room:project', (id: string, on: boolean) => engine.setProject(id, on))
   h('room:rewind', (id: string, target: { event?: string; ref?: string }) => engine.rewind(id, target))
   h('room:changed', (id: string, event: string) => engine.changedSince(id, event))
+  h('room:changes', (id: string, event: string) => engine.changesFor(id, event))
+  h('room:show', (id: string, rel: string) => {
+    const ws = store.room(id)?.workspace
+    if (!ws) return 'missing'
+    const abs = resolve(ws, rel)
+    if (!abs.startsWith(resolve(ws) + sep) || !existsSync(abs)) return 'missing'
+    shell.showItemInFolder(abs)
+    return 'ok'
+  })
   h('room:export', async (id: string, kind: 'md' | 'html') => {
     const meta = store.room(id)
     if (!meta) return null
@@ -120,6 +133,15 @@ function wire() {
     return kind === 'md'
       ? saveAs('Export as Markdown', `${slug(meta.name)}.md`, 'md', markdown(meta, events, name))
       : saveAs('Export a replay', `${slug(meta.name)}.html`, 'html', replay(meta, events, name))
+  })
+  h('save:png', (dataUrl: string, file: string) => {
+    const m = dataUrl.match(/^data:image\/png;base64,(.+)$/)
+    if (!m || !win) return null
+    return dialog.showSaveDialog(win, { title: 'Save image', defaultPath: join(app.getPath('downloads'), file), filters: [{ name: 'PNG', extensions: ['png'] }] }).then((r) => {
+      if (r.canceled || !r.filePath) return null
+      writeFileSync(r.filePath, Buffer.from(m[1], 'base64'))
+      return r.filePath
+    })
   })
   h('attach', async () => {
     if (!win) return []
@@ -140,6 +162,22 @@ function wire() {
   h('flows:remove', (id: string) => flows.remove(id))
   h('flows:toggle', (id: string, on: boolean) => flows.toggle(id, on))
   h('flows:run', (id: string) => flows.run(id).room)
+  h('browser', () => browser.state())
+  h('browser:place', (b: { x: number; y: number; width: number; height: number } | null) => browser.place(b))
+  h('browser:open', (url: string) => browser.open(url))
+  h('browser:nav', (kind: 'back' | 'forward' | 'reload' | 'stop') => browser.nav(kind))
+  h('browser:device', (d: Device) => browser.setDevice(d))
+  h('browser:devtools', () => browser.devtools())
+  h('browser:local', () => browser.local())
+  h('browser:shot', async () => {
+    const file = join(app.getPath('downloads'), `lunchbox-${new Date().toISOString().replace(/[:.]/g, '-')}.png`)
+    await browser.screenshot(file)
+    shell.showItemInFolder(file)
+    return file
+  })
+  h('tools', () => toolbox.list())
+  h('tools:set', (id: string, patch: { on?: boolean; input?: string; secrets?: Record<string, string> }) => toolbox.configure(id, patch))
+  h('tools:secrets', (id: string) => Object.fromEntries(Object.keys(store.keys()).filter((k) => k.startsWith(`tool:${id}:`)).map((k) => [k.split(':')[2], true])))
   h('remote', () => remote.status())
   h('remote:set', async (patch: { on?: boolean; access?: Access; token?: string }) => {
     if (patch.token !== undefined) store.setKey('telegram', patch.token.trim())
@@ -229,7 +267,13 @@ app.whenReady().then(async () => {
   store = new Store(join(app.getPath('userData'), 'data'), cipher)
   const hands = new Hands()
   await hands.start().catch(() => {})
-  engine = new Engine(store, { emit, notify, packs }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
+  browser = new Browser(() => win, emit)
+  toolbox = new Toolbox(store, emit)
+  const tools = (who: string, folder: string, access: Access) => [
+    ...(store.settings.browser !== false && access !== 'plan' ? browser.tools(who, folder) : []),
+    ...toolbox.tools(),
+  ]
+  engine = new Engine(store, { emit, notify, packs, tools }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
   flows = new Flows(store, engine, { emit, notify })
   remote = new Remote(store, engine, { emit, defaults })
   wire()
@@ -239,7 +283,8 @@ app.whenReady().then(async () => {
   await engine.refresh()
   flows.start()
   remote.start()
+  toolbox.startAll()
 })
-app.on('before-quit', () => { flows?.stop(); remote?.stop(); store?.flush() })
+app.on('before-quit', () => { flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
 app.on('window-all-closed', () => { if (!mac) app.quit() })
 app.on('activate', () => { if (!win) createWindow() })

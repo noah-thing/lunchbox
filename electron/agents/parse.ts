@@ -1,3 +1,4 @@
+import { cacheSaving } from '../../shared/prices'
 import type { Act, Usage } from '../../shared/types'
 
 // Each CLI prints one JSON object per line. A parser folds those lines into a Turn and reports
@@ -15,6 +16,17 @@ export type Turn = {
 }
 
 export type Update = { delta?: string; acts?: Act[]; working?: string }
+
+// Claude Code reports cache reads and writes per model, so the saving is priced per model at API
+// rates. A subscription pays nothing per token; this is what the same work would have cost.
+function claudeSaved(models: Record<string, any> | undefined) {
+  const rows = Object.entries(models ?? {})
+  const parts = rows.length
+    ? rows.map(([m, r]) => cacheSaving(m, r.cacheReadInputTokens ?? 0, r.cacheCreationInputTokens ?? 0))
+    : []
+  const known = parts.filter((x): x is number => x !== null)
+  return known.length ? known.reduce((a, b) => a + b, 0) : undefined
+}
 
 export const newTurn = (): Turn => ({ text: '', final: '', acts: [], usage: { input: 0, output: 0, cached: 0, cost: 0 }, denied: [] })
 
@@ -104,6 +116,8 @@ export function claudeLike() {
           output: u.output_tokens ?? 0,
           cached: u.cache_read_input_tokens ?? 0,
           cost: o.total_cost_usd ?? Object.values(o.modelUsage ?? {}).reduce((n: number, m: any) => n + (m.costUSD ?? 0), 0),
+          written: u.cache_creation_input_tokens ?? 0,
+          saved: claudeSaved(o.modelUsage),
         }
         if (typeof o.result === 'string') turn.final = o.result
         if (o.session_id) turn.session = o.session_id

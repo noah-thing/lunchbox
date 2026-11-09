@@ -21,7 +21,17 @@ function cells(seed: string) {
   return glyph(seed[0] ?? '?').flatMap((bits, y) => Array.from({ length: 5 }, (_, x) => ((bits >> (4 - x)) & 1 ? [[x + 1, y]] : [])).flat())
 }
 
+// Drawn by hand for each tool, white on black, and used as a mask so they take the ink colour of
+// whatever theme they sit in. Tools without one keep the dot grid drawn from their name.
+const BRANDS = import.meta.glob<string>('../marks/*.png', { eager: true, query: '?url', import: 'default' })
+const brand = (id: string) => BRANDS[`../marks/${{ codex: 'openai', local: 'ollama' }[id] ?? id}.png`]
+
 export function Mark({ seed, size = 16, blink = 0, active = false }: { seed: string; size?: number; blink?: number; active?: boolean }) {
+  const url = brand(seed)
+  if (url) {
+    const mask = `url(${url}) center / contain no-repeat`
+    return <i key={blink} className={`mark brand${blink ? ' blink' : ''}${active ? ' active' : ''}`} style={{ width: size, height: size, mask, WebkitMask: mask } as CSSProperties} aria-hidden="true" />
+  }
   const on = useMemo(() => cells(seed), [seed])
   const grid = size >= 20
   return (
@@ -127,4 +137,17 @@ export function Resolve({ text, speed = 28, delay = 0 }: { text: string; speed?:
     return () => cancelAnimationFrame(raf)
   }, [text, speed, delay])
   return <span className="resolve" aria-label={text}><span aria-hidden="true">{shown}</span><span className="ghost" aria-hidden="true">{text.slice(shown.length)}</span></span>
+}
+
+// A small preview of a file on disk: the image itself when it is one, its extension otherwise.
+export function Thumb({ path }: { path: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const image = /\.(png|jpe?g|gif|webp)$/i.test(path)
+  useEffect(() => {
+    if (!image || !window.lb) return
+    let alive = true
+    window.lb.call('file:image', path).then((url: string | null) => { if (alive && url) setSrc(url) })
+    return () => { alive = false }
+  }, [path, image])
+  return src ? <img className="thumb" src={src} alt="" /> : <i className="thumb">{path.split('.').pop()?.slice(0, 4) || 'file'}</i>
 }

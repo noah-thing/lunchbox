@@ -5,7 +5,7 @@ import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pac
 import { asks, plan } from '../../shared/plan'
 import { classify, route, type Category } from '../../shared/route'
 import { detect, run } from '../agents'
-import type { Hands } from '../hands'
+import type { Hands, Tool } from '../hands'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
 import { clearMemory, writeMemory } from './project'
@@ -19,6 +19,8 @@ type Hooks = {
   emit(channel: string, payload: unknown): void
   notify(title: string, body: string, room: string): void
   packs(): Pack[]
+  // Tools from outside the room: the built-in browser and any MCP servers the person connected.
+  tools?(who: string, workspace: string, access: Access): Tool[]
 }
 
 type Task =
@@ -113,7 +115,7 @@ export class Engine {
   summaries(): RoomSummary[] {
     return this.store.list().map((m) => {
       const l = this.live(m.id)
-      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
+      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, flow: m.flow, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
     })
   }
 
@@ -176,6 +178,16 @@ export class Engine {
     const cp = meta?.checkpoints?.find((c) => c.event === event)
     if (!meta || !cp || !this.snaps) return []
     return this.snaps.changed(meta.workspace, cp.ref)
+  }
+
+  // What the crew changed in answer to one message: from its checkpoint to the next message's,
+  // or to the folder as it is now when it is the latest.
+  async changesFor(room: string, event: string) {
+    const meta = this.store.room(room)
+    const list = meta?.checkpoints ?? []
+    const i = list.findIndex((c) => c.event === event)
+    if (!meta || i < 0 || !this.snaps) return []
+    return this.snaps.diff(meta.workspace, list[i].ref, list[i + 1]?.ref)
   }
 
   async rewind(room: string, target: { event?: string; ref?: string }) {
@@ -477,10 +489,13 @@ export class Engine {
     if (task.kind === 'answer') live.cable = { from: task.from, to: who, at: Date.now() }
     this.changed(room)
 
-    const tools = this.hands && me.via === 'cli' && BORROWS.has(who) ? kit(this.host(room, me, crew, access, ctx)) : []
+    const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
+      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? [])]
+      : []
     const grant = tools.length ? this.hands!.grant(tools) : null
+    const http = me.via !== 'cli'
     const running = run(who, {
-      prompt: p.text, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name)), cwd: meta.workspace, access,
+      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name)), cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
@@ -499,7 +514,9 @@ export class Engine {
     this.changed(room)
 
     if (r.usage.input + r.usage.output + r.usage.cached > 0) {
-      this.store.record(who, room, r.usage)
+      // Memory the agent already had and was not sent again, in tokens at about four characters each.
+      const kept = Math.round((p.full - p.sent) / 4)
+      this.store.record(who, room, kept > 0 ? { ...r.usage, kept } : r.usage)
       this.hooks.emit('ledger', this.ledger())
     }
     if (resumed && r.error && !r.text && !r.limit && /session|resume|conversation|thread|not found|unexpected|no such|invalid/i.test(r.error)) {

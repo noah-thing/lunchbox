@@ -10,6 +10,9 @@ import { chat, listModels, PROVIDERS } from './http'
 export type Input = {
   prompt: string
   system: string
+  // For HTTP agents: the conversation as cacheable blocks, with prompt then holding only the rest.
+  history?: string[]
+  cacheKey?: string
   cwd: string
   access: Access
   model?: string
@@ -129,7 +132,7 @@ export const CATALOG: Def[] = [
   { id: 'openai-api', name: 'OpenAI API', short: 'GPT', maker: 'OpenAI', via: 'api', key: 'openai', tools: false, mark: 'codex', good: 'Pay per token', alphabet: '.-01' },
   { id: 'grok-api', name: 'xAI API', short: 'Grok API', maker: 'xAI', via: 'api', key: 'xai', tools: false, mark: 'grok', good: 'Pay per token', alphabet: '.:/\\|X#' },
   { id: 'gemini-api', name: 'Gemini API', short: 'Gemini API', maker: 'Google', via: 'api', key: 'google', tools: false, mark: 'gemini', good: 'Pay per token, generous free tier', alphabet: '.,oO0@' },
-  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: false, mark: 'lunchbox', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
+  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: false, mark: 'openrouter', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
 ]
 
 export const def = (id: string) => CATALOG.find((d) => d.id === id)
@@ -173,7 +176,7 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     const provider = d.via === 'local' ? 'ollama' : d.key!
     const ctl = new AbortController()
     const t0 = Date.now()
-    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }))
+    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey)
       .then((r) => ({ text: r.text, acts: [], usage: r.usage, denied: [], ms: Date.now() - t0 }))
       .catch((e: Error) => {
         const error = ctl.signal.aborted ? 'Stopped' : e.message

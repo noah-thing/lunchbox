@@ -25,6 +25,9 @@ export function addUsage(a: Usage, b: Partial<Usage>) {
   a.output += b.output ?? 0
   a.cached += b.cached ?? 0
   a.cost += b.cost ?? 0
+  if (b.written) a.written = (a.written ?? 0) + b.written
+  if (b.saved) a.saved = (a.saved ?? 0) + b.saved
+  if (b.kept) a.kept = (a.kept ?? 0) + b.kept
   return a
 }
 
@@ -179,19 +182,26 @@ export class Store {
     const week = Date.now() - 7 * 86400e3
     const days = Array.from({ length: DAYS }, (_, i) => {
       const d = new Date(day.getTime() - (DAYS - 1 - i) * 86400e3)
-      return { day: d.toISOString().slice(0, 10), start: d.getTime(), cost: 0, tokens: 0 }
+      return { day: d.toISOString().slice(0, 10), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, kept: 0 }
     })
-    const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [] }
+    const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
     for (const row of this.ledger) {
-      if (row.at >= week) addUsage((out.week[row.agent] ??= zero()), row.usage)
+      if (row.at >= week) {
+        addUsage((out.week[row.agent] ??= zero()), row.usage)
+        addUsage((out.rooms[row.room] ??= zero()), row.usage)
+      }
       if (row.at >= day.getTime()) addUsage((out.today[row.agent] ??= zero()), row.usage)
       const slot = days.findLast((d) => row.at >= d.start)
       if (slot) {
         slot.cost += row.usage.cost
         slot.tokens += row.usage.input + row.usage.output + row.usage.cached
+        slot.input += row.usage.input
+        slot.cached += row.usage.cached
+        slot.saved += row.usage.saved ?? 0
+        slot.kept += row.usage.kept ?? 0
       }
     }
-    out.days = days.map(({ day, cost, tokens }) => ({ day, cost, tokens }))
+    out.days = days.map(({ start: _, ...d }) => d)
     return out
   }
 

@@ -9,6 +9,12 @@ import { env, which } from './system'
 // project's history. Files the project ignores are skipped, and so are the usual heavy folders.
 const SKIP = ['node_modules/', '.git/', '.venv/', 'venv/', '__pycache__/', '.next/', '.nuxt/', 'target/', '.gradle/', '.DS_Store', '*.log', '.lunchbox/attachments/']
 const SAFE_FILES = 20000
+const PATCH_CAP = 120_000
+
+export type FileChange = {
+  path: string; from?: string; status: 'added' | 'modified' | 'deleted' | 'renamed'
+  added: number; removed: number; binary: boolean; patch: string; cut: boolean
+}
 
 type Git = (args: string[], timeout?: number) => Promise<string>
 
@@ -88,6 +94,45 @@ export class Snapshots {
       await git(['add', '-A', '--ignore-errors'], 60000).catch(() => {})
       const out = await git(['diff', '--cached', '--name-only', ref]).catch(() => '')
       return out.split('\n').filter(Boolean)
+    })
+  }
+
+  // What changed between two checkpoints, or between one and the folder as it is now: one entry per
+  // file with its line counts and patch. Patches are capped so a generated file cannot flood the view.
+  diff(workspace: string, from: string, to?: string): Promise<FileChange[]> {
+    return this.serial(workspace, async () => {
+      if (!(await this.available())) return []
+      const git = await this.runner(workspace)
+      let range = [from, ...(to ? [to] : [])]
+      if (!to) {
+        await git(['add', '-A', '--ignore-errors'], 60000).catch(() => {})
+        range = ['--cached', from]
+      }
+      const [status, counts, patch] = await Promise.all([
+        git(['diff', '--name-status', '-M', ...range]).catch(() => ''),
+        git(['diff', '--numstat', '-M', ...range]).catch(() => ''),
+        git(['diff', '--no-color', '--no-ext-diff', '-M', '-U3', ...range], 30000).catch(() => ''),
+      ])
+      const patches = new Map<string, string>()
+      for (const part of patch.split(/^(?=diff --git )/m)) {
+        const head = /^diff --git a\/(.+?) b\/(.+)$/m.exec(part)
+        if (head) patches.set(head[2], part.slice(part.indexOf('\n') + 1))
+      }
+      const lines = counts.split('\n').filter(Boolean).map((l) => l.split('\t'))
+      return status.split('\n').filter(Boolean).map((l, i): FileChange => {
+        const [code, a, b] = l.split('\t')
+        const path = b ?? a
+        const [add, del] = lines[i] ?? []
+        const text = patches.get(path) ?? ''
+        return {
+          path, from: b ? a : undefined,
+          status: code[0] === 'A' ? 'added' : code[0] === 'D' ? 'deleted' : code[0] === 'R' ? 'renamed' : 'modified',
+          added: add === '-' ? 0 : Number(add) || 0, removed: del === '-' ? 0 : Number(del) || 0,
+          binary: add === '-',
+          patch: text.length > PATCH_CAP ? text.slice(0, PATCH_CAP) : text,
+          cut: text.length > PATCH_CAP,
+        }
+      })
     })
   }
 

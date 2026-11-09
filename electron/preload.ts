@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
-const EVENTS = new Set(['agents', 'rooms', 'room:event', 'room:live', 'room:meta', 'ledger', 'skills', 'flows', 'remote', 'open-room'])
+const EVENTS = new Set(['agents', 'rooms', 'room:event', 'room:live', 'room:meta', 'ledger', 'skills', 'flows', 'remote', 'browser', 'tools', 'open-room'])
 
 contextBridge.exposeInMainWorld('lb', {
   call: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args),
