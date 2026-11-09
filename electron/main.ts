@@ -16,6 +16,7 @@ import { Snapshots } from './snap'
 import { Browser, type Device } from './browser'
 import { Toolbox } from './tools'
 import { Store, type Cipher } from './store'
+import { cancelPull, pull, start } from './local'
 
 app.setName('Lunchbox')
 
@@ -101,6 +102,18 @@ function wire() {
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
   h('agents', () => engine.agents)
   h('agents:refresh', () => engine.refresh())
+  h('local:start', async (id: string) => {
+    const r = await start(id)
+    await engine.refresh()
+    return r
+  })
+  h('local:pull', (model: string) => {
+    pull(model, (p) => {
+      emit('local:pull', p)
+      if (p.finished) engine.refresh()
+    })
+  })
+  h('local:cancel', (model: string) => cancelPull(model))
   h('agents:models', (id: string) => modelsFor(id, store.keys()).catch((e: Error) => ({ error: e.message })))
   h('rooms', () => engine.summaries())
   h('room', (id: string) => ({ meta: store.room(id), events: store.events(id), live: engine.live(id) }))

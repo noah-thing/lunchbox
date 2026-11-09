@@ -10,11 +10,13 @@ export const PROVIDERS: Record<string, Provider> = {
   openrouter: { base: 'https://openrouter.ai/api/v1', style: 'openai', prefer: /^openrouter\/auto$/ },
   google: { base: 'https://generativelanguage.googleapis.com/v1beta', style: 'google', prefer: /flash/ },
   ollama: { base: 'http://127.0.0.1:11434/api', style: 'ollama', prefer: /./ },
+  lmstudio: { base: 'http://127.0.0.1:1234/v1', style: 'openai', prefer: /./ },
+  llamacpp: { base: 'http://127.0.0.1:8080/v1', style: 'openai', prefer: /./ },
 }
 
 function headers(style: Provider['style'], key: string): Record<string, string> {
   if (style === 'anthropic') return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
-  if (style === 'openai') return { authorization: `Bearer ${key}`, 'content-type': 'application/json' }
+  if (style === 'openai' && key) return { authorization: `Bearer ${key}`, 'content-type': 'application/json' }
   return { 'content-type': 'application/json' }
 }
 
@@ -30,7 +32,7 @@ async function failure(res: Response) {
 
 export async function listModels(name: string, key: string): Promise<string[]> {
   const p = PROVIDERS[name]
-  const signal = AbortSignal.timeout(name === 'ollama' ? 1500 : 8000)
+  const signal = AbortSignal.timeout(p.base.startsWith('http://127.') ? 1500 : 8000)
   if (p.style === 'ollama') {
     const res = await fetch(`${p.base}/tags`, { signal })
     if (!res.ok) throw await failure(res)

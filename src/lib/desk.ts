@@ -142,6 +142,7 @@ export const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `${Ma
 // Why an agent cannot take work right now, in the words the panel shows. Mirrors Engine.why.
 export function unavailable(a: AgentInfo, s: State = state): string | null {
   if (s.settings.disabled.includes(a.id)) return 'Turned off'
+  if (!a.ready && a.setup && a.found) return !a.setup.running ? 'Installed, server is off' : a.setup.suggest ? 'No chat model yet, one click to get one' : 'No model loaded'
   if (!a.ready) return a.found ? a.note ?? 'Not ready' : 'Not set up'
   const spent = s.ledger?.spent[a.id]
   if (spent && spent.until > Date.now()) return `Out until ${clock(spent.until)}`

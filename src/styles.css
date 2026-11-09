@@ -312,7 +312,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .memfoot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:12px;line-height:1.45;color:var(--faint)}
 
 /* New room: the code band, labelled with the crew, above the question. */
-.newroom{height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 24px 12vh;-webkit-app-region:drag}
+.newroom{height:100%;display:flex;flex-direction:column;justify-content:center;padding:4vh 24px 2vh;-webkit-app-region:drag}
 .newroom>*{-webkit-app-region:no-drag}
 .newbody{width:100%;max-width:var(--col);margin:0 auto;display:flex;flex-direction:column;gap:16px}
 .newbody .band{margin-bottom:16px}
@@ -586,3 +586,14 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .onboard.leaving{opacity:0;transform:translateY(-8px) scale(.995)}
 
 @media (prefers-reduced-motion:reduce){*,::before,::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}}
+
+/* Local model setup */
+.localbox{display:flex;flex-direction:column;gap:10px}
+.localbox p{margin:0;font-size:12.5px;line-height:1.55;color:var(--dim);max-width:60ch}
+.localbox .btn .quiet{margin-left:10px;font:11px var(--mono);color:inherit;opacity:.55}
+.pullrow{display:flex;align-items:center;gap:14px;min-height:30px}
+.pullrow>.mono{font-size:12px;width:120px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pullbar{display:flex;gap:14px;align-items:center;font:11.5px var(--mono);color:var(--faint);white-space:pre;flex:1;min-width:0}
+.pullbar .bar b{font-weight:400;color:var(--ink)}
+.pullbar.done,.pullbar.done .bar b{color:var(--ink)}
+.pullbar.failed{color:var(--bad)}

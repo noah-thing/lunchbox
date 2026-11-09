@@ -77,6 +77,14 @@ await visit('Library', '06-library', async () => {
   }
 })
 await visit('Browser', '08-browser')
+await visit('Agents', '08b-agents', async () => {
+  for (const name of ['LM Studio', 'Ollama']) {
+    await page.click(`.agenthead:has-text("${name}")`).catch(() => {})
+    await page.waitForTimeout(300)
+  }
+  await page.evaluate(() => document.querySelector('.page')?.scrollTo(0, 99999))
+  await shot('08c-agents-local', 600)
+})
 await visit('Settings', '09-settings')
 await page.click('.seg button:has-text("Light")')
 await visit('Pool', '10-pool-light')

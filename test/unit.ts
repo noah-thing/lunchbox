@@ -8,6 +8,8 @@ import { prompt } from '../electron/room/context'
 import { chat, PROVIDERS } from '../electron/agents/http'
 import { cacheSaving } from '../shared/prices'
 import { createServer } from 'node:http'
+import { pull, suggest } from '../electron/local'
+import type { Pull } from '../shared/types'
 import { asks, plan } from '../shared/plan'
 import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
@@ -251,4 +253,33 @@ test('export: markdown and a self contained replay', () => {
   assert.ok(html.includes('<b>limits</b>') && html.includes('<code>npm test</code>'))
   assert.equal(html.match(/<section /g)?.length, 3)
   assert.ok(!/src="http|href="http[^"]*\.css/.test(html), 'nothing is fetched')
+})
+
+test('pulling a local model reports the model layer, then ready', async () => {
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+    const lines = [
+      { status: 'pulling manifest' },
+      { status: 'pulling a1', total: 5000, completed: 2000 },
+      { status: 'pulling b2', total: 40, completed: 40 },
+      { status: 'pulling a1', total: 5000, completed: 5000 },
+      { status: 'success' },
+    ]
+    res.end(lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()))
+  const base = PROVIDERS.ollama.base
+  PROVIDERS.ollama.base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`
+  try {
+    const seen: Pull[] = []
+    await pull('qwen3:8b', (p) => seen.push(p))
+    const last = seen[seen.length - 1]
+    assert.equal(last.finished, true)
+    assert.equal(last.total, 5000, 'a small layer never replaces the model layer')
+    assert.equal(last.done, 5000)
+    assert.match(suggest().model, /^qwen3:/)
+  } finally {
+    PROVIDERS.ollama.base = base
+    server.close()
+  }
 })

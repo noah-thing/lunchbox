@@ -24,6 +24,7 @@ export type AgentInfo = {
   model?: string
   models?: string[]
   note?: string
+  setup?: LocalSetup
   good: string
   alphabet: string
   mark: string
@@ -33,6 +34,11 @@ export type AgentInfo = {
 // saved: dollars the cache saved where the price is known. kept: shared memory tokens Lunchbox
 // did not need to send again because the agent already had them.
 export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; kept?: number }
+
+// What a local model server needs before it can take work. app is set when there is a desktop
+// app to open; suggest is the chat model that fits this computer's memory.
+export type LocalSetup = { installed: boolean; running: boolean; app?: boolean; download: string; suggest?: { model: string; size: string } }
+export type Pull = { agent: string; model: string; status: string; done: number; total: number; error?: string; finished?: boolean }
 
 export type Act =
   | { t: 'cmd'; command: string; exit: number | null; out?: string }
