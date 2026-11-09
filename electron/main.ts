@@ -140,6 +140,8 @@ function wire() {
     return engine.create({ ...opts, workspace: folder })
   })
   h('room:rename', (id: string, name: string) => engine.rename(id, name))
+  h('room:mark', (id: string, patch: { pinned?: boolean; archived?: boolean }) => engine.mark(id, patch))
+  h('inbox', () => engine.inbox())
   h('room:remove', (id: string) => engine.remove(id))
   h('room:fork', (id: string, at: string) => engine.fork(id, at))
   h('room:crew', (id: string, crew: string[]) => engine.setCrew(id, crew))

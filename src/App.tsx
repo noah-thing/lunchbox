@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom'
 import type { Hit, Skill } from '../shared/types'
 import { Loader } from './ui/bits'
 import { Logo } from './ui/Logo'
-import { IconAgents, IconBrowser, IconClock, IconFlows, IconLibrary, IconPlus, IconPool, IconSave, IconSearch, IconSettings } from './ui/icons'
+import { IconAgents, IconBrowser, IconClock, IconFlows, IconInbox, IconLibrary, IconPin, IconPlus, IconPool, IconSave, IconSearch, IconSettings } from './ui/icons'
 import { Onboarding } from './views/Onboarding'
 import { RoomView } from './views/Room'
 import { NewRoom } from './views/NewRoom'
@@ -11,6 +11,7 @@ import { Agents } from './views/Agents'
 import { Settings } from './views/Settings'
 import { Flows } from './views/Flows'
 import { Pool } from './views/Pool'
+import { WaitingPage } from './views/Waiting'
 import { Savings } from './views/Savings'
 import { Library } from './views/Library'
 import { Browser, useBrowser } from './views/Browser'
@@ -20,7 +21,7 @@ import { ago, boot, desk, mod, reload, unavailable, useApp, type Access } from '
 export type View =
   | { name: 'room'; id: string; focus?: string }
   | { name: 'new'; skill?: Skill; pack?: string; text?: string }
-  | { name: 'agents' } | { name: 'settings' } | { name: 'pool' } | { name: 'savings' } | { name: 'library' } | { name: 'browser' }
+  | { name: 'agents' } | { name: 'settings' } | { name: 'pool' } | { name: 'savings' } | { name: 'library' } | { name: 'browser' } | { name: 'waiting' }
   | { name: 'flows'; edit?: string; template?: string }
 export type Look = 'lunchbox' | 'neyra'
 
@@ -65,7 +66,12 @@ export function App() {
   const [access, setAccessState] = useState<Access>(saved('access', 'workspace'))
   const [workspace, setWorkspaceState] = useState<string>(saved('workspace', ''))
   const loaded = useApp((s) => s.loaded)
-  const rooms = useApp((s) => s.rooms)
+  const all = useApp((s) => s.rooms)
+  // Pinned rooms lead the list; archived ones leave it and wait under their own heading.
+  const rooms = [...all.filter((r) => r.pinned && !r.archived), ...all.filter((r) => !r.pinned && !r.archived)]
+  const archived = all.filter((r) => r.archived)
+  const [showArchived, setShowArchived] = useState(false)
+  const needs = all.filter((r) => r.waiting).length
   const agents = useApp((s) => s.agents)
   const skills = useApp((s) => s.skills)
   const flows = useApp((s) => s.flows)
@@ -189,17 +195,26 @@ export function App() {
         <button className={`sbitem${on('savings') ? ' on' : ''}`} onClick={() => go({ name: 'savings' })}>{on('savings') && sel}<IconSave />Savings</button>
         <button className={`sbitem${on('library') ? ' on' : ''}`} onClick={() => go({ name: 'library' })}>{on('library') && sel}<IconLibrary />Library</button>
         <button className={`sbitem${on('browser') ? ' on' : ''}`} onClick={() => go({ name: 'browser' })}>{on('browser') && sel}<IconBrowser />Browser{web.driver && <i className="livedot" title="An agent is using the browser" />}</button>
+        {needs > 0 && <button className={`sbitem needsyou${on('waiting') ? ' on' : ''}`} onClick={() => go({ name: 'waiting' })}>{on('waiting') && sel}<IconInbox />Needs you<small>{needs}</small></button>}
         <div className="sblabel">Rooms</div>
         <div className="sbrooms">
           {rooms.map((r) => (
             <button key={r.id} className={`sbroom${on('room', r.id) ? ' on' : ''}`} onClick={() => go({ name: 'room', id: r.id })} title={r.name}>
               {on('room', r.id) && sel}
               {r.flow && <span className="sbflow" title="Started by a flow"><IconClock /></span>}
+              {r.pinned && <span className="sbpin" title="Pinned"><IconPin /></span>}
               <span className="grow">{r.name}</span>
               {r.waiting ? <i className="waitdot" title="Needs you" /> : r.busy ? <Loader size={10} /> : <small>{ago(r.updated)}</small>}
             </button>
           ))}
           {!rooms.length && <div className="sbempty">Rooms you start show up here.</div>}
+          {archived.length > 0 && <button className="sbarchived" onClick={() => setShowArchived(!showArchived)} aria-expanded={showArchived}>{showArchived ? 'Hide archived' : `Archived, ${archived.length}`}</button>}
+          {showArchived && archived.map((r) => (
+            <button key={r.id} className={`sbroom archived${on('room', r.id) ? ' on' : ''}`} onClick={() => go({ name: 'room', id: r.id })} title={r.name}>
+              {on('room', r.id) && sel}
+              <span className="grow">{r.name}</span><small>{ago(r.updated)}</small>
+            </button>
+          ))}
         </div>
         <div className="sbfoot">
           <button className={`sbitem${on('agents') ? ' on' : ''}`} onClick={() => go({ name: 'agents' })}>{on('agents') && sel}<IconAgents />Agents<small>{ready_}</small></button>
@@ -217,6 +232,7 @@ export function App() {
         {view.name === 'agents' && <Agents say={say} />}
         {view.name === 'flows' && <Flows key={view.edit ?? view.template ?? 'list'} edit={view.edit} template={view.template} go={go} say={say} workspace={workspace || env.cwd} />}
         {view.name === 'pool' && <Pool go={go} say={say} />}
+        {view.name === 'waiting' && <WaitingPage go={go} access={access} />}
         {view.name === 'savings' && <Savings go={go} />}
         {view.name === 'library' && <Library go={go} say={say} />}
         {view.name === 'browser' && <Browser say={say} covered={palette} />}

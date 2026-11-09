@@ -693,3 +693,22 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .picture{max-width:560px}
 .picture .frame.loaded img{animation:reveal 900ms cubic-bezier(.22,1,.36,1) both}
 @keyframes reveal{from{clip-path:inset(0 100% 0 0 round 12px);filter:blur(6px)}to{clip-path:inset(0 0 0 0 round 12px);filter:blur(0)}}
+
+/* Sidebar: rooms that need you, pinned rooms, the archive. Amber only for waiting. */
+.sbitem.needsyou{color:var(--warn)}
+.sbitem.needsyou small{color:var(--warn)}
+.sbpin{display:flex;color:var(--faint)}
+.sbpin svg{width:11px;height:11px}
+.sbarchived{height:26px;padding:0 8px;margin-top:6px;border-radius:6px;font-size:11.5px;color:var(--faint);text-align:left;transition:color 140ms var(--out)}
+@media (hover:hover){.sbarchived:hover{color:var(--dim)}}
+.sbroom.archived{opacity:.6}
+.inboxrow .grow b.mono{font:12.5px var(--mono)}
+.inboxrow .grow span{display:block;margin-top:3px;font-size:12px;color:var(--faint)}
+
+/* Cache clock in the receipt: a thin bar that drains as the cache cools. */
+.cacheclock{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.cclock{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)}
+.cclock i{position:relative;width:54px;height:3px;border-radius:2px;background:var(--line);overflow:hidden}
+.cclock i::after{content:"";position:absolute;inset:0;background:var(--ink);transform-origin:left;transform:scaleX(var(--k));transition:transform 1s linear}
+.cclock .mono{font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum";min-width:66px;text-align:right}
+.cclock.cold{opacity:.5}

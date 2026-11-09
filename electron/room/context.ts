@@ -1,4 +1,5 @@
 import type { Access, Act, AgentInfo, Event, Pack, RoomMeta } from '../../shared/types'
+import { habitRules } from '../../shared/habits'
 
 const ACCESS: Record<Access, string> = {
   plan: 'Plan. Read only: do not edit files or run commands that change anything. Investigate and propose.',
@@ -23,7 +24,8 @@ const connected = (tools: string[]) => {
   return groups.size ? `Connected tools from: ${[...groups].join(', ')}. Use them when they fit better than guessing.` : ''
 }
 
-export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = []) {
+export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = [], habits: string[] = []) {
+  const rules = habitRules(habits)
   const mates = crew
     .filter((a) => a.id !== me.id)
     .map((a) => `- @${a.id}  ${a.short} (${a.maker}): ${a.good}${a.tools ? '' : '. Text only, no files or commands'}`)
@@ -43,6 +45,7 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
       '- Write for the person: short and plain. Do not repeat what others already said.',
     ].filter(Boolean).join('\n'),
     pack ? `Room focus, ${pack.name}: ${pack.brief}` : '',
+    rules.length ? `How this person wants the work done:\n${rules.join('\n')}` : '',
   ].filter(Boolean).join('\n\n')
 }
 

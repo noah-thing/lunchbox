@@ -183,6 +183,13 @@ function RoomMenu({ id, meta, canReplay, replay, open, say }: { id: string; meta
           <button className="item" onClick={async () => { close(); const c = await desk.call('room:fork', id, ''); if (c) open(c.id) }}>
             <span className="grow"><b>Fork room</b><span>Try another direction, keep this one as it is</span></span>
           </button>
+          <button className="item" onClick={() => { desk.call('room:mark', id, { pinned: !meta.pinned }); close(); say(meta.pinned ? 'Unpinned' : 'Pinned to the top of your rooms') }}>
+            <span className="grow"><b>{meta.pinned ? 'Unpin' : 'Pin to top'}</b><span>Keep it above the rest of your rooms</span></span>
+            {meta.pinned && <i className="check" />}
+          </button>
+          <button className="item" onClick={() => { desk.call('room:mark', id, { archived: !meta.archived }); close(); say(meta.archived ? 'Back in your rooms' : 'Archived. Find it under Archived in the sidebar.') }}>
+            <span className="grow"><b>{meta.archived ? 'Unarchive' : 'Archive'}</b><span>{meta.archived ? 'Bring it back to your rooms' : 'Out of the list, nothing deleted'}</span></span>
+          </button>
           <button className="item" onClick={() => { desk.call('reveal', meta.workspace); close() }}>
             <span className="grow"><b>Open folder</b><span>{short(meta.workspace)}</span></span>
           </button>
@@ -879,6 +886,39 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
 }
 
 // What this room cost, who spent it, and what the shared memory saved.
+// How long each agent's prompt cache stays warm. Providers keep a cached prompt for about five
+// minutes after it was last used; a message after that pays for the whole room again.
+const CACHE_MS = 5 * 60e3
+function CacheClock({ events, agents }: { events: Event[]; agents: AgentInfo[] }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
+  const last = new Map<string, number>()
+  for (const e of events) {
+    if (e.kind !== 'say' && e.kind !== 'hands') continue
+    const u = e.usage
+    if (!u || !(u.cached > 0 || (u.written ?? 0) > 0)) continue
+    last.set(e.kind === 'say' ? e.who : e.to, e.at)
+  }
+  const warm = [...last.entries()].map(([who, at]) => ({ who, left: at + CACHE_MS - now })).filter((x) => x.left > -60e3)
+  if (!warm.length) return null
+  const fmt = (ms: number) => `${Math.floor(ms / 60e3)}:${String(Math.floor((ms % 60e3) / 1000)).padStart(2, '0')}`
+  return (
+    <div className="cacheclock" title="A message while the cache is warm only pays for what is new. After it cools, the next message reads the whole room again.">
+      {warm.map(({ who, left }) => {
+        const a = agentOf(who, agents)
+        return (
+          <div key={who} className={`cclock${left <= 0 ? ' cold' : left < 60e3 ? ' soon' : ''}`}>
+            <Mark seed={a.mark} size={12} />
+            <span className="grow">{a.short} cache</span>
+            <i style={{ '--k': Math.max(0, Math.min(1, left / CACHE_MS)) } as CSSProperties} />
+            <span className="mono">{left > 0 ? `warm ${fmt(left)}` : 'cooled'}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; agents: AgentInfo[] }) {
   const rows = useMemo(() => {
     const by = new Map<string, { cost: number; tokens: number; turns: number; ms: number }>()
@@ -912,6 +952,7 @@ function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; ag
           </div>
         )
       })}
+      <CacheClock events={events} agents={agents} />
       <div className="memfoot">
         {saved > 0 && `Shared memory kept ${tokens(saved)} tokens from being sent again. `}
         {checks > 0 ? `${checks} checkpoint${checks > 1 ? 's' : ''} of the folder; hover your message to rewind.` : ''}

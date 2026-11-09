@@ -86,12 +86,17 @@ export type RoomMeta = {
   checkpoints?: Checkpoint[]
   project?: boolean
   flow?: string
+  pinned?: boolean
+  archived?: boolean
 }
 
 // The folder as it was just before a message was handled, kept in a shadow git repository.
 export type Checkpoint = { ref: string; event: string; at: number; files?: number }
 
-export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack' | 'flow'> & { busy: boolean; waiting: boolean }
+export type RoomSummary = Pick<RoomMeta, 'id' | 'name' | 'created' | 'updated' | 'crew' | 'workspace' | 'pack' | 'flow' | 'pinned' | 'archived'> & { busy: boolean; waiting: boolean }
+
+// Everything across the rooms that is waiting for a person: decisions and commands to approve.
+export type Waiting = { room: string; name: string; items: ({ kind: 'decide'; ref: string; text: string; options: string[] } | { kind: 'run'; id: string; command: string; reason: string })[] }
 
 export type LiveTurn = {
   id: string
@@ -183,6 +188,7 @@ export type Settings = {
   remote?: { on: boolean; chat?: number; name?: string; access?: Access }
   planLimits?: boolean
   connectors?: Connector[]
+  habits?: string[]
 }
 
 // Anything not built in: an API that speaks the OpenAI or Anthropic format, or a command-line

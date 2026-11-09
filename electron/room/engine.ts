@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { sentence } from '../../shared/steps'
 import { existsSync } from 'node:fs'
 import { relative } from 'node:path'
-import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage } from '../../shared/types'
+import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
 import { classify, route, type Category } from '../../shared/route'
 import { detect, run } from '../agents'
@@ -35,6 +35,8 @@ type Task =
 type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string> }
 type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
+// Failures of one command in one turn before the loop guard stops it.
+const LOOP = 3
 const MAX_HOPS = 8
 const IMAGE_MODEL = 'gpt-6-astra'
 // Grok Build only loads MCP servers from config files, which the room does not touch.
@@ -122,7 +124,7 @@ export class Engine {
   summaries(): RoomSummary[] {
     return this.store.list().map((m) => {
       const l = this.live(m.id)
-      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, flow: m.flow, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
+      return { id: m.id, name: m.name, created: m.created, updated: m.updated, crew: m.crew, workspace: m.workspace, pack: m.pack, flow: m.flow, pinned: m.pinned, archived: m.archived, busy: l.turns.length + l.runs.length > 0, waiting: this.waiting(m.id) }
     })
   }
 
@@ -231,6 +233,28 @@ export class Engine {
     this.store.create(meta)
     this.list()
     return meta
+  }
+
+  mark(room: string, patch: { pinned?: boolean; archived?: boolean }) {
+    this.store.update(room, (m) => {
+      if (patch.pinned !== undefined) m.pinned = patch.pinned || undefined
+      // An archived room leaves the list; pinning it again would only hide it twice.
+      if (patch.archived !== undefined) { m.archived = patch.archived || undefined; if (patch.archived) m.pinned = undefined }
+    })
+    this.list()
+  }
+
+  // Every decision and command waiting for a person, across all rooms, newest room first.
+  inbox(): Waiting[] {
+    return this.store.list().flatMap((m) => {
+      const events = this.store.events(m.id)
+      const chosen = new Set(events.filter((e) => e.kind === 'chose').map((e) => (e as { ref: string }).ref))
+      const items: Waiting['items'] = [
+        ...events.flatMap((e) => (e.kind === 'decide' && !chosen.has(e.id) ? [{ kind: 'decide' as const, ref: e.id, text: e.text, options: e.options.map((o) => o.label) }] : [])),
+        ...this.live(m.id).runs.filter((r) => r.state === 'asking').map((r) => ({ kind: 'run' as const, id: r.id, command: r.command, reason: r.verdict?.reason ?? '' })),
+      ]
+      return items.length ? [{ room: m.id, name: m.name, items }] : []
+    })
   }
 
   rename(room: string, name: string) {
@@ -527,12 +551,26 @@ export class Engine {
       : []
     const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
+    const fails = new Map<string, number>()
+    let looped = ''
     const running = run(who, {
-      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name)), cwd: meta.workspace, access,
+      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system: protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits), cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
-      if (u.acts) { lt.acts.push(...u.acts); lt.now = undefined; live.doing = `${me.short} is thinking` }
+      if (u.acts) {
+        lt.acts.push(...u.acts)
+        lt.now = undefined
+        live.doing = `${me.short} is thinking`
+        // The loop guard: the same command failing three times means the agent is going round in
+        // circles, spending the plan. Stop the turn and let the person decide.
+        for (const a of u.acts) {
+          if (a.t !== 'cmd' || a.exit === 0 || a.exit === null) continue
+          const n = (fails.get(a.command) ?? 0) + 1
+          fails.set(a.command, n)
+          if (n >= LOOP && !looped) { looped = a.command; running.stop() }
+        }
+      }
       if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
       this.changed(room)
     })
@@ -545,6 +583,21 @@ export class Engine {
     live.turns = live.turns.filter((t) => t !== lt)
     if (live.active === who) live.active = live.turns[live.turns.length - 1]?.who ?? null
     this.changed(room)
+    if (looped) {
+      this.flushed.add(lt.id)
+      this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts.length ? r.acts : lt.acts, usage: r.usage, ms: r.ms })
+      const other = this.fallback(meta, who)
+      this.add(room, {
+        kind: 'decide',
+        text: `${me.short} ran \`${looped}\` ${LOOP} times and it failed each time, so Lunchbox paused it before it spends more of your plan.`,
+        options: [
+          { label: 'Try another way', action: { type: 'ask', who, text: `@${who} \`${looped}\` failed ${LOOP} times. Step back, find the cause first, and try a different approach. Say what you changed.` } },
+          ...(other ? [{ label: `Hand it to ${this.name(other)}`, action: { type: 'ask' as const, who: other, text: `@${other} ${me.short} got stuck: \`${looped}\` failed ${LOOP} times. Look at why and fix it.` } }] : []),
+          { label: 'Leave it', action: { type: 'accept' } },
+        ],
+      })
+      return null
+    }
 
     if (r.usage.input + r.usage.output + r.usage.cached > 0) {
       // Memory the agent already had and was not sent again, in tokens at about four characters each.
