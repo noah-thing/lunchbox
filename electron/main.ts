@@ -339,6 +339,8 @@ function into(room: string, files: string[]) {
 }
 
 app.whenReady().then(async () => {
+  // The Lunchbox folder exists from the first launch, so the first room has somewhere to go.
+  try { mkdirSync(workspace(), { recursive: true }) } catch {}
   store = new Store(join(app.getPath('userData'), 'data'), cipher)
   const hands = new Hands()
   await hands.start().catch(() => {})

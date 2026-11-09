@@ -204,7 +204,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
     const fit = new ResizeObserver(size)
     fit.observe(el)
     const theme = new MutationObserver(colours)
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    theme.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-look'] })
     const seen = new IntersectionObserver(([e]) => { shown = e.isIntersecting })
     seen.observe(el)
     const cell = (e: PointerEvent) => {

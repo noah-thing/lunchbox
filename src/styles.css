@@ -296,7 +296,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .modelhead svg:first-child{color:var(--faint)}
 @media (hover:hover){.modelhead:hover svg:first-child{color:var(--ink)}}
 .modelfind{display:block;width:calc(100% - 8px);height:30px;margin:2px 4px 4px;padding:0 10px;border-radius:7px;font-size:12.5px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
-@media (prefers-reduced-motion:reduce){.fit{transition:none}.slide{animation:none}}
+@media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*{animation:none}}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
 .item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px;border-radius:8px;transition:background-color 120ms var(--out)}
 .item>.modeicon,.item>.mark{margin-top:2px}
@@ -646,8 +646,16 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .pullbar.failed{color:var(--bad)}
 
 /* Onboarding: fixes and installs */
-.obfix{padding:12px 14px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--line);margin-top:10px;animation:land 360ms var(--out) both}
-.obmissing{display:flex;flex-direction:column;gap:2px;margin-top:16px;animation:land 360ms var(--out) both;animation-delay:120ms}
+/* What appears once the search settles opens its own room first, then fades in, so nothing
+   below it is shoved down in one frame. */
+.unfold{display:grid;grid-template-rows:1fr;animation:unfold 520ms var(--out) both;animation-delay:80ms}
+.unfold.late{animation-delay:220ms}
+.unfold>div{min-height:0;overflow:hidden}
+.unfold>div>*{animation:land 420ms var(--out) both;animation-delay:260ms}
+.unfold.late>div>*{animation-delay:400ms}
+@keyframes unfold{from{grid-template-rows:0fr}}
+.obfixbox{padding:12px 14px;margin-bottom:8px;border-radius:10px;box-shadow:inset 0 0 0 1px var(--line)}
+.obmissing{display:flex;flex-direction:column;gap:2px;padding-top:16px}
 .obmissing>small{font:11px var(--mono);color:var(--faint);padding-bottom:6px}
 .obmissing .row{margin-top:10px;gap:12px;font-size:12px}
 .obmiss{display:flex;align-items:center;gap:10px;height:30px;font-size:12.5px;color:var(--dim)}
@@ -656,7 +664,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .obmiss .cmd{font:11.5px var(--mono);color:var(--faint);text-align:left;padding:3px 8px;border-radius:6px;transition:background-color 140ms var(--out),color 140ms var(--out);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (hover:hover){.obmiss .cmd:hover{background:var(--hover);color:var(--ink)}}
 .arow code.todo{color:var(--warn)}
-.obfix{margin:0 0 8px 30px}
+.obfix{margin-left:30px}
 .seg button:has(.modeicon){display:inline-flex;align-items:center;gap:6px}
 .seg button.on .modeicon:not(.full){color:inherit}
 /* The beat between pressing stop and the engine confirming: motion halts and the text settles. */
