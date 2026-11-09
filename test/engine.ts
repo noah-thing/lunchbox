@@ -67,7 +67,7 @@ test('room: handover, handoff, resume and proof', { skip: process.platform === '
 })
 
 // Claude borrows Grok's X search through the room's MCP server, mid-turn, and finishes with it.
-test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, async () => {
+test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'lunchbox-hands-'))
   const bin = join(root, 'bin')
   const agent = join(process.cwd(), 'test', 'fake-agent.mjs')
@@ -80,6 +80,8 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   const { Hands } = await import('../electron/hands')
   const hands = new Hands()
   await hands.start()
+  // A failing assertion must not leave the server open and the run hanging.
+  t.after(() => { hands.stop(); delete process.env.FAKE_LOG })
   const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
   const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] }, hands)
   await engine.refresh()
@@ -112,8 +114,6 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   const before = store.events(room.id).length
   engine.send(room.id, 'Bring: get the launch post drafted', 'workspace')
   await engine.idle(room.id)
-  delete process.env.FAKE_LOG
-  hands.stop()
   const after = store.events(room.id).slice(before)
   assert.deepEqual(after.map((e) => e.kind), ['you', 'joined', 'say', 'left', 'say'])
   const joined = after[1] as Extract<typeof events[number], { kind: 'joined' }>
