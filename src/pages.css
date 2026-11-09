@@ -300,7 +300,7 @@ input[type=number].select{width:64px}
 .bstartform input::placeholder{color:var(--faint)}
 .bquick{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;font-size:12px}
 
-/* Neyra look: square the new surfaces like the rest */
+/* Square look: square the new surfaces like the rest */
 [data-look=neyra] .card,[data-look=neyra] .tcard,[data-look=neyra] .stats,[data-look=neyra] .days,[data-look=neyra] .ratings,[data-look=neyra] .flows,[data-look=neyra] .tools,[data-look=neyra] .step,[data-look=neyra] .toolnote,[data-look=neyra] .sheetcard,[data-look=neyra] .runningcard,[data-look=neyra] .bdevice{border-radius:2px}
 
 /* Savings. Every class is sv- prefixed and scoped, so nothing here reaches the rest of the app. */

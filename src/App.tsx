@@ -189,7 +189,7 @@ export function App() {
     { group: 'Go to', label: 'Agents', hint: 'Connected agents, models and budgets', run: () => go({ name: 'agents' }) },
     { group: 'Go to', label: 'Settings', hint: `${mod},`, run: () => go({ name: 'settings' }) },
     { group: 'Actions', label: theme === 'dark' ? 'Switch to light' : 'Switch to dark', hint: 'Appearance', run: () => setTheme(theme === 'dark' ? 'light' : 'dark') },
-    { group: 'Actions', label: look === 'neyra' ? 'Look: Lunchbox' : 'Look: Neyra', hint: 'Appearance', run: () => setLook(look === 'neyra' ? 'lunchbox' : 'neyra') },
+    { group: 'Actions', label: look === 'neyra' ? 'Look: Lunchbox' : 'Look: Square', hint: 'Appearance', run: () => setLook(look === 'neyra' ? 'lunchbox' : 'neyra') },
     { group: 'Actions', label: 'Check for agents again', hint: 'Agents', run: async () => { await reload.agents(); say('Checked again') } },
     { group: 'Actions', label: 'Mode: Plan', hint: 'Read and plan only', run: () => setAccess('plan') },
     { group: 'Actions', label: 'Mode: Ask', hint: 'Changes wait for your OK', run: () => setAccess('ask') },

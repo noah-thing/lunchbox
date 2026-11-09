@@ -82,8 +82,8 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <div className="seg">{(['dark', 'light'] as const).map((t) => <button key={t} className={t === theme ? 'on' : ''} onClick={(e) => setTheme(t, e)}>{t === 'dark' ? 'Dark' : 'Light'}</button>)}</div>
           </div>
           <div className="setting">
-            <div className="grow"><b>Look</b><span>Lunchbox floats the work on a sheet. Neyra is flat panes, hairlines and square corners.</span></div>
-            <div className="seg">{(['lunchbox', 'neyra'] as const).map((l) => <button key={l} className={l === look ? 'on' : ''} onClick={() => setLook(l)}>{l === 'lunchbox' ? 'Lunchbox' : 'Neyra'}</button>)}</div>
+            <div className="grow"><b>Look</b><span>Lunchbox floats the work on a soft sheet. Square is flat panes, hairlines and square corners.</span></div>
+            <div className="seg">{(['lunchbox', 'neyra'] as const).map((l) => <button key={l} className={l === look ? 'on' : ''} onClick={() => setLook(l)}>{l === 'lunchbox' ? 'Lunchbox' : 'Square'}</button>)}</div>
           </div>
         </div>
       </section>
