@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/noah-thing/lunchbox/actions/workflows/ci.yml"><img src="https://github.com/noah-thing/lunchbox/raw/badges/ci.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.0-F2F0EA?style=flat-square&labelColor=121110" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/version-0.1.1-F2F0EA?style=flat-square&labelColor=121110" alt="Version 0.1.1">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-F2F0EA?style=flat-square&labelColor=121110&label=runs%20on" alt="Runs on macOS, Windows and Linux">
   <img src="https://img.shields.io/badge/Electron-45-F2F0EA?style=flat-square&labelColor=121110&logo=electron&logoColor=F2F0EA" alt="Electron 45">
   <img src="https://img.shields.io/badge/license-all%20rights%20reserved-F2F0EA?style=flat-square&labelColor=121110" alt="All rights reserved">

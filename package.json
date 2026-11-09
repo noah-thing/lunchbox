@@ -1,7 +1,7 @@
 {
   "name": "lunchbox",
   "productName": "Lunchbox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "The AI tools you already pay for, working together in one room.",
   "author": {
