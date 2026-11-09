@@ -32,7 +32,8 @@ type Task =
   | { kind: 'continue' }
   | { kind: 'retry'; tools: string[] }
 
-type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string> }
+// tried holds who already failed on this message, so a failure everyone shares is not handed round in circles.
+type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string>; tried?: Set<string> }
 type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
 // Failures of one command in one turn before the loop guard stops it.
@@ -83,11 +84,11 @@ export class Engine {
   // The next crewmate who can take the work, in crew order, preferring one with the same hands.
   // The next one in the crew who can take the work. When the whole crew is out, anyone else that
   // is set up and ready takes it, so a wall never ends the task. The asker never answers itself.
-  private fallback(meta: RoomMeta, from: string, asker?: string) {
+  private fallback(meta: RoomMeta, from: string, asker?: string, tried?: Set<string>) {
     const needTools = this.agent(from)?.tools
     const order = [...meta.crew.slice(meta.crew.indexOf(from) + 1), ...meta.crew.slice(0, Math.max(0, meta.crew.indexOf(from)))]
     const outside = this.agents.filter((a) => !meta.crew.includes(a.id) && a.ready).map((a) => a.id)
-    const ok = [...order, ...outside].filter((id) => id !== from && id !== asker && !this.why(id))
+    const ok = [...order, ...outside].filter((id) => id !== from && id !== asker && !tried?.has(id) && !this.why(id))
     return ok.find((id) => !needTools || this.agent(id)?.tools) ?? ok[0] ?? null
   }
 
@@ -527,7 +528,7 @@ export class Engine {
     if (!meta || (this.gens.get(room) ?? 0) !== ctx.gen) return null
     const blocked = this.why(who)
     if (blocked) {
-      const next = ctx.arena ? null : this.fallback(meta, who)
+      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' ? task.from : undefined, ctx.tried)
       this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until })
       if (!next || ++ctx.hops.n > MAX_HOPS) return null
       return this.turn(room, next, task, access, ctx)
@@ -540,6 +541,8 @@ export class Engine {
     // Only the CLIs Lunchbox knows how to resume get a delta; a connector always gets the whole room.
     const resumed = !!session && ['claude', 'codex', 'grok'].includes(who)
     const events = this.store.events(room)
+    // The log is live and grows while the agent works; only what it was sent counts as heard.
+    const upto = events.length
     // Crewmates who are out right now are named in the request, not the protocol, so the cached
     // protocol stays the same when someone hits a limit and comes back.
     const out = meta.crew.filter((id) => id !== who && this.why(id)).map(this.name)
@@ -651,7 +654,8 @@ export class Engine {
       if (r.limit) this.hooks.emit('ledger', this.ledger())
       else this.refresh()
       // In side by side everyone is already answering, so a failed slot stays empty and says why.
-      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' ? task.from : undefined)
+      ctx.tried = (ctx.tried ?? new Set()).add(who)
+      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' ? task.from : undefined, ctx.tried)
       this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
       if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
       if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
@@ -693,7 +697,7 @@ export class Engine {
     }
     // Only a turn that happened counts as delivered: memory and savings move on success.
     this.store.update(room, (m) => {
-      m.heard[who] = events.length
+      m.heard[who] = upto
       m.seen[who] = p.seen
       m.saved.full += p.full
       m.saved.sent += p.sent

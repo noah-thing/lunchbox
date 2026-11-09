@@ -65,10 +65,14 @@ function claudeHands(i: Input, file: string): Pick<Spec, 'extra'> & { args: stri
   return { args: ['--mcp-config', path], extra: [{ path, text: JSON.stringify({ mcpServers: { lunchbox: { type: 'http', url: i.hands } } }) }] }
 }
 
+// Codex takes servers on the command line only, so the token travels in the environment, which
+// other accounts on the computer cannot read, and the URL on the command line carries none.
+const HANDS_ENV = 'LUNCHBOX_HANDS_TOKEN'
 const codexHands = (i: Input) =>
   i.hands
     ? [
-        '-c', `mcp_servers.lunchbox.url=${JSON.stringify(i.hands)}`,
+        '-c', `mcp_servers.lunchbox.url=${JSON.stringify(i.hands.replace(/\/[\w-]+$/, ''))}`,
+        '-c', `mcp_servers.lunchbox.bearer_token_env_var="${HANDS_ENV}"`,
         '-c', `mcp_servers.lunchbox.tool_timeout_sec=${HANDS_TIMEOUT}`,
         '-c', 'mcp_servers.lunchbox.default_tools_approval_mode="approve"',
       ]
@@ -117,6 +121,7 @@ export const CATALOG: Def[] = [
         args: i.session
           ? ['exec', 'resume', '--json', '--skip-git-repo-check', ...resumeSandbox, ...tail, i.session, '-']
           : ['exec', '--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...tail, '-'],
+        env: i.hands ? { [HANDS_ENV]: i.hands.split('/').pop()! } : undefined,
         stdin: prompt(i),
         parser: codex(),
       }

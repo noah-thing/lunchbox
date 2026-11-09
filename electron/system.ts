@@ -46,8 +46,9 @@ export async function version(path: string) {
 
 // The user's own shell for `!` commands, so aliases and profiles behave as they do in a terminal.
 export function shellFor(command: string) {
-  if (isWin) return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', command] }
-  return { file: process.env.SHELL || '/bin/sh', args: ['-lc', command] }
+  // cmd.exe reads the line itself. Left to Node, every " in the command would arrive as \".
+  if (isWin) return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${command}"`], raw: true }
+  return { file: process.env.SHELL || '/bin/sh', args: ['-lc', command], raw: false }
 }
 
 const quoteWin = (s: string) => (/^[\w./:=@-]+$/.test(s) ? s : `"${s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`)

@@ -38,7 +38,12 @@ export function kit(h: Host): Tool[] {
         agent: { type: 'string', enum: mates.map((a) => a.id), description: 'Who to ask' },
         question: { type: 'string', description: 'The question, complete enough to answer without the rest of your turn' },
       },
-      run: (a) => h.consult(str(a.agent, 'agent'), str(a.question, 'question')),
+      // The list above is only advice to the model; anyone outside the crew is refused here.
+      run: async (a) => {
+        const to = str(a.agent, 'agent')
+        if (!mates.some((m) => m.id === to)) throw new Error(`${to} is not in this room's crew. Ask one of: ${mates.map((m) => m.id).join(', ')}`)
+        return h.consult(to, str(a.question, 'question'))
+      },
     })
   }
 

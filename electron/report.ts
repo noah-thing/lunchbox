@@ -12,11 +12,19 @@ type Logged = { at: number; where: 'main' | 'window'; message: string }
 const errors: Logged[] = []
 
 // Paths name the person, so the home folder is written as ~ in anything that leaves the machine.
-const SECRET = /\b(sk-[\w-]{12,}|sk-ant-[\w-]{12,}|gh[pousr]_\w{20,}|github_pat_\w{20,}|xai-\w{20,}|AIza[\w-]{30,}|\d{6,}:[\w-]{30,})|(bearer\s+)[\w.-]{16,}/gi
-const home = new RegExp(homedir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+const SECRET = /\b(sk-[\w-]{12,}|sk-ant-[\w-]{12,}|gh[pousr]_\w{20,}|github_pat_\w{20,}|xai-\w{20,}|AIza[\w-]{30,}|\d{6,}:[\w-]{30,}|gsk_\w{20,}|hf_\w{20,}|xox[a-z]-[\w-]{10,}|A[KS]IA[0-9A-Z]{16}|eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,})|(bearer\s+)[\w.-]{16,}/gi
+// The home folder as it is written, and as Windows paths turn up in stack traces and JSON: with
+// forward slashes, inside a file: URL, and with doubled backslashes.
+const homeForms = (dir: string) => {
+  const slashed = dir.replace(/\\/g, '/')
+  return [...new Set([dir, slashed, encodeURI(slashed), dir.replace(/\\/g, '\\\\')])].sort((a, b) => b.length - a.length)
+}
+const home = new RegExp(homeForms(homedir()).map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi')
 // Paths name the person and keys must never travel: the home folder becomes ~ and anything shaped
 // like a key or token is replaced before a report leaves the machine.
-const clean = (s: string, max = 2000) => s.replace(home, '~').replace(SECRET, (_m, _k, bearer) => `${bearer ?? ''}[removed]`).slice(0, max)
+// The keys this app holds are taken out by value as well, whatever they look like.
+const clean = (s: string, max = 2000, keys: string[] = []) =>
+  keys.filter((k) => k.length >= 8).reduce((t, k) => t.split(k).join('[removed]'), s).replace(home, '~').replace(SECRET, (_m, _k, bearer) => `${bearer ?? ''}[removed]`).slice(0, max)
 
 export function logError(where: Logged['where'], e: unknown) {
   const message = clean(e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e))
@@ -43,13 +51,13 @@ async function post(r: Report) {
   return (await res.json().catch(() => ({}))) as { number?: number }
 }
 
-export async function send(r: Report, dir: string): Promise<{ ok: boolean; queued?: boolean; number?: number }> {
+export async function send(r: Report, dir: string, keys: string[] = []): Promise<{ ok: boolean; queued?: boolean; number?: number }> {
   const report: Report = {
     kind: (['bug', 'idea', 'question'] as const).includes(r.kind) ? r.kind : 'bug',
-    text: clean(String(r.text ?? ''), 8000),
-    contact: r.contact ? clean(String(r.contact), 200) : undefined,
-    context: r.context ? clean(String(r.context), 4000) : undefined,
-    diagnostics: r.diagnostics ? clean(String(r.diagnostics), 6000) : undefined,
+    text: clean(String(r.text ?? ''), 8000, keys),
+    contact: r.contact ? clean(String(r.contact), 200, keys) : undefined,
+    context: r.context ? clean(String(r.context), 4000, keys) : undefined,
+    diagnostics: r.diagnostics ? clean(String(r.diagnostics), 6000, keys) : undefined,
   }
   try {
     const { number } = await post(report)

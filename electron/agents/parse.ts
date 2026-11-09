@@ -303,8 +303,12 @@ export function limitOf(text: string): { until: number } | null {
   if (!/usage limit|rate.?limit|limit reached|hit your limit|quota|too many requests|\b429\b|credit balance|out of credits|resets? (at|in)/i.test(text)) return null
   const epoch = text.match(/\|(\d{10})\b/)
   if (epoch) return { until: Number(epoch[1]) * 1000 }
-  const inMin = text.match(/(?:in|after)\s+(\d+)\s*(h|hours?|m|min|minutes?)/i)
-  if (inMin) return { until: Date.now() + Number(inMin[1]) * (inMin[2].startsWith('h') ? 3600e3 : 60e3) }
+  // The unit must end where it ends: "in 349ms" is not 349 minutes, and "in 20s" is not an hour.
+  const wait = text.match(/(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)(?![a-z])/i)
+  if (wait) {
+    const unit = wait[2].toLowerCase()
+    return { until: Date.now() + Number(wait[1]) * (/^(ms|mil)/.test(unit) ? 1 : unit[0] === 's' ? 1e3 : unit[0] === 'h' ? 3600e3 : 60e3) }
+  }
   const at = text.match(/resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
   if (at) {
     const d = new Date()
@@ -316,6 +320,8 @@ export function limitOf(text: string): { until: number } | null {
     if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1)
     return { until: d.getTime() }
   }
+  // A request rate limit with no time given clears in about a minute; a used up plan does not.
+  if (/rate.?limit|too many requests|\b429\b/i.test(text) && !/usage limit|hit your limit|quota|credit/i.test(text)) return { until: Date.now() + 60e3 }
   return { until: Date.now() + 3600e3 }
 }
 

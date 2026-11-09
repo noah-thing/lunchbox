@@ -255,7 +255,7 @@ function wire() {
   h('notices', () => updates?.shown() ?? [])
   h('notice:dismiss', (id: string) => updates?.dismiss(String(id)))
   h('report:diagnostics', () => diagnostics(engine.agents))
-  h('report:send', (r: Report) => send(r, store.dir))
+  h('report:send', (r: Report) => send(r, store.dir, Object.values(store.keys())))
   h('error:log', (message: string) => logError('window', String(message).slice(0, 4000)))
   h('connector:test', (c: Connector, key: string) => testConnector(c, key ?? ''))
   h('connector:installed', (bins: string[]) => installed(Array.isArray(bins) ? bins : []))
@@ -328,7 +328,7 @@ function into(room: string, files: string[]) {
       const exclude = join(ws, '.git', 'info', 'exclude')
       if (existsSync(join(ws, '.git', 'info')) && !(existsSync(exclude) && readFileSync(exclude, 'utf8').includes('.lunchbox/'))) appendFileSync(exclude, '\n.lunchbox/\n')
       const ext = extname(f).replace(/[^.\w]/g, '').slice(0, 10)
-      const name = `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${basename(f, extname(f)).normalize('NFKD').replace(/[^\w.-]+/g, '-').slice(0, 40)}${ext}`
+      const name = `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${basename(f, extname(f)).normalize('NFKD').replace(/[^\w.-]+/g, '-').slice(0, 40)}-${randomUUID().slice(0, 4)}${ext}`
       const to = join(dir, name)
       copyFileSync(f, to)
       return to
@@ -347,8 +347,10 @@ app.whenReady().then(async () => {
   browser = new Browser(() => win, emit)
   toolbox = new Toolbox(store, emit)
   const tools = (who: string, folder: string, access: Access) => [
-    ...(store.settings.browser !== false && access !== 'plan' ? browser.tools(who, folder) : []),
-    ...toolbox.tools(),
+    // The browser reaches the internet and signed in pages, so it waits for Auto or Full; Plan
+    // only reads, and a connected tool can write anywhere.
+    ...(store.settings.browser !== false && (access === 'workspace' || access === 'full') ? browser.tools(who, folder) : []),
+    ...(access === 'plan' ? [] : toolbox.tools()),
   ]
   limits = new Limits(store, (l) => { emit('limits', l); emit('ledger', engine.ledger()) }, () => engine.agents.filter((a) => a.found && a.via === 'cli').map((a) => a.id))
   engine = new Engine(store, { emit, notify, packs, tools, turned: (who, u) => limits.turned(who, u) }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))

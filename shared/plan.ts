@@ -35,8 +35,11 @@ export function plan(events: Event[]): Step[] {
 export function asks(text: string, handles: string[]) {
   const out: { to: string; ask: string }[] = []
   const rest: string[] = []
+  let fenced = false
   for (const line of text.split('\n')) {
-    const m = line.match(/^\s*@([a-z][\w-]*)\s*[:,]\s*(.+)$/i)
+    // Only "@handle:" asks. "@codex, thanks" is talk, and a line inside a code block is code.
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced
+    const m = fenced ? null : line.match(/^\s*@([a-z][\w-]*)\s*:\s*(.+)$/i)
     const to = m && handles.find((h) => h.toLowerCase() === m[1].toLowerCase())
     if (m && to) out.push({ to, ask: m[2].trim() })
     else rest.push(line)

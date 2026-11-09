@@ -73,6 +73,17 @@ test('limits are recognised with their reset times', () => {
   assert.equal(new Date(at.until).getHours(), 15)
 })
 
+test('limits: short waits are read in their own unit, not as minutes or an hour', () => {
+  const left = (text: string) => limitOf(text)!.until - Date.now()
+  assert.ok(left('Rate limit reached for gpt-5. Please try again in 349ms.') < 5000, 'milliseconds')
+  assert.ok(Math.abs(left('429 Rate limit reached. Please try again in 20s.') - 20e3) < 5000, 'seconds')
+  assert.ok(Math.abs(left('Rate limit reached. Please try again in 1.5s') - 1500) < 5000, 'a fraction of a second')
+  assert.ok(Math.abs(left('Rate limit reached. Try again in 6m0s.') - 6 * 60e3) < 5000, 'minutes')
+  assert.ok(Math.abs(left('quota exceeded, retry after 30 seconds') - 30e3) < 5000, 'seconds spelled out')
+  assert.ok(Math.abs(left('429 Too Many Requests') - 60e3) < 5000, 'a rate limit with no time clears in a minute')
+  assert.ok(Math.abs(left('You have hit your usage limit.') - 3600e3) < 5000, 'a used up plan still waits an hour')
+})
+
 test('stderr is reduced to the line that matters', () => {
   const err = 'Error: This client is no longer supported. Please migrate.\n    at throwIneligible (file:///x.js:1:1)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)'
   assert.equal(reason(err), 'This client is no longer supported. Please migrate.')
@@ -105,6 +116,13 @@ test('asks: only crew handles at line start count', () => {
   const r = asks('Checking.\n@grok: what is trending?\nEmail me@site.com\n@nobody: hi', ['grok', 'codex'])
   assert.deepEqual(r.asks, [{ to: 'grok', ask: 'what is trending?' }])
   assert.equal(r.text, 'Checking.\nEmail me@site.com\n@nobody: hi')
+})
+
+test('asks: a comma is talk and a code block is code, neither hands off', () => {
+  const text = '@codex, thanks, that fixed it.\n```\n@grok: not an ask\n```\n@grok: what is trending?'
+  const r = asks(text, ['grok', 'codex'])
+  assert.deepEqual(r.asks, [{ to: 'grok', ask: 'what is trending?' }])
+  assert.equal(r.text, '@codex, thanks, that fixed it.\n```\n@grok: not an ask\n```')
 })
 
 test('context: a resumed agent only gets what changed', () => {

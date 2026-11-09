@@ -226,3 +226,36 @@ test('room: a failed side by side slot stays empty', { skip: process.platform ==
   assert.ok(wall.arena)
   store.flush()
 })
+
+// A message sent while the agent is still working reaches it on its next, resumed turn.
+test('room: a message sent mid-turn is not lost', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-heard-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  const log = (process.env.FAKE_LOG = join(root, 'calls.jsonl'))
+  process.env.FAKE_DELAY = '20'
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { resetPath } = await import('../electron/system')
+  resetPath()
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+  await engine.refresh()
+
+  const room = engine.create({ crew: ['claude'], workspace: root })
+  engine.send(room.id, 'Fix the login bug', 'workspace')
+  while (!existsSync(log)) await new Promise((r) => setTimeout(r, 10))
+  engine.send(room.id, 'Also update the README', 'workspace')
+  await engine.idle(room.id)
+  delete process.env.FAKE_DELAY
+
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  assert.equal(calls.length, 2)
+  assert.ok(!calls[0].input.includes('Also update the README'), 'the first turn started before the second message')
+  assert.ok(calls[1].args.includes('--resume'), 'the second turn resumes')
+  assert.ok(calls[1].input.includes('Also update the README'), 'and is given the message sent while it worked')
+  store.flush()
+})
