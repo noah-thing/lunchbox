@@ -1,11 +1,16 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { score } from '../shared/route'
 import type { Category, Event, Flow, Ledger, Ratings, RoomMeta, Settings, Skill, Spent, Usage } from '../shared/types'
 
 export type Cipher = { seal(text: string): string; open(sealed: string): string }
 
 const DAYS = 14
+// The ledger file keeps a little over a year; only the last DAYS are read into memory.
+const LEDGER_DAYS = 400
+// Logs read only for search are kept for this many rooms, so a search does not hold every log.
+const COLD = 30
+const RETRY = 5000
 
 const DEFAULTS: Settings = { models: {}, budgets: {}, disabled: [], notify: true, defaultCrew: [] }
 const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0 })
@@ -15,9 +20,61 @@ function readJson<T>(file: string, fallback: T): T {
 }
 
 function writeJson(file: string, value: unknown) {
+  writeText(file, JSON.stringify(value, null, 1))
+}
+
+function writeText(file: string, text: string) {
   const tmp = `${file}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(value, null, 1))
-  renameSync(tmp, file)
+  writeFileSync(tmp, text)
+  // On Windows a virus scanner or the indexer can hold the target open for a moment.
+  for (let i = 1; ; i++) {
+    try {
+      renameSync(tmp, file)
+      return
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code
+      if (i >= 5 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) {
+        rmSync(tmp, { force: true })
+        throw e
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40 * i)
+    }
+  }
+}
+
+// The room list is the one file whose loss loses everything, so each good write is also kept as
+// a backup. A file that does not parse is set aside before anything can overwrite it.
+export function readRooms(dir: string): RoomMeta[] {
+  const file = join(dir, 'rooms.json')
+  if (!existsSync(file)) return readJson<RoomMeta[]>(`${file}.bak`, [])
+  try {
+    const list = JSON.parse(readFileSync(file, 'utf8'))
+    if (Array.isArray(list)) return list
+  } catch {}
+  try { copyFileSync(file, join(dir, `rooms.json.unreadable-${Date.now()}`)) } catch {}
+  return readJson<RoomMeta[]>(`${file}.bak`, [])
+}
+
+// One bad line, say from a crash halfway through a write, costs that row and nothing after it.
+export function readLedger(file: string, since: number) {
+  const rows: { at: number; agent: string; room: string; usage: Usage }[] = []
+  let text = ''
+  try { text = readFileSync(file, 'utf8') } catch { return rows }
+  const keep = Date.now() - LEDGER_DAYS * 86400e3
+  const kept: string[] = []
+  for (const line of text.split('\n')) {
+    if (!line) continue
+    let row
+    try { row = JSON.parse(line) } catch { continue }
+    if (!row || typeof row.at !== 'number' || !row.usage) continue
+    if (row.at >= keep) kept.push(line)
+    if (row.at >= since) rows.push(row)
+  }
+  // Old and unreadable rows are dropped from the file too, once per start.
+  if (kept.length < text.split('\n').filter(Boolean).length) {
+    try { writeText(file, kept.map((l) => l + '\n').join('')) } catch {}
+  }
+  return rows
 }
 
 export function addUsage(a: Usage, b: Partial<Usage>) {
@@ -34,6 +91,9 @@ export function addUsage(a: Usage, b: Partial<Usage>) {
 export class Store {
   private rooms = new Map<string, RoomMeta>()
   private logs = new Map<string, Event[]>()
+  private cold = new Map<string, Event[]>()
+  // Lines that could not be written yet, a full disk say, in order, per room or for the ledger.
+  private pending = new Map<string, string>()
   private dirty = new Set<string>()
   private flushTimer: NodeJS.Timeout | null = null
   settings: Settings
@@ -49,7 +109,7 @@ export class Store {
   constructor(readonly dir: string, private cipher: Cipher) {
     mkdirSync(join(dir, 'rooms'), { recursive: true })
     mkdirSync(join(dir, 'packs'), { recursive: true })
-    for (const meta of readJson<RoomMeta[]>(join(dir, 'rooms.json'), [])) this.rooms.set(meta.id, meta)
+    for (const meta of readRooms(dir)) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
     const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
@@ -60,14 +120,7 @@ export class Store {
     this.ratings = state.ratings ?? {}
     this.skills = readJson<Skill[]>(join(dir, 'skills.json'), [])
     this.flows = readJson<Flow[]>(join(dir, 'flows.json'), [])
-    const since = Date.now() - DAYS * 86400e3
-    try {
-      for (const line of readFileSync(join(dir, 'ledger.jsonl'), 'utf8').split('\n')) {
-        if (!line) continue
-        const row = JSON.parse(line)
-        if (row.at >= since) this.ledger.push(row)
-      }
-    } catch {}
+    this.ledger = readLedger(join(dir, 'ledger.jsonl'), Date.now() - DAYS * 86400e3)
   }
 
   list() {
@@ -81,14 +134,32 @@ export class Store {
   events(id: string) {
     let log = this.logs.get(id)
     if (log) return log
-    log = []
-    try {
-      for (const line of readFileSync(join(this.dir, 'rooms', `${id}.jsonl`), 'utf8').split('\n')) {
-        if (!line) continue
-        try { log.push(JSON.parse(line)) } catch {}
-      }
-    } catch {}
+    log = this.cold.get(id) ?? this.load(id)
+    this.cold.delete(id)
     this.logs.set(id, log)
+    return log
+  }
+
+  // The log for reading only, as search does: rooms nobody has open are not all kept in memory.
+  peek(id: string) {
+    const log = this.logs.get(id) ?? this.cold.get(id) ?? this.load(id)
+    if (!this.logs.has(id)) {
+      this.cold.delete(id)
+      this.cold.set(id, log)
+      if (this.cold.size > COLD) this.cold.delete(this.cold.keys().next().value!)
+    }
+    return log
+  }
+
+  private load(id: string) {
+    const log: Event[] = []
+    try {
+      readFileSync(join(this.dir, 'rooms', `${id}.jsonl`), 'utf8').split('\n').forEach((line, i) => {
+        if (!line) return
+        // A line that does not parse keeps its place, since agents' heard marks count lines.
+        try { log.push(JSON.parse(line)) } catch { log.push({ kind: 'note', id: `unreadable-${i}`, at: 0, text: 'A line of this room could not be read.', tone: 'warn' }) }
+      })
+    } catch {}
     return log
   }
 
@@ -100,11 +171,28 @@ export class Store {
   }
 
   append(id: string, event: Event) {
-    this.events(id).push(event)
-    appendFileSync(join(this.dir, 'rooms', `${id}.jsonl`), JSON.stringify(event) + '\n')
+    // A turn still finishing in a deleted room must not bring its log back.
     const meta = this.rooms.get(id)
-    if (meta) meta.updated = event.at
+    if (!meta) return
+    this.events(id).push(event)
+    this.write(join(this.dir, 'rooms', `${id}.jsonl`), JSON.stringify(event) + '\n')
+    meta.updated = event.at
     this.touch(id)
+  }
+
+  // Appends a line, after any earlier lines for the same file that failed. A failure keeps the
+  // line for the next try instead of throwing into whoever was adding an event.
+  private write(file: string, line: string) {
+    const text = (this.pending.get(file) ?? '') + line
+    try {
+      appendFileSync(file, text)
+      this.pending.delete(file)
+    } catch (e) {
+      if (!existsSync(dirname(file))) return
+      this.pending.set(file, text)
+      console.error(`Could not write ${file}: ${(e as Error).message}`)
+      this.flushTimer ??= setTimeout(() => this.flush(), RETRY)
+    }
   }
 
   update(id: string, change: (meta: RoomMeta) => void) {
@@ -117,7 +205,10 @@ export class Store {
   remove(id: string) {
     this.rooms.delete(id)
     this.logs.delete(id)
-    rmSync(join(this.dir, 'rooms', `${id}.jsonl`), { force: true })
+    this.cold.delete(id)
+    const file = join(this.dir, 'rooms', `${id}.jsonl`)
+    this.pending.delete(file)
+    rmSync(file, { force: true })
     this.touch(id)
   }
 
@@ -126,12 +217,26 @@ export class Store {
     this.flushTimer ??= setTimeout(() => this.flush(), 250)
   }
 
+  // Runs from a timer, so it never throws: what could not be written stays marked and is tried
+  // again a little later.
   flush() {
     if (this.flushTimer) clearTimeout(this.flushTimer)
     this.flushTimer = null
+    for (const [file, text] of [...this.pending]) {
+      this.pending.delete(file)
+      this.write(file, text)
+    }
     if (!this.dirty.size) return
-    this.dirty.clear()
-    writeJson(join(this.dir, 'rooms.json'), [...this.rooms.values()])
+    const done = [...this.dirty]
+    try {
+      const text = JSON.stringify([...this.rooms.values()], null, 1)
+      writeText(join(this.dir, 'rooms.json'), text)
+      for (const id of done) this.dirty.delete(id)
+      try { writeText(join(this.dir, 'rooms.json.bak'), text) } catch {}
+    } catch (e) {
+      console.error(`Could not save the room list: ${(e as Error).message}`)
+      this.flushTimer ??= setTimeout(() => this.flush(), RETRY)
+    }
   }
 
   saveSettings(patch: Partial<Settings>) {
@@ -170,7 +275,7 @@ export class Store {
   record(agent: string, room: string, usage: Usage) {
     const row = { at: Date.now(), agent, room, usage }
     this.ledger.push(row)
-    appendFileSync(join(this.dir, 'ledger.jsonl'), JSON.stringify(row) + '\n')
+    this.write(join(this.dir, 'ledger.jsonl'), JSON.stringify(row) + '\n')
   }
 
   win(agent: string, cat: Category, losers: string[]) {

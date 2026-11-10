@@ -553,3 +553,52 @@ test('project memory: room text holding a marker cannot end the section early', 
   assert.equal(twice, once)
   assert.equal(strip(twice), own)
 })
+
+test('ledger: a bad line costs only that row, and old rows are trimmed from the file', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { readLedger } = await import('../electron/store')
+  const file = join(mkdtempSync(join(tmpdir(), 'lb-ledger-')), 'ledger.jsonl')
+  const row = (at: number, room: string) => JSON.stringify({ at, agent: 'claude', room, usage: { input: 1, output: 1, cached: 0, cost: 0 } })
+  const now = Date.now()
+  writeFileSync(file, [row(now - 500 * 86400e3, 'ancient'), row(now - 1000, 'a'), '{"at": 1, "agent', row(now - 500, 'b'), row(now - 30 * 86400e3, 'month')].join('\n') + '\n')
+  const rows = readLedger(file, now - 14 * 86400e3)
+  assert.deepEqual(rows.map((r) => r.room), ['a', 'b'])
+  const kept = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l).room)
+  assert.deepEqual(kept, ['a', 'b', 'month'], 'the old and the broken rows leave the file, the rest stay')
+})
+
+test('store: an unreadable room list falls back to its backup and is kept aside', async () => {
+  const { mkdtempSync, readdirSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const dir = mkdtempSync(join(tmpdir(), 'lb-store-'))
+  const plain = { seal: (t: string) => t, open: (t: string) => t }
+  const meta = { id: 'r1', name: 'Kept', created: 1, updated: 1, crew: ['claude'], workspace: dir, sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 } } as RoomMeta
+  const one = new Store(dir, plain)
+  one.create(meta)
+  one.flush()
+  writeFileSync(join(dir, 'rooms.json'), '[{"id": "r1", "na')
+  const two = new Store(dir, plain)
+  assert.equal(two.room('r1')?.name, 'Kept')
+  assert.ok(readdirSync(dir).some((f) => f.startsWith('rooms.json.unreadable-')), 'the broken file is copied before anything overwrites it')
+
+  // A turn that ends after its room was deleted does not bring the log back.
+  two.remove('r1')
+  two.append('r1', { id: 'e', at: 2, kind: 'note', text: 'late' })
+  assert.ok(!readdirSync(join(dir, 'rooms')).includes('r1.jsonl'))
+  two.flush()
+})
+
+test('store: a line that does not parse keeps its place in the room log', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const dir = mkdtempSync(join(tmpdir(), 'lb-log-'))
+  const store = new Store(dir, { seal: (t: string) => t, open: (t: string) => t })
+  const ev = (id: string) => JSON.stringify({ id, at: 1, kind: 'you', text: id })
+  writeFileSync(join(dir, 'rooms', 'r.jsonl'), [ev('a'), '{"id": "b", "at', ev('c')].join('\n') + '\n')
+  const log = store.events('r')
+  assert.equal(log.length, 3, 'heard marks count lines, so a bad one still takes a slot')
+  assert.equal(log[2].id, 'c')
+})
