@@ -15,6 +15,7 @@ import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
 import { merge, section, strip } from '../electron/room/project'
 import { markdown, replay } from '../electron/export'
+import { cmdLine, firstPath } from '../electron/system'
 import type { Event, RoomMeta } from '../shared/types'
 
 const fixture = (name: string) =>
@@ -539,4 +540,59 @@ test('briefing: brief always kept, newest memory first, no transcript, only chan
   assert.match(again.text, /fresh finding/)
   const follow = briefing(meta, events, 'codex', 'Reply', false, ['Claude: here is the draft'])
   assert.match(follow.text, /The last few lines of the room:\n\nClaude: here is the draft/)
+})
+
+test('which: only real paths count, never where.exe telling us it found nothing', () => {
+  assert.equal(firstPath('INFO: Could not find files for the given pattern(s).\r\n', true), '')
+  const npm = 'C:\\Users\\me\\AppData\\Roaming\\npm'
+  assert.equal(firstPath(`${npm}\\claude\r\n${npm}\\claude.cmd\r\n`, true), `${npm}\\claude.cmd`)
+  assert.equal(firstPath('\\\\server\\share\\tool.exe\r\n', true), '\\\\server\\share\\tool.exe')
+  assert.equal(firstPath('/usr/local/bin/codex\n', false), '/usr/local/bin/codex')
+  assert.equal(firstPath('echo\n', false), '', 'a shell builtin has no path to start')
+})
+
+// What cmd.exe does to one line: a caret makes the next character plain, and any special
+// character left bare would split the command, redirect it or open a quoted stretch.
+function cmdParse(s: string) {
+  let out = ''
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '^') out += s[++i]
+    else if (/[&|<>()"%!]/.test(s[i])) throw new Error(`bare ${s[i]} in ${s}`)
+    else out += s[i]
+  }
+  return out
+}
+
+// How a C runtime program splits what reaches it.
+function argv(s: string) {
+  const out: string[] = []
+  let i = 0
+  while (i < s.length) {
+    while (s[i] === ' ') i++
+    if (i >= s.length) break
+    let cur = ''
+    let quoted = false
+    while (i < s.length && (quoted || s[i] !== ' ')) {
+      if (s[i] === '\\') {
+        let n = 0
+        while (s[i] === '\\') { n++; i++ }
+        if (s[i] === '"') { cur += '\\'.repeat(n >> 1); if (n % 2) { cur += '"'; i++ } } else cur += '\\'.repeat(n)
+      } else if (s[i] === '"') { quoted = !quoted; i++ } else cur += s[i++]
+    }
+    out.push(cur)
+  }
+  return out
+}
+
+test('cmdLine: arguments reach a .cmd shim intact through both of cmd.exe\'s passes', () => {
+  const args = [
+    'he said "hi & bye"', '100% %PATH% !USERNAME!', 'a|b<c>d^e', 'C:\\path with space\\', 'ends\\\\', '', '(x) ; , = * ?',
+    'mcp_servers.lunchbox.url="http://127.0.0.1:4000/mcp"', 'Jöran ✓', '\\"', '-p',
+  ]
+  const line = cmdLine('claude.cmd', args)
+  // First the line cmd.exe is given, then the %* the shim passes on.
+  const shim = cmdParse(line)
+  assert.ok(shim.startsWith('claude.cmd '))
+  assert.deepEqual(argv(cmdParse(shim.slice('claude.cmd '.length))), args)
+  assert.equal(cmdLine('C:\\Program Files\\nodejs\\npx.cmd', []), 'C:\\Program^ Files\\nodejs\\npx.cmd')
 })

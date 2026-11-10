@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
 import { capture, env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
@@ -219,8 +219,11 @@ const all = () => [...CATALOG, ...custom]
 export const def = (id: string) => all().find((d) => d.id === id)
 
 async function locate(bin: string) {
-  if (isAbsolute(bin)) return existsSync(bin) ? bin : ''
-  return /^[\w.@+-]+$/.test(bin) ? which(bin) : ''
+  const path = bin.replace(/^~(?=[\\/]|$)/, homedir())
+  if (isAbsolute(path)) return existsSync(path) ? path : ''
+  // The app's own working folder means nothing to the person, so ./tools/agent starts from home.
+  if (/[\\/]/.test(path)) return existsSync(resolve(homedir(), path)) ? resolve(homedir(), path) : ''
+  return /^[\w.@+-]+$/.test(path) ? which(path) : ''
 }
 
 const paths = new Map<string, string>()
@@ -230,9 +233,10 @@ export async function detect(keys: Record<string, string>, models: Record<string
     all().map(async (d): Promise<AgentInfo> => {
       const base = { ...d, spawn: undefined, key: undefined, model: models[d.id], note: health[d.id] }
       if (d.via === 'cli') {
-        const path = await locate(d.bin!)
+        // One broken install shows as not found rather than hiding every other agent with it.
+        const path = await locate(d.bin!).catch(() => '')
         if (path) paths.set(d.id, path)
-        return { ...base, found: !!path, ready: !!path, version: path ? await version(path) : undefined }
+        return { ...base, found: !!path, ready: !!path, version: path ? await version(path).catch(() => '') : undefined }
       }
       if (d.via === 'local') {
         const [list, setup] = await Promise.all([listModels(providerOf(d), '').catch(() => null), localSetup(d.id, d.bin!)])
