@@ -602,3 +602,26 @@ test('store: a line that does not parse keeps its place in the room log', async 
   assert.equal(log.length, 3, 'heard marks count lines, so a bad one still takes a slot')
   assert.equal(log[2].id, 'c')
 })
+
+test('plan limits: tallies leave a half written last line for the next read', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const home = mkdtempSync(join(tmpdir(), 'lb-tally-'))
+  process.env.CLAUDE_CONFIG_DIR = join(home, '.claude')
+  mkdirSync(join(home, '.claude', 'projects', 'p'), { recursive: true })
+  const file = join(home, '.claude', 'projects', 'p', 's.jsonl')
+  const t = new Date().toISOString()
+  const line = (id: string, out: number) => JSON.stringify({ type: 'assistant', timestamp: t, requestId: 'r' + id, message: { id, usage: { input_tokens: 1, output_tokens: out } } }) + '\n'
+  const whole = line('a', 10)
+  const next = line('b', 100)
+  writeFileSync(file, whole + next.slice(0, 40))
+  const { update, used } = await import('../electron/tally')
+  const tally: { files: Record<string, { size: number }> } = { files: {} }
+  await update('claude', tally as never, Date.now() - 3600e3)
+  assert.equal(tally.files[file].size, Buffer.byteLength(whole), 'the read stops after the last newline')
+  appendFileSync(file, next.slice(40))
+  await update('claude', tally as never, Date.now() - 3600e3)
+  assert.equal(tally.files[file].size, statSync(file).size)
+  assert.equal(used(tally as never, Date.now() - 3600e3).fresh, 112, 'the finished line is counted once it is whole')
+  delete process.env.CLAUDE_CONFIG_DIR
+})

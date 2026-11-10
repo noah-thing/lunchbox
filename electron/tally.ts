@@ -1,7 +1,6 @@
 import { createReadStream, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline'
 import { claudeValue, codexCredits } from '../shared/prices'
 
 // Every token a CLI used on this machine, from its own logs, bucketed by hour. Together with the
@@ -88,16 +87,13 @@ export async function update(agent: string, state: Tally, since: number) {
     const keys = new Set(start ? prev.keys : [])
     const snaps = start ? [...(prev.snaps ?? [])] : []
     const ctx = { model: start ? prev.model : undefined }
-    let read = start
-    const lines = createInterface({ input: createReadStream(path, { start }), crlfDelay: Infinity })
-    for await (const line of lines) {
-      read += Buffer.byteLength(line) + 1
-      if (!r.match.test(line)) continue
+    const take = (line: string) => {
+      if (!r.match.test(line)) return
       let row
-      try { row = r.read(JSON.parse(line), ctx) } catch { continue }
-      if (!row || !Number.isFinite(row.at)) continue
+      try { row = r.read(JSON.parse(line), ctx) } catch { return }
+      if (!row || !Number.isFinite(row.at)) return
       if (row.key) {
-        if (keys.has(row.key)) continue
+        if (keys.has(row.key)) return
         keys.add(row.key)
       }
       if (row.snaps?.length) snaps.push(...row.snaps)
@@ -106,8 +102,21 @@ export async function update(agent: string, state: Tally, since: number) {
       b.fresh += row.fresh
       b.units = (b.units ?? 0) + row.units
     }
-    // A half written last line is read again next time rather than lost.
-    state.files[path] = { size: Math.min(read, size), hours, keys: [...keys].slice(-200), snaps: thin(snaps), model: ctx.model }
+    // Only lines that end in a newline are read and counted, so a half written last line is read
+    // again in full next time rather than lost.
+    let read = start
+    let rest: Buffer = Buffer.alloc(0)
+    if (size > start) for await (const chunk of createReadStream(path, { start, end: size - 1 }) as AsyncIterable<Buffer>) {
+      const buf = rest.length ? Buffer.concat([rest, chunk]) : chunk
+      let from = 0
+      for (let nl = buf.indexOf(10); nl >= 0; nl = buf.indexOf(10, from)) {
+        take(buf.toString('utf8', from, nl).replace(/\r$/, ''))
+        from = nl + 1
+      }
+      read += from
+      rest = buf.subarray(from)
+    }
+    state.files[path] = { size: read, hours, keys: [...keys].slice(-200), snaps: thin(snaps), model: ctx.model }
   }
   for (const [path, f] of Object.entries(state.files)) {
     if (!Object.keys(f.hours).some((h) => Number(h) >= since - HOUR)) delete state.files[path]
