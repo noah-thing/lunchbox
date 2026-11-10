@@ -40,6 +40,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // Shown as stopped the moment the button is pressed; the engine confirms a few ms later.
   const [stopping, setStopping] = useState(false)
   const [data, setData] = useState<Data | null>(null)
+  const [failed, setFailed] = useState(false)
   const [panel, setPanel] = useState(() => remembered('panel', innerWidth >= 1280))
   const [replay, setReplay] = useState<number | null>(null)
   const [arena, setArena] = useState(false)
@@ -51,12 +52,14 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     let alive = true
     early.current = []
     setData(null)
+    setFailed(false)
     setReplay(null)
     desk.call('room', id).then((d: Data | null) => {
-      if (!alive || !d?.meta) return
+      if (!alive) return
+      if (!d?.meta) return setFailed(true)
       const seen = new Set(d.events.map((e) => e.id))
       setData({ ...d, events: [...d.events, ...early.current.filter((e) => !seen.has(e.id))] })
-    })
+    }, () => { if (alive) setFailed(true) })
     const offs = [
       desk.on('room:event', ({ room, event }: { room: string; event: Event }) => {
         if (room !== id) return
@@ -95,8 +98,10 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
         next.classList.add('kfocus')
         next.scrollIntoView({ block: 'center', behavior: 'smooth' })
       }
-      // Esc refuses a pending command first; only with nothing waiting does it stop the turn.
-      if (e.key === 'Escape' && data?.live.turns.length && !data.live.runs.some((r) => r.state === 'asking') && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
+      // Esc refuses a pending command first; only with nothing waiting does it stop the turn. An Esc
+      // that closed something, or was typed into a field, a menu or a dialog, is not meant for the turn.
+      if (e.key === 'Escape' && !e.defaultPrevented && !typing && !(e.target as HTMLElement)?.closest?.('[role=dialog],[role=menu],[role=listbox]') && !document.querySelector('.scrim')
+        && data?.live.turns.length && !data.live.runs.some((r) => r.state === 'asking')) stop()
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
@@ -109,11 +114,20 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     desk.call('room:stop', id)
   }
 
-  if (!data) return <div className="room loading"><Loader size={14} /></div>
+  // Defined before the loading return: the shortcut can fire while the room is still loading.
+  const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
+  if (!data) return failed
+    ? (
+      <div className="room loading">
+        <div className="roomfail">
+          <p>This room could not be opened. It may have been deleted, or its file could not be read.</p>
+          <button className="btn small quiet" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'new' } }))}>Back to New room</button>
+        </div>
+      </div>
+    )
+    : <div className="room loading"><Loader size={14} /></div>
   const { meta, events, live } = data
   const busy = !stopping && (live.turns.length > 0 || live.runs.length > 0)
-
-  const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
   const actions: Actions = {
     decide: (ref, i) => desk.call('room:decide', id, ref, i, access),
     pick: (a, who) => desk.call('room:pick', id, a, who),
@@ -179,11 +193,20 @@ function Title({ name, rename }: { name: string; rename: (n: string) => void }) 
   useEffect(() => { const on = () => setEditing(true); addEventListener('lb:rename', on); return () => removeEventListener('lb:rename', on) }, [])
   const [value, setValue] = useState(name)
   useEffect(() => setValue(name), [name])
+  // Enter or Esc unmounts the field, and the blur that follows must not save a second time.
+  const closed = useRef(false)
+  useEffect(() => { if (editing) closed.current = false }, [editing])
   if (!editing) return <h1 onDoubleClick={() => setEditing(true)} title="Double click to rename">{name}</h1>
-  const done = (save: boolean) => { if (save && value.trim() && value !== name) rename(value.trim()); setEditing(false) }
+  const done = (save: boolean) => {
+    if (closed.current) return
+    closed.current = true
+    if (save && value.trim() && value.trim() !== name) rename(value.trim())
+    setValue(name)
+    setEditing(false)
+  }
   return (
     <input className="titleedit" autoFocus value={value} onChange={(e) => setValue(e.target.value)} onBlur={() => done(true)}
-      onKeyDown={(e) => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') { setValue(name); done(false) } }} />
+      onKeyDown={(e) => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') { e.preventDefault(); done(false) } }} />
   )
 }
 
@@ -258,10 +281,13 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // Opening a room lands at the bottom at once. After that the view eases after new content
   // instead of jumping to it, for as long as you stay at the bottom.
   const opened = useRef(false)
+  // Where the follower last put the view, so its own scrolls are not read as the reader's.
+  const ours = useRef(-1)
+  const lastTop = useRef(0)
   useLayoutEffect(() => {
     const el = box.current
     if (!el || !stick.current) return
-    if (!opened.current) { el.scrollTop = el.scrollHeight; opened.current = events.length > 0; return }
+    if (!opened.current) { el.scrollTop = el.scrollHeight; ours.current = el.scrollTop; opened.current = events.length > 0; return }
   }, [size])
   const working = !!live?.turns.length || !!live?.runs.length
   useEffect(() => {
@@ -270,7 +296,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       const el = box.current
       if (el && stick.current) {
         const gap = el.scrollHeight - el.clientHeight - el.scrollTop
-        if (gap > 0.5) el.scrollTop += Math.max(1, gap * 0.16)
+        if (gap > 0.5) { el.scrollTop += Math.max(1, gap * 0.16); ours.current = el.scrollTop }
       }
       raf = requestAnimationFrame(follow)
     }
@@ -282,22 +308,29 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // arrival again, so events that replace a live row are marked settled and never animate in.
   const settled = useRef(new Set<string>())
   // When a live row becomes its saved event the column can come out a few pixels shorter, which
-  // would pull the view up. The column keeps the tallest height it has reached, and the next
-  // thing written fills the difference. Removing events, by a rewind or a fork, lets it go.
+  // would pull the view up. While a turn is live the column keeps the tallest height it has
+  // reached, and holds it through the swap. It lets go when the next turn starts, when the width
+  // changes and text reflows, and when a rewind or a fork removes events.
   const column = useRef<HTMLDivElement>(null)
-  const tallest = useRef({ h: 0, n: 0 })
+  const tallest = useRef({ h: 0, n: 0, w: 0 })
+  const holding = useRef(working)
+  holding.current = working
+  const release = () => { tallest.current.h = 0; if (column.current) column.current.style.minHeight = '' }
   useEffect(() => {
     const el = column.current
     if (!el) return
     const ro = new ResizeObserver(() => {
+      if (el.offsetWidth !== tallest.current.w) { tallest.current.w = el.offsetWidth; release() }
+      if (!holding.current) return
       const h = el.offsetHeight
       if (h > tallest.current.h) { tallest.current.h = h; el.style.minHeight = `${h}px` }
     })
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  useLayoutEffect(() => { if (working) release() }, [working])
   useLayoutEffect(() => {
-    if (events.length < tallest.current.n && column.current) { tallest.current.h = 0; column.current.style.minHeight = '' }
+    if (events.length < tallest.current.n) release()
     tallest.current.n = events.length
   }, [events.length])
   const seen = useRef(new Map<string, LiveTurn>())
@@ -351,8 +384,17 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
 
   return (
     <div className="transcript" ref={box}
-      onWheel={(e) => { if (e.deltaY < 0) stick.current = false }}
-      onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) stick.current = true }}>
+      onScroll={(e) => {
+        // Following stops on any move up the reader makes, by wheel, scrollbar, keys or j and k,
+        // and starts again once they come back within reach of the bottom.
+        const el = e.currentTarget
+        const top = el.scrollTop
+        const up = top < lastTop.current - 0.5
+        lastTop.current = top
+        if (Math.abs(top - ours.current) < 1) return
+        const gap = el.scrollHeight - el.clientHeight - top
+        stick.current = gap < 2 || (!up && gap < 80)
+      }}>
       <div className="column" ref={column}>
         {empty && !live?.turns.length && <div className="roomempty">Nothing here yet. Say what you need and the crew takes it from there.</div>}
         {rows}
