@@ -33,7 +33,8 @@ export type AgentInfo = {
 // cached: input tokens served from a provider's prompt cache. written: tokens stored into it.
 // saved: dollars the cache saved where the price is known. kept: shared memory tokens Lunchbox
 // did not need to send again because the agent already had them.
-export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; kept?: number }
+// saved is net of the premium paid to write the cache; gross is what the cached reads alone saved.
+export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; gross?: number; kept?: number }
 
 // What a local model server needs before it can take work. app is set when there is a desktop
 // app to open; suggest is the chat model that fits this computer's memory.
@@ -237,7 +238,7 @@ export type Flow = {
 export type FlowState = { flow: string; room: string; step: number; of: number }
 
 export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: Day[]; rooms: Record<string, Usage> }
-export type Day = { day: string; cost: number; tokens: number; input: number; cached: number; saved: number; kept: number }
+export type Day = { day: string; cost: number; tokens: number; input: number; cached: number; saved: number; gross: number; kept: number }
 
 export type Hit = { room: string; roomName: string; event?: string; text: string }
 

@@ -47,12 +47,15 @@ function words(s: string) {
   return [...s.matchAll(word)].map((m) => m[0].replace(sep === '\\' ? /"([^"]*)"|'([^']*)'/g : /"([^"]*)"|'([^']*)'|\\(.)/g, (_m, a, b, c) => a ?? b ?? c ?? ''))
 }
 
-const expand = (t: string) => t.replace(/^~(?=[\\/]|$)/, () => homedir()).replace(/\$\{HOME\}|\$HOME(?!\w)/g, () => homedir())
+// The home folder as sh, cmd.exe and PowerShell spell it.
+const HOME = /\$\{HOME\}|\$HOME(?!\w)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%|\$\{?env:(USERPROFILE|HOME)\}?(?!\w)/gi
+const expand = (t: string) => t.replace(/^~(?=[\\/]|$)/, () => homedir()).replace(HOME, () => homedir())
 const base = (w: string) => w.split(/[\\/]/).pop()!.toLowerCase()
 
 // The disk, the home folder, or a folder the home folder sits in.
 function vital(word: string, cwd: string) {
   let path = expand(word)
+  if (/^[a-z]:[\\/]*$/i.test(path)) return true
   const glob = path.search(/[*?[{]/)
   if (glob >= 0) {
     // ~/* and ~/.* empty the folder before the star; ~/build* does not.
@@ -80,6 +83,17 @@ function wipes(command: string, cwd: string) {
       const targets = [...before.filter((x) => !x.startsWith('-')), ...(end < 0 ? [] : rest.slice(end + 1))]
       if (before.some((f) => f === '--recursive' || /^-[a-z]*r/i.test(f)) && targets.some((t) => vital(t, at))) return true
     }
+    // cmd.exe's rd /s and del /s, and PowerShell's Remove-Item -Recurse under any of its names.
+    const rd = w.findIndex((x) => /^(rd|rmdir|del|erase)$/.test(base(x)))
+    if (rd >= 0) {
+      const rest = w.slice(rd + 1)
+      if (rest.some((f) => /^\/s$/i.test(f)) && rest.filter((f) => !/^\/[a-z]$/i.test(f)).some((t) => vital(t, at))) return true
+    }
+    const ri = w.findIndex((x) => /^(remove-item|ri)$/.test(base(x)))
+    if (ri >= 0) {
+      const rest = w.slice(ri + 1)
+      if (rest.some((f) => /^-r/i.test(f)) && rest.filter((f) => !f.startsWith('-')).some((t) => vital(t, at))) return true
+    }
     const find = w.findIndex((x) => base(x) === 'find')
     if (find >= 0) {
       const rest = w.slice(find + 1)
@@ -94,8 +108,10 @@ function wipes(command: string, cwd: string) {
 }
 
 function segments(command: string) {
-  // A single & starts a second command as surely as && does.
-  return command.split(/&&|\|\||;|\||&|\r|\n/).map((s) => s.trim()).filter(Boolean)
+  // A single & starts a second command as surely as && does, but the & in 2>&1 or &> only
+  // points one output at another, so those go first. &> still writes a file, so it stays a >.
+  const plain = command.replace(/\d*[<>]&(\d+|-)(?=\s|$|[|;&)])/g, ' ').replace(/&>/g, '>')
+  return plain.split(/&&|\|\||;|\||&|\r|\n/).map((s) => s.trim()).filter(Boolean)
 }
 
 function isRead(segment: string) {

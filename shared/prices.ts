@@ -35,6 +35,13 @@ export function cacheSaving(model: string, read: number, writes: number | Writes
   return (read * (p.input - p.read) - w.short * p.input * 0.25 - (w.hour ?? 0) * p.input) / 1e6
 }
 
+// What the cached reads of one call saved on their own, before the write premium. Positive from
+// the first cache hit, so a room shows its saving before the writes have paid off.
+export function readSaving(model: string, read: number, prompt = 0): number | null {
+  const p = claudePrice(model, prompt)
+  return p ? (read * (p.input - p.read)) / 1e6 : null
+}
+
 // The bill for one call at list price, for API keys that do not report a cost themselves.
 export function claudeCost(model: string, u: { input: number; read: number; output: number } & Writes): number | null {
   const p = claudePrice(model, u.input + u.read + u.short + (u.hour ?? 0))

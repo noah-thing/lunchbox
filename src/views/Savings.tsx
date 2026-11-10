@@ -4,10 +4,10 @@ import { Mark } from '../ui/bits'
 import { money, tokens, useApp } from '../lib/desk'
 import type { View } from '../App'
 
-const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0, saved: 0, kept: 0 })
+const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0, saved: 0, gross: 0, kept: 0 })
 const add = (a: Usage, u: Usage): Usage => ({
   input: a.input + u.input, output: a.output + u.output, cached: a.cached + u.cached, cost: a.cost + u.cost,
-  saved: (a.saved ?? 0) + (u.saved ?? 0), kept: (a.kept ?? 0) + (u.kept ?? 0),
+  saved: (a.saved ?? 0) + (u.saved ?? 0), gross: gross(a) + gross(u), kept: (a.kept ?? 0) + (u.kept ?? 0),
 })
 const total = (r: Record<string, Usage> | undefined) => Object.values(r ?? {}).reduce(add, zero())
 // Everything an agent read: billed in full, read from the provider's cache, or never sent
@@ -15,8 +15,11 @@ const total = (r: Record<string, Usage> | undefined) => Object.values(r ?? {}).r
 const read = (u: { input: number; cached: number; kept?: number }) => u.input + u.cached + (u.kept ?? 0)
 const reused = (u: { cached: number; kept?: number }) => u.cached + (u.kept ?? 0)
 const ratio = (u: { input: number; cached: number; kept?: number }) => (read(u) ? reused(u) / read(u) : 0)
-// Money at list price. A week that has only written to the cache shows zero, never a negative saving.
-const cash = (n: number) => (n >= 0.01 ? `$${n.toFixed(2)}` : '$0.00')
+// What the cached reads saved at list price. Rows from before it was recorded fall back to the net.
+const gross = (u: Usage) => u.gross ?? Math.max(0, u.saved ?? 0)
+// Only Claude has published prices in Lunchbox; the rest are counted in tokens, never guessed.
+const priced = (u: Usage) => u.gross !== undefined || u.saved !== undefined
+const cash = (n: number) => (n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00')
 const pct = (n: number) => (n > 0 && n < 0.005 ? '<1%' : `${(n * 100).toFixed(n >= 0.995 || n === 0 ? 0 : 1)}%`)
 
 export function Savings({ go }: { go: (v: View) => void }) {
@@ -30,11 +33,11 @@ export function Savings({ go }: { go: (v: View) => void }) {
   const crew = Object.entries(ledger?.week ?? {})
     .map(([id, u]) => ({ a: agents.find((x) => x.id === id), id, u }))
     .filter((x) => read(x.u) > 0)
-    .sort((x, y) => (y.u.saved ?? 0) - (x.u.saved ?? 0) || reused(y.u) - reused(x.u))
+    .sort((x, y) => gross(y.u) - gross(x.u) || reused(y.u) - reused(x.u))
   const top = Object.entries(ledger?.rooms ?? {})
     .map(([id, u]) => ({ room: rooms.find((r) => r.id === id), id, u }))
     .filter((x) => x.room && read(x.u) > 0)
-    .sort((x, y) => (y.u.saved ?? 0) - (x.u.saved ?? 0) || reused(y.u) - reused(x.u))
+    .sort((x, y) => gross(y.u) - gross(x.u) || reused(y.u) - reused(x.u))
     .slice(0, 6)
 
   return (
@@ -49,9 +52,10 @@ export function Savings({ go }: { go: (v: View) => void }) {
         </header>
 
         <div className="sv-kpis rise" style={{ '--i': 1 } as CSSProperties}>
-          <Kpi label="Saved with prompt caching" value={cash(week.saved ?? 0)} series={last7.map((d) => Math.max(0, d.saved))}
-            note={(week.saved ?? 0) < 0.01 && read(week) > 0 ? 'Grows from the second turn in a room' : undefined}
-            info="At API list prices. The first turn in a room stores it in the cache, which costs a little extra; every turn after reads it back for about a tenth. On a plan this means more room before your limit." />
+          <Kpi label="Saved with prompt caching" value={gross(week) > 0 ? cash(gross(week)) : reused(week) > 0 ? `${tokens(reused(week))} tokens` : '$0.00'}
+            series={last7.map((d) => d.gross ?? Math.max(0, d.saved))}
+            note={gross(week) <= 0 && reused(week) > 0 ? 'Counted in tokens for agents without published prices' : undefined}
+            info={`At API list prices: cached reads cost about a tenth of a fresh read. Writing the cache costs a little extra on the first turn of a room${gross(week) > 0 ? `, ${cash(Math.max(0, gross(week) - (week.saved ?? 0)))} this week, so the net saving is ${cash(Math.max(0, week.saved ?? 0))}` : ''}. Claude has published prices in Lunchbox; other agents are counted in tokens. On a plan this means more room before your limit.`} />
           <Kpi label="Tokens saved" value={tokens(reused(week))} series={last7.map(reused)}
             info="Tokens your agents read without paying full price: either the provider had them cached and charged about a tenth, or the agent already had them and Lunchbox skipped sending them." />
           <Kpi label="Savings rate" value={pct(ratio(week))} series={last7.map(ratio)} unit
@@ -74,7 +78,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
                   <span className="sv-num">{tokens(reused(u))}</span>
                   <span className="sv-num sv-dim">{tokens(u.input)}</span>
                   <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>{a?.via === 'local' ? 'free' : 'none yet'}</em>}</span>
+                  <span className="sv-num">{gross(u) > 0 ? cash(gross(u)) : <em>{a?.via === 'local' ? 'free' : reused(u) > 0 && !priced(u) ? 'tokens only' : 'none yet'}</em>}</span>
                 </div>
               ))}
             </Table>
@@ -90,7 +94,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
                   <span className="sv-num">{tokens(reused(u))}</span>
                   <span className="sv-num sv-dim">{tokens(u.input)}</span>
                   <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="sv-num">{(u.saved ?? 0) >= 0.01 ? money(u.saved!) : <em>none yet</em>}</span>
+                  <span className="sv-num">{gross(u) > 0 ? cash(gross(u)) : <em>{reused(u) > 0 && !priced(u) ? 'tokens only' : 'none yet'}</em>}</span>
                 </button>
               ))}
             </Table>
@@ -189,7 +193,7 @@ function Chart({ days }: { days: Day[] }) {
                   <b>{label}</b>
                   <span><i className="sv-reuse" />Saved by caching<em>{tokens(reused(d))}</em></span>
                   <span><i className="sv-fresh" />Paid in full<em>{tokens(d.input)}</em></span>
-                  {d.saved >= 0.01 && <span className="sv-saved">Saved<em>{money(d.saved)}</em></span>}
+                  {(d.gross ?? d.saved) >= 0.01 && <span className="sv-saved">Saved<em>{money(d.gross ?? d.saved)}</em></span>}
                 </span>
               </div>
               <small>{i === days.length - 1 ? 'Today' : i % 2 ? '' : label}</small>

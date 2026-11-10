@@ -18,6 +18,20 @@ export function useBrowser() {
   return s
 }
 
+// The native view is drawn above the whole window, so a dialog or sheet opened over the page would
+// sit behind it. The view steps aside while one is up. Toasts and the update banner do not count:
+// they come and go on their own, and the page blinking out for each would be worse than missing one.
+const OVER = '.scrim, [role=dialog]'
+function useOverlaid() {
+  const [over, setOver] = useState(() => !!document.querySelector(OVER))
+  useEffect(() => {
+    const mo = new MutationObserver(() => setOver(!!document.querySelector(OVER)))
+    mo.observe(document.body, { childList: true, subtree: true })
+    return () => mo.disconnect()
+  }, [])
+  return over
+}
+
 // The page is a native view drawn into the hole this frame leaves. The frame tells the main
 // process where the hole is whenever it moves, and takes the page away when it unmounts.
 export function Browser({ say, covered }: { say: (t: string) => void; covered: boolean }) {
@@ -28,12 +42,13 @@ export function Browser({ say, covered }: { say: (t: string) => void; covered: b
   const agents = useApp((x) => x.agents)
   const open = !!s.url
   const driver = s.driver ? agentOf(s.driver, agents) : null
+  const hidden = useOverlaid() || covered
 
   useEffect(() => { if (!open) desk.call('browser:local').then(setLocal) }, [open])
 
   useLayoutEffect(() => {
     const el = hole.current
-    if (!el || !open || covered) { desk.call('browser:place', null); return }
+    if (!el || !open || hidden) { desk.call('browser:place', null); return }
     const place = () => {
       const r = el.getBoundingClientRect()
       desk.call('browser:place', { x: r.left, y: r.top, width: r.width, height: r.height })
@@ -43,7 +58,7 @@ export function Browser({ say, covered }: { say: (t: string) => void; covered: b
     ro.observe(el)
     addEventListener('resize', place)
     return () => { ro.disconnect(); removeEventListener('resize', place) }
-  }, [open, covered, s.device])
+  }, [open, hidden, s.device])
   useEffect(() => () => { desk.call('browser:place', null) }, [])
 
   const go = async (e?: FormEvent, url = typed ?? '') => {

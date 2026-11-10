@@ -1,4 +1,4 @@
-import { cacheSaving } from '../../shared/prices'
+import { cacheSaving, readSaving } from '../../shared/prices'
 import type { Act, Usage } from '../../shared/types'
 
 // Each CLI prints one JSON object per line. A parser folds those lines into a Turn and reports
@@ -19,20 +19,28 @@ export type Turn = {
 export type Update = { delta?: string; acts?: Act[]; working?: string; agents?: Extract<Act, { t: 'agent' }>[] }
 
 // Claude Code reports cache reads and writes per model, so the saving is priced per model at API
-// rates. A subscription pays nothing per token; this is what the same work would have cost.
-function claudeSaved(models: Record<string, any> | undefined) {
-  const rows = Object.entries(models ?? {})
-  const parts = rows.length
-    ? rows.map(([m, r]) => {
-        // Claude Code reports writes by lifetime; an hour entry costs twice the input price, not 1.25.
-        const all = r.cacheCreationInputTokens ?? 0
-        const hour = r.cacheCreationEphemeral1hInputTokens ?? 0
-        const prompt = (r.inputTokens ?? 0) + (r.cacheReadInputTokens ?? 0) + all
-        return cacheSaving(m, r.cacheReadInputTokens ?? 0, { short: Math.max(0, all - hour), hour }, prompt)
-      })
-    : []
-  const known = parts.filter((x): x is number => x !== null)
-  return known.length ? known.reduce((a, b) => a + b, 0) : undefined
+// rates. A subscription pays nothing per token; this is what the same work would have cost. When a
+// result has no per model rows, the turn's usage is priced at the model the session started with.
+function claudeSaved(models: Record<string, any> | undefined, usage: any, model?: string) {
+  const rows: [string, any][] = Object.entries(models ?? {})
+  if (!rows.length && model && usage) {
+    const hour = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0
+    rows.push([model, { inputTokens: usage.input_tokens, cacheReadInputTokens: usage.cache_read_input_tokens, cacheCreationInputTokens: usage.cache_creation_input_tokens, cacheCreationEphemeral1hInputTokens: hour }])
+  }
+  let net: number | undefined
+  let gross: number | undefined
+  for (const [m, r] of rows) {
+    // Claude Code reports writes by lifetime; an hour entry costs twice the input price, not 1.25.
+    const all = r.cacheCreationInputTokens ?? 0
+    const hour = r.cacheCreationEphemeral1hInputTokens ?? 0
+    const read = r.cacheReadInputTokens ?? 0
+    const prompt = (r.inputTokens ?? 0) + read + all
+    const n = cacheSaving(m, read, { short: Math.max(0, all - hour), hour }, prompt)
+    const g = readSaving(m, read, prompt)
+    if (n !== null) net = (net ?? 0) + n
+    if (g !== null) gross = (gross ?? 0) + g
+  }
+  return { saved: net, gross }
 }
 
 // A command-line agent with no structured output: everything it prints is the answer.
@@ -109,6 +117,7 @@ export function claudeLike() {
   const pending = new Map<string, { name: string; input: Record<string, unknown> }>()
   const subs = new Map<string, Extract<Act, { t: 'agent' }>>()
   let streamed = false
+  let model: string | undefined
 
   // A subagent's own messages carry the id of the call that started it. They never reach the
   // answer; they only move its row along.
@@ -128,6 +137,7 @@ export function claudeLike() {
     switch (o.type) {
       case 'system':
         if (o.subtype === 'init' && o.session_id) turn.session = o.session_id
+        if (o.subtype === 'init' && typeof o.model === 'string') model = o.model
         return null
       case 'stream_event': {
         const d = o.event?.delta
@@ -192,7 +202,7 @@ export function claudeLike() {
           cached: u.cache_read_input_tokens ?? 0,
           cost: o.total_cost_usd ?? Object.values(o.modelUsage ?? {}).reduce((n: number, m: any) => n + (m.costUSD ?? 0), 0),
           written: u.cache_creation_input_tokens ?? 0,
-          saved: claudeSaved(o.modelUsage),
+          ...claudeSaved(o.modelUsage, o.usage, model),
         }
         if (typeof o.result === 'string') turn.final = o.result
         if (o.session_id) turn.session = o.session_id

@@ -17,9 +17,19 @@ function Phone({ say }: { say: (t: string) => void }) {
     desk.call('remote').then(setS)
     return desk.on('remote', setS)
   }, [])
+  // True when the change took. A bad token comes back as a status with an error, not a throw.
   const set = async (patch: Record<string, unknown>) => {
     setBusy(true)
-    try { setS(await desk.call('remote:set', patch)); await reload.settings({}) } catch (e) { say(reason(e)) } finally { setBusy(false) }
+    try {
+      const next: RemoteStatus = await desk.call('remote:set', patch)
+      setS(next)
+      await reload.settings({})
+      if (next?.error) say(next.error)
+      return !next?.error
+    } catch (e) {
+      say(reason(e))
+      return false
+    } finally { setBusy(false) }
   }
   if (!s) return null
   return (
@@ -33,7 +43,7 @@ function Phone({ say }: { say: (t: string) => void }) {
         {(!s.token || !s.on) && (
           <div className="setting">
             <input className="grow input mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={s.token ? 'Saved. Paste to replace' : '123456789:AA…'} />
-            <button className="btn small" disabled={!token.trim() || busy} onClick={async () => { await set({ token, on: true }); setToken('') }}>{busy ? <Loader size={10} /> : 'Connect'}</button>
+            <button className="btn small" disabled={!token.trim() || busy} onClick={async () => { if (await set({ token, on: true })) setToken('') }}>{busy ? <Loader size={10} /> : 'Connect'}</button>
           </div>
         )}
         {s.on && s.bot && !s.paired && (

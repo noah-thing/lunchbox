@@ -3,6 +3,7 @@ import { createPublicKey, verify } from 'node:crypto'
 import updater from 'electron-updater'
 import type { Notice, UpdateState } from '../shared/types'
 import type { Store } from './store'
+import { bundlePath, canReplace, parseFeed, pick, prepare, swapOnExit } from './macupdate'
 
 // Everything public lives in noah-thing/lunchbox-releases: the installers, and notices.json, the
 // feed of messages that reach every copy of the app without an update.
@@ -14,6 +15,9 @@ const FEED = 'https://raw.githubusercontent.com/noah-thing/lunchbox-releases/mai
 const KEY = createPublicKey('-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAcUzrUWrqBdLZc++0Sq82fE9P9ZTLy2ESPGV722bVjU0=\n-----END PUBLIC KEY-----\n')
 
 const HOUR = 3600e3
+const mac = process.platform === 'darwin'
+// Where releases live. A test build can point this at a local copy of the release files.
+const BASE = process.env.LUNCHBOX_UPDATE_BASE || `${RELEASES}/releases`
 
 // 1.10.0 is newer than 1.9.2; a pre-release tag counts as older than the plain version.
 export function newer(a: string, b: string) {
@@ -53,6 +57,9 @@ export function visible(list: Notice[], version: string, platform: string, dismi
 export class Updates {
   state: UpdateState = { state: 'idle' }
   notices: Notice[] = []
+  // The unpacked new version on a Mac, waiting to be swapped in.
+  private fresh = ''
+  private swapping = false
 
   constructor(private store: Store, private emit: (channel: string, value: unknown) => void) {}
 
@@ -60,6 +67,18 @@ export class Updates {
     this.feed()
     setInterval(() => this.feed(), HOUR / 2)
     if (!app.isPackaged) return
+    if (mac) {
+      // Installed when the app quits, the way electron-updater does it on Windows and Linux.
+      app.on('will-quit', () => {
+        if (this.fresh && !this.swapping && this.store.settings.autoUpdate !== false) {
+          this.swapping = true
+          swapOnExit(this.fresh, false)
+        }
+      })
+      this.check()
+      setInterval(() => this.check(), 4 * HOUR)
+      return
+    }
     const u = updater.autoUpdater
     // On unless the person turned it off; off still checks and says when a version is out.
     const auto = this.store.settings.autoUpdate !== false
@@ -70,8 +89,7 @@ export class Updates {
     u.on('download-progress', (p) => this.set({ state: 'downloading', version: (this.state as { version?: string }).version ?? '', progress: p.percent / 100 }))
     u.on('update-available', (i) => this.set(this.store.settings.autoUpdate !== false ? { state: 'downloading', version: i.version, progress: 0 } : { state: 'available', version: i.version }))
     u.on('update-downloaded', (i) => this.set({ state: 'ready', version: i.version }))
-    // macOS installs only signed apps. Until the app is signed, a new version is offered as a
-    // download instead, so nobody is left on an old version without knowing.
+    // A failed update still says a new version is out, so nobody is left behind without knowing.
     u.on('error', (e) => this.manual(String(e?.message ?? e)))
     this.check()
     setInterval(() => this.check(), 4 * HOUR)
@@ -79,30 +97,81 @@ export class Updates {
 
   check() {
     if (!app.isPackaged) return Promise.resolve(this.state)
+    if (mac) return this.macCheck()
     return updater.autoUpdater.checkForUpdates().then(() => this.state).catch((e) => this.manual(String(e?.message ?? e)))
   }
 
   download() {
     if (this.state.state !== 'available') return
+    if (mac) return void this.macDownload(this.state.version)
     this.set({ state: 'downloading', version: this.state.version, progress: 0 })
     updater.autoUpdater.downloadUpdate().catch((e) => this.manual(String(e?.message ?? e)))
   }
 
   setAuto(on: boolean) {
     if (!app.isPackaged) return
+    if (mac) {
+      if (on && this.state.state === 'available') this.download()
+      return
+    }
     updater.autoUpdater.autoDownload = on
     updater.autoUpdater.autoInstallOnAppQuit = on
     if (on && this.state.state === 'available') this.download()
   }
 
   install() {
+    if (this.state.state !== 'ready') return
+    if (mac) {
+      if (!this.fresh || this.swapping) return
+      this.swapping = true
+      swapOnExit(this.fresh, true)
+      app.quit()
+      return
+    }
     // Silent, and the app opens again: no installer wizard on Windows, no closed app on Linux.
-    if (this.state.state === 'ready') updater.autoUpdater.quitAndInstall(true, true)
+    updater.autoUpdater.quitAndInstall(true, true)
+  }
+
+  private async macCheck() {
+    if (this.state.state === 'downloading' || this.state.state === 'ready') return this.state
+    this.set({ state: 'checking' })
+    try {
+      const res = await net.fetch(`${BASE}/latest/download/latest-mac.yml`, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`the release feed answered ${res.status}`)
+      const feed = parseFeed(await res.text())
+      if (!feed || !newer(feed.version, app.getVersion())) return this.set({ state: 'none' }), this.state
+      if (!pick(feed) || !canReplace(bundlePath())) return this.manual('this copy of Lunchbox cannot replace itself')
+      if (this.store.settings.autoUpdate === false) return this.set({ state: 'available', version: feed.version }), this.state
+      return this.macDownload(feed.version, feed)
+    } catch (e) {
+      return this.manual(String((e as Error)?.message ?? e))
+    }
+  }
+
+  private async macDownload(version: string, known?: ReturnType<typeof parseFeed>) {
+    this.set({ state: 'downloading', version, progress: 0 })
+    try {
+      const feed = known ?? parseFeed(await (await net.fetch(`${BASE}/latest/download/latest-mac.yml`, { cache: 'no-store' })).text())
+      const asset = feed && feed.version === version ? pick(feed) : undefined
+      if (!asset) throw new Error('the release has no build for this Mac')
+      let shown = 0
+      this.fresh = await prepare(BASE, version, asset, (p) => {
+        // A few updates a second is smooth; one per network chunk floods the window.
+        if (p - shown >= 0.02 || p === 1) { shown = p; this.set({ state: 'downloading', version, progress: p }) }
+      })
+      this.set({ state: 'ready', version })
+    } catch (e) {
+      this.fresh = ''
+      await this.manual(String((e as Error)?.message ?? e))
+    }
+    return this.state
   }
 
   private async manual(error: string) {
     try {
       const res = await net.fetch(`https://api.github.com/repos/noah-thing/lunchbox-releases/releases/latest`, { headers: { accept: 'application/vnd.github+json' } })
+      // A rate limit or an outage is not the same as being up to date.
+      if (!res.ok) throw new Error(`GitHub answered ${res.status}`)
       const latest = (await res.json()) as { tag_name?: string; html_url?: string }
       if (latest.tag_name && newer(latest.tag_name, app.getVersion())) return this.set({ state: 'manual', version: latest.tag_name.replace(/^v/, ''), url: latest.html_url ?? `${RELEASES}/releases/latest` })
       this.set({ state: 'none' })

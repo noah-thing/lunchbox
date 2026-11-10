@@ -1,6 +1,8 @@
 import { Fragment, memo, type ReactNode } from 'react'
+import { foldChecklists, sincePlan, type Step } from '../../shared/plan'
 
-const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)<>]+[^\s).,;:!?<>'"])/g
+// Code, bold, web links, links to files on disk (shown as the file name) and bare URLs.
+const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\[[^\]\n]+\]\((?!https?:)[^)\n]+\)|https?:\/\/[^\s)<>]+[^\s).,;:!?<>'"])/g
 
 function inline(text: string): ReactNode[] {
   return text.split(INLINE).map((part, i) => {
@@ -8,6 +10,7 @@ function inline(text: string): ReactNode[] {
     if (part.startsWith('`')) return <code key={i}>{part.slice(1, -1)}</code>
     if (part.startsWith('**')) return <b key={i}>{part.slice(2, -2)}</b>
     const link = part.match(/^\[([^\]]+)\]\((.+)\)$/)
+    if (link && !/^https?:/.test(link[2])) return <code key={i} title={link[2]}>{link[1]}</code>
     const href = link ? link[2] : part
     return <a key={i} href={href} target="_blank" rel="noreferrer">{link ? link[1] : part.replace(/^https?:\/\//, '')}</a>
   })
@@ -19,7 +22,7 @@ type Block =
   | { t: 'code'; lang: string; text: string }
   | { t: 'list'; ordered: boolean; items: { text: string; check?: boolean }[] }
 
-function blocks(src: string): Block[] {
+function blocks(src: string, prior: Pick<Step, 'text' | 'done'>[] = []): Block[] {
   const out: Block[] = []
   const lines = src.replace(/\r/g, '').split('\n')
   let para: string[] = []
@@ -50,11 +53,18 @@ function blocks(src: string): Block[] {
     para.push(line)
   }
   flush()
-  return out
+  const items = (b: Block) => (b.t === 'list' ? b.items : undefined)
+  return sincePlan(foldChecklists(out, items), items, prior)
 }
 
-export const Rich = memo(function Rich({ text, caret = false }: { text: string; caret?: boolean }) {
-  const list = blocks(text)
+// One line of text with code, bold and links, for places that show a single line (the plan).
+export function Inline({ text }: { text: string }) {
+  return <>{inline(text)}</>
+}
+
+// prior: the room's plan before this message, so a repeated checklist shows only what changed.
+export const Rich = memo(function Rich({ text, caret = false, prior }: { text: string; caret?: boolean; prior?: Pick<Step, 'text' | 'done'>[] }) {
+  const list = blocks(text, prior)
   return (
     <div className="rich">
       {list.map((b, i) => {

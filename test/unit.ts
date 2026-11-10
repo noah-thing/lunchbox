@@ -10,11 +10,13 @@ import { cacheSaving, claudeCost } from '../shared/prices'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
-import { asks, plan } from '../shared/plan'
+import { asks, foldChecklists, plan, plansBefore, sincePlan } from '../shared/plan'
+import { canReplace, parseFeed, pick } from '../electron/macfeed'
 import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
 import { merge, section, strip } from '../electron/room/project'
 import { markdown, replay } from '../electron/export'
+import { cmdLine, firstPath } from '../electron/system'
 import type { Event, RoomMeta } from '../shared/types'
 
 const fixture = (name: string) =>
@@ -110,6 +112,81 @@ test('plan: newest checklist wins and later ticks close steps', () => {
   const steps = plan(events)
   assert.deepEqual(steps.map((s) => s.done), [true, false, false])
   assert.equal(steps[0].who, 'grok')
+})
+
+test('plan: a full list posted again keeps who finished each step', () => {
+  const list = (ticks: string) => ['Read the code', 'Build the collector', 'Tests for the collector (Codex)', 'Launch it']
+    .map((s, i) => `- [${ticks[i] === 'x' ? 'x' : ' '}] ${s}`).join('\n')
+  const crew = [{ id: 'claude', short: 'Claude' }, { id: 'codex', short: 'Codex' }, { id: 'grok', short: 'Grok' }]
+  const events = [
+    { kind: 'say', who: 'claude', text: list('    '), acts: [] },
+    { kind: 'hands', from: 'claude', to: 'grok', ask: 'x', answer: '- [x] Read the code', acts: [] },
+    { kind: 'say', who: 'claude', text: list('xxxx'), acts: [] },
+  ].map(ev)
+  const steps = plan(events, crew)
+  assert.deepEqual(steps.map((s) => s.done), [true, true, true, true])
+  assert.deepEqual(steps.map((s) => s.who), ['grok', 'claude', 'codex', 'claude'])
+  assert.deepEqual(plan(events).map((s) => s.who), ['grok', 'claude', 'claude', 'claude'], 'without a crew only ticks count')
+})
+
+test('plan: one message that repeats its checklist counts each step once', () => {
+  const list = (t: string) => ['Read', 'Build', 'Test'].map((s, i) => `- [${t[i]}] ${s} the thing`).join('\n')
+  const steps = plan([{ kind: 'say', who: 'codex', text: [list('   '), 'Working on it.', list('x  '), list('xx ')].join('\n\n'), acts: [] }].map(ev))
+  assert.deepEqual(steps.map((s) => s.done), [true, true, false])
+})
+
+test('plan: when a message holds a plan and then a report in other words, the report is the plan', () => {
+  const text = ['- [ ] Read the settings layer', '- [ ] Add configuration tests', '- [ ] Run the full suite', '', 'Done.', '',
+    '- [x] Added 33 configuration tests in [test_config.py](/home/me/sysmon/tests/test_config.py)', '- [x] Checked the top_process path', '- [x] Ran the full suite: 41 passed'].join('\n')
+  const steps = plan([{ kind: 'say', who: 'codex', text, acts: [] }].map(ev))
+  assert.deepEqual(steps.map((s) => s.done), [true, true, true])
+  const short = text.split('\n').filter((l) => !l.includes('top_process')).join('\n')
+  assert.deepEqual(plan([{ kind: 'say', who: 'codex', text: short, acts: [] }].map(ev)).map((s) => s.done), [false, false, false], 'a two line report does not wipe the plan')
+})
+
+test('sincePlan: a later message that repeats the plan shows only what it changes', () => {
+  const list = (t: string) => ['Read the code', 'Build the page', 'Run the tests'].map((s, i) => `- [${t[i]}] ${s}`).join('\n')
+  const events = [
+    { kind: 'say', who: 'codex', text: list('   '), acts: [] },
+    { kind: 'say', who: 'codex', text: 'Read it.\n\n' + list('x  '), acts: [] },
+    { kind: 'say', who: 'codex', text: list('x  '), acts: [] },
+    { kind: 'say', who: 'codex', text: '- [x] Build the page\n- [ ] Deploy it', acts: [] },
+  ].map(ev)
+  const before = plansBefore(events)
+  const blocks = (text: string) => text.split('\n\n').map((t) => t.startsWith('- [')
+    ? { t: 'list', items: t.split('\n').map((l) => ({ text: l.slice(6), check: l[3] === 'x' })) } : { t: 'p', text: t })
+  const show = (i: number) => sincePlan(blocks((events[i] as any).text), (b: any) => b.items, before.get(events[i].id)!)
+  assert.equal((show(0)[0] as any).items.length, 3, 'the first post shows the whole plan')
+  assert.deepEqual((show(1)[1] as any).items.map((i: any) => i.text), ['Read the code'], 'a repeat shows only the newly ticked step')
+  assert.equal(show(2).length, 0, 'a repeat that changes nothing disappears')
+  assert.equal(before.get(events[1].id)![0].done, false, 'earlier snapshots never change')
+  assert.deepEqual(plan(events).map((s) => [s.text, s.done]), [['Read the code', true], ['Build the page', true], ['Run the tests', false], ['Deploy it', false]])
+  const other = sincePlan([{ t: 'list', items: [{ text: 'Buy milk', check: false }, { text: 'Call mum', check: false }] }], (b: any) => b.items, plan(events))
+  assert.equal(other.length, 1, 'a different list stays whole')
+})
+
+test('foldChecklists: a list posted again updates the first copy in place', () => {
+  const list = (...items: [string, boolean][]) => ({ t: 'list', items: items.map(([text, check]) => ({ text, check })) })
+  const para = (text: string) => ({ t: 'p', text })
+  const fold = (blocks: any[]) => foldChecklists(blocks, (b: any) => b.items)
+  const first = list(['Read the data layer', false], ['Add tests', false], ['Run the suite', false])
+  const out = fold([first, para('pytest is unavailable'), list(['Read the data layer', true], ['Add tests', false], ['Run the suite', false])])
+  assert.equal(out.length, 2, 'the repeat is dropped')
+  assert.equal(out[0], first, 'the list stays where it first appeared')
+  assert.deepEqual(first.items.map((i) => i.check), [true, false, false])
+
+  const tick = fold([list(['Write the hero section', false], ['Deploy', false]), list(['Write the hero', true])])
+  assert.equal(tick.length, 1, 'a short tick line folds into the list')
+  assert.equal((tick[0] as any).items[0].check, true)
+
+  const grown = fold([list(['A step one', false], ['B step two', false], ['C step three', false]), list(['A step one', true], ['B step two', true], ['C step three', false], ['D step four', false])])
+  assert.equal(grown.length, 1)
+  assert.deepEqual((grown[0] as any).items.map((i: any) => i.text), ['A step one', 'B step two', 'C step three', 'D step four'])
+
+  const other = fold([list(['Buy milk', false], ['Call mum', false]), list(['Deploy the site', false], ['Post on X', false])])
+  assert.equal(other.length, 2, 'a different checklist stays')
+  const plain = fold([{ t: 'list', items: [{ text: 'a note' }, { text: 'another' }] }, { t: 'list', items: [{ text: 'a note' }, { text: 'another' }] }])
+  assert.equal(plain.length, 2, 'ordinary bullet lists are never folded')
 })
 
 test('asks: only crew handles at line start count', () => {
@@ -321,6 +398,16 @@ test('savings: Claude Code turn is priced exactly like Anthropic bills it', () =
   assert.ok(Math.abs(ours - u.cost) < 1e-6, `${ours} vs ${u.cost}`)
   // Saved: 51804 reads at $0.09 off each million, minus a quarter of $0.10 on 29259 writes.
   assert.ok(Math.abs((u.saved ?? 0) - (51804 * 0.09 - 29259 * 0.025) / 1e6) < 1e-9)
+  // Gross: the reads alone, so a room shows a saving before its writes have paid off.
+  assert.ok(Math.abs((u.gross ?? 0) - (51804 * 0.09) / 1e6) < 1e-9)
+})
+
+test('savings: a result without per model rows is priced at the session model', () => {
+  const p = claudeLike()
+  p.line({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-opus-5-5' })
+  p.line({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 2, cache_read_input_tokens: 100000, cache_creation_input_tokens: 0, output_tokens: 4 } })
+  assert.ok(Math.abs((p.turn.usage.gross ?? 0) - (100000 * 3.8) / 1e6) < 1e-9)
+  assert.ok(Math.abs((p.turn.usage.saved ?? 0) - (100000 * 3.8) / 1e6) < 1e-9)
 })
 
 test('savings: hour long cache writes cost double, not a quarter extra', () => {
@@ -464,4 +551,222 @@ test('briefing: brief always kept, newest memory first, no transcript, only chan
   assert.match(again.text, /fresh finding/)
   const follow = briefing(meta, events, 'codex', 'Reply', false, ['Claude: here is the draft'])
   assert.match(follow.text, /The last few lines of the room:\n\nClaude: here is the draft/)
+})
+
+test('which: only real paths count, never where.exe telling us it found nothing', () => {
+  assert.equal(firstPath('INFO: Could not find files for the given pattern(s).\r\n', true), '')
+  const npm = 'C:\\Users\\me\\AppData\\Roaming\\npm'
+  assert.equal(firstPath(`${npm}\\claude\r\n${npm}\\claude.cmd\r\n`, true), `${npm}\\claude.cmd`)
+  assert.equal(firstPath('\\\\server\\share\\tool.exe\r\n', true), '\\\\server\\share\\tool.exe')
+  assert.equal(firstPath('/usr/local/bin/codex\n', false), '/usr/local/bin/codex')
+  assert.equal(firstPath('echo\n', false), '', 'a shell builtin has no path to start')
+})
+
+// What cmd.exe does to one line: a caret makes the next character plain, and any special
+// character left bare would split the command, redirect it or open a quoted stretch.
+function cmdParse(s: string) {
+  let out = ''
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '^') out += s[++i]
+    else if (/[&|<>()"%!]/.test(s[i])) throw new Error(`bare ${s[i]} in ${s}`)
+    else out += s[i]
+  }
+  return out
+}
+
+// How a C runtime program splits what reaches it.
+function argv(s: string) {
+  const out: string[] = []
+  let i = 0
+  while (i < s.length) {
+    while (s[i] === ' ') i++
+    if (i >= s.length) break
+    let cur = ''
+    let quoted = false
+    while (i < s.length && (quoted || s[i] !== ' ')) {
+      if (s[i] === '\\') {
+        let n = 0
+        while (s[i] === '\\') { n++; i++ }
+        if (s[i] === '"') { cur += '\\'.repeat(n >> 1); if (n % 2) { cur += '"'; i++ } } else cur += '\\'.repeat(n)
+      } else if (s[i] === '"') { quoted = !quoted; i++ } else cur += s[i++]
+    }
+    out.push(cur)
+  }
+  return out
+}
+
+test('cmdLine: arguments reach a .cmd shim intact through both of cmd.exe\'s passes', () => {
+  const args = [
+    'he said "hi & bye"', '100% %PATH% !USERNAME!', 'a|b<c>d^e', 'C:\\path with space\\', 'ends\\\\', '', '(x) ; , = * ?',
+    'mcp_servers.lunchbox.url="http://127.0.0.1:4000/mcp"', 'Jöran ✓', '\\"', '-p',
+  ]
+  const line = cmdLine('claude.cmd', args)
+  // First the line cmd.exe is given, then the %* the shim passes on.
+  const shim = cmdParse(line)
+  assert.ok(shim.startsWith('claude.cmd '))
+  assert.deepEqual(argv(cmdParse(shim.slice('claude.cmd '.length))), args)
+  assert.equal(cmdLine('C:\\Program Files\\nodejs\\npx.cmd', []), 'C:\\Program^ Files\\nodejs\\npx.cmd')
+})
+
+test('mac update: the feed is read and the zip for this chip is picked', () => {
+  const yml = `version: 0.1.2
+files:
+  - url: Lunchbox-0.1.2-mac-x64.zip
+    sha512: aaa==
+    size: 121715767
+  - url: Lunchbox-0.1.2-mac-arm64.zip
+    sha512: bbb==
+    size: 117619996
+  - url: Lunchbox-0.1.2-mac-arm64.dmg
+    sha512: ccc==
+    size: 121192433
+path: Lunchbox-0.1.2-mac-x64.zip
+releaseDate: '2026-11-11T10:00:00.000Z'`
+  const feed = parseFeed(yml)!
+  assert.equal(feed.version, '0.1.2')
+  assert.equal(feed.files.length, 3)
+  assert.deepEqual(pick(feed, 'arm64'), { url: 'Lunchbox-0.1.2-mac-arm64.zip', sha512: 'bbb==', size: 117619996 })
+  assert.equal(pick(feed, 'x64')!.url, 'Lunchbox-0.1.2-mac-x64.zip')
+  assert.equal(parseFeed('nothing here'), null)
+})
+
+test('mac update: an app on the disk image or moved by Gatekeeper never tries to replace itself', () => {
+  assert.equal(canReplace('/Volumes/Lunchbox 0.1.2/Lunchbox.app'), false)
+  assert.equal(canReplace('/private/var/folders/x/AppTranslocation/ABC/d/Lunchbox.app'), false)
+  assert.equal(canReplace('/usr/local/bin/lunchbox'), false)
+})
+
+test('project memory: room text holding a marker cannot end the section early', () => {
+  const meta = {
+    id: 'r', name: 'Launch', created: 0, updated: 0, crew: [], workspace: '/tmp', sessions: {}, seen: {}, heard: {}, saved: { full: 0, sent: 0 },
+    blocks: [{ id: 'pin-1', title: 'Pinned', text: 'Keep <!-- /lunchbox:memory --> this and <!--lunchbox:memory--> that', v: 1, at: 1 }],
+  } as RoomMeta
+  const own = '# Project\n'
+  const once = merge(own, section(meta))
+  assert.equal(once.match(/lunchbox:memory/g)?.length, 2, 'only our own two markers')
+  const twice = merge(once, section(meta))
+  assert.equal(twice, once)
+  assert.equal(strip(twice), own)
+})
+
+test('ledger: a bad line costs only that row, and old rows are trimmed from the file', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { readLedger } = await import('../electron/store')
+  const file = join(mkdtempSync(join(tmpdir(), 'lb-ledger-')), 'ledger.jsonl')
+  const row = (at: number, room: string) => JSON.stringify({ at, agent: 'claude', room, usage: { input: 1, output: 1, cached: 0, cost: 0 } })
+  const now = Date.now()
+  writeFileSync(file, [row(now - 500 * 86400e3, 'ancient'), row(now - 1000, 'a'), '{"at": 1, "agent', row(now - 500, 'b'), row(now - 30 * 86400e3, 'month')].join('\n') + '\n')
+  const rows = readLedger(file, now - 14 * 86400e3)
+  assert.deepEqual(rows.map((r) => r.room), ['a', 'b'])
+  const kept = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l).room)
+  assert.deepEqual(kept, ['a', 'b', 'month'], 'the old and the broken rows leave the file, the rest stay')
+})
+
+test('store: an unreadable room list falls back to its backup and is kept aside', async () => {
+  const { mkdtempSync, readdirSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const dir = mkdtempSync(join(tmpdir(), 'lb-store-'))
+  const plain = { seal: (t: string) => t, open: (t: string) => t }
+  const meta = { id: 'r1', name: 'Kept', created: 1, updated: 1, crew: ['claude'], workspace: dir, sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 } } as RoomMeta
+  const one = new Store(dir, plain)
+  one.create(meta)
+  one.flush()
+  writeFileSync(join(dir, 'rooms.json'), '[{"id": "r1", "na')
+  const two = new Store(dir, plain)
+  assert.equal(two.room('r1')?.name, 'Kept')
+  assert.ok(readdirSync(dir).some((f) => f.startsWith('rooms.json.unreadable-')), 'the broken file is copied before anything overwrites it')
+
+  // A turn that ends after its room was deleted does not bring the log back.
+  two.remove('r1')
+  two.append('r1', { id: 'e', at: 2, kind: 'note', text: 'late' })
+  assert.ok(!readdirSync(join(dir, 'rooms')).includes('r1.jsonl'))
+  two.flush()
+})
+
+test('store: a line that does not parse keeps its place in the room log', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const dir = mkdtempSync(join(tmpdir(), 'lb-log-'))
+  const store = new Store(dir, { seal: (t: string) => t, open: (t: string) => t })
+  const ev = (id: string) => JSON.stringify({ id, at: 1, kind: 'you', text: id })
+  writeFileSync(join(dir, 'rooms', 'r.jsonl'), [ev('a'), '{"id": "b", "at', ev('c')].join('\n') + '\n')
+  const log = store.events('r')
+  assert.equal(log.length, 3, 'heard marks count lines, so a bad one still takes a slot')
+  assert.equal(log[2].id, 'c')
+})
+
+test('plan limits: tallies leave a half written last line for the next read', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const home = mkdtempSync(join(tmpdir(), 'lb-tally-'))
+  process.env.CLAUDE_CONFIG_DIR = join(home, '.claude')
+  mkdirSync(join(home, '.claude', 'projects', 'p'), { recursive: true })
+  const file = join(home, '.claude', 'projects', 'p', 's.jsonl')
+  const t = new Date().toISOString()
+  const line = (id: string, out: number) => JSON.stringify({ type: 'assistant', timestamp: t, requestId: 'r' + id, message: { id, usage: { input_tokens: 1, output_tokens: out } } }) + '\n'
+  const whole = line('a', 10)
+  const next = line('b', 100)
+  writeFileSync(file, whole + next.slice(0, 40))
+  const { update, used } = await import('../electron/tally')
+  const tally: { files: Record<string, { size: number }> } = { files: {} }
+  await update('claude', tally as never, Date.now() - 3600e3)
+  assert.equal(tally.files[file].size, Buffer.byteLength(whole), 'the read stops after the last newline')
+  appendFileSync(file, next.slice(40))
+  await update('claude', tally as never, Date.now() - 3600e3)
+  assert.equal(tally.files[file].size, statSync(file).size)
+  assert.equal(used(tally as never, Date.now() - 3600e3).fresh, 112, 'the finished line is counted once it is whole')
+  delete process.env.CLAUDE_CONFIG_DIR
+})
+
+test('plan limits: only whole agent windows, or the model in use, take an agent out', async () => {
+  const { fullWindows, keepReading } = await import('../electron/limits')
+  const later = Date.now() + 3600e3
+  const l = { agent: 'claude', at: Date.now(), windows: [
+    { id: '5h', label: '5 hours', used: 0.4, resets: later },
+    { id: 'week', label: 'Week', used: 0.7, resets: later },
+    { id: 'week-opus', label: 'Week, Opus', used: 1, resets: later },
+  ] }
+  assert.deepEqual(fullWindows(l, ''), [], 'an Opus week does not stop Claude on its default model')
+  assert.deepEqual(fullWindows(l, 'claude-sonnet-4-5'), [])
+  assert.deepEqual(fullWindows(l, 'opus').map((w) => w.id), ['week-opus'])
+  l.windows[0].used = 1
+  assert.deepEqual(fullWindows(l, '').map((w) => w.id), ['5h'])
+
+  // Sizing only needs each window's first and last reading, so nothing else is kept.
+  let list: { at: number; pct: number; units: number; start: number }[] = []
+  const now = Date.now()
+  for (let i = 0; i < 50; i++) list = keepReading(list, { at: now - 3600e3 + i * 60e3, pct: i, units: i, start: i < 25 ? 1 : 2 }, now)
+  assert.deepEqual(list.map((r) => r.pct), [0, 24, 25, 49])
+  list = keepReading(list, { at: now - 40 * 86400e3, pct: 1, units: 1, start: 0 }, now)
+  assert.equal(list.length, 4, 'a month old reading is dropped')
+})
+
+test('flows: a step is judged only by what it added to the room', async () => {
+  const { stepResult } = await import('../electron/flows')
+  const events = [
+    { id: '1', at: 1, kind: 'you', text: 'step one' },
+    { id: '2', at: 2, kind: 'say', who: 'claude', text: 'Here is the digest', acts: [] },
+    { id: '3', at: 3, kind: 'you', text: 'step two' },
+    { id: '4', at: 4, kind: 'wall', from: 'claude', to: '', reason: 'hit its limit' },
+  ] as Event[]
+  assert.equal(stepResult(events, 0).ok, true)
+  assert.deepEqual(stepResult(events, 2), { text: '', ok: false, stopped: false }, 'step one\'s answer does not count for step two')
+})
+
+test('band patterns: every one stays in range, holds still for a still frame, and a visit picks a new one', async () => {
+  const { PATTERNS, NAMES, glyph, nextPattern } = await import('../src/ui/patterns')
+  assert.equal(NAMES.length, 8)
+  for (const name of NAMES) {
+    const f = PATTERNS[name]
+    for (let c = 0; c < 140; c += 7) for (let r = 0; r < 9; r++) {
+      const v = f(c, r, 12.3, 140, 9)
+      assert.ok(v >= 0 && v <= 1, `${name} ${v}`)
+      assert.equal(f(c, r, 12.3, 140, 9), v, `${name} is the same for the same frame`)
+      assert.ok(glyph(v, c, r).length === 1)
+    }
+  }
+  for (const last of NAMES) for (const roll of [0, 0.5, 0.999]) assert.notEqual(nextPattern(last, roll), last)
 })

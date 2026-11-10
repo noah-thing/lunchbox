@@ -1,14 +1,23 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, parse, resolve, sep } from 'node:path'
 import { env, which } from './system'
 
 // Checkpoints live in a git repository of their own, outside the folder, so they never touch the
-// project's history. Files the project ignores are skipped, and so are the usual heavy folders.
-const SKIP = ['node_modules/', '.git/', '.venv/', 'venv/', '__pycache__/', '.next/', '.nuxt/', 'target/', '.gradle/', '.DS_Store', '*.log', '.lunchbox/attachments/']
+// project's history. Files the project ignores are skipped, and so are the usual heavy folders:
+// dependencies, build output and caches, all of which can be made again from the sources.
+const SKIP = [
+  'node_modules/', '.git/', '.venv/', 'venv/', '__pycache__/', '.next/', '.nuxt/', 'target/', '.gradle/', '.DS_Store', '*.log', '.lunchbox/attachments/',
+  'dist/', 'build/', 'out/', 'coverage/', '.cache/', '.turbo/', '.parcel-cache/', '.svelte-kit/', '.angular/', '.expo/', '.output/', '.vercel/',
+  '.pytest_cache/', '.mypy_cache/', '.ruff_cache/', '.tox/', '.terraform/', 'DerivedData/', 'Pods/',
+]
 const SAFE_FILES = 20000
+// Every checkpoint keeps a full copy of each changed file, so one video, dataset or model weight
+// edited a few times would fill the disk. Sources and ordinary assets sit far below this.
+const MAX_FILE = 25 << 20
 const PATCH_CAP = 120_000
 
 export type FileChange = {
@@ -25,7 +34,15 @@ export class Snapshots {
   constructor(private dir: string) {}
 
   async available() {
-    if (this.git === undefined) this.git = (await which('git')) || null
+    if (this.git === undefined) {
+      const git = await which('git')
+      const runs = (file: string, args: string[]) =>
+        new Promise<boolean>((done) => { try { execFile(file, args, { timeout: 10000, windowsHide: true }, (err) => done(!err)) } catch { done(false) } })
+      // Apple's /usr/bin/git is a stub until the developer tools are installed, and running it
+      // opens their install dialog. xcode-select -p answers quietly whether they are there.
+      const stub = process.platform === 'darwin' && git === '/usr/bin/git'
+      this.git = git && (!stub || (await runs('/usr/bin/xcode-select', ['-p']))) && (await runs(git, ['--version'])) ? git : null
+    }
     return !!this.git
   }
 
@@ -54,9 +71,44 @@ export class Snapshots {
       await git(['config', 'user.email', 'checkpoints@lunchbox.local'])
       await git(['config', 'gc.auto', '256'])
       mkdirSync(join(gitDir, 'info'), { recursive: true })
-      writeFileSync(join(gitDir, 'info', 'exclude'), SKIP.join('\n') + '\n')
     }
+    // Rewritten when the list changes, so repositories made by an older version pick it up.
+    const exclude = join(gitDir, 'info', 'exclude')
+    const want = SKIP.join('\n') + '\n'
+    if (!existsSync(exclude) || readFileSync(exclude, 'utf8') !== want) writeFileSync(exclude, want)
     return git
+  }
+
+  // Stages the folder as it is now, leaving out files over MAX_FILE. A file that is already in an
+  // earlier checkpoint keeps that version. Returns false when the folder has too many files to
+  // snapshot, and throws when git could not stage it, so nobody commits a stale index.
+  private async stage(workspace: string, git: Git) {
+    const listed = (await git(['ls-files', '-z', '-t', '--cached', '--others', '--modified', '--exclude-standard'], 60000)).split('\0').filter(Boolean)
+    let count = 0
+    const touched: string[] = []
+    for (const line of listed) {
+      const tag = line[0], path = line.slice(2)
+      if (tag !== 'C') count++
+      if (tag === '?' || tag === 'C') touched.push(path)
+    }
+    if (count > SAFE_FILES) return false
+    const big: string[] = []
+    for (let i = 0; i < touched.length; i += 256) {
+      await Promise.all(touched.slice(i, i + 256).map(async (path) => {
+        const size = await stat(join(workspace, path)).then((s) => (s.isFile() ? s.size : 0), () => 0)
+        if (size > MAX_FILE) big.push(path)
+      }))
+    }
+    const specs = join(this.repo(workspace), 'lunchbox-pathspec')
+    writeFileSync(specs, ['.', ...big.map((p) => `:(exclude,literal)${p}`)].join('\0') + '\0')
+    try {
+      await git(['add', '-A', '--ignore-errors', `--pathspec-from-file=${specs}`, '--pathspec-file-nul'], 60000)
+    } catch (err) {
+      // With --ignore-errors git still adds everything it can read and reports each unreadable file
+      // as an "error:" line. Anything else (a timeout, a locked index) means nothing was staged.
+      if (!/^error: /.test((err as Error).message)) throw err
+    }
+    return true
   }
 
   private serial<T>(workspace: string, job: () => Promise<T>): Promise<T> {
@@ -72,12 +124,7 @@ export class Snapshots {
       if (!(await this.available()) || !Snapshots.fits(workspace)) return null
       try {
         const git = await this.runner(workspace)
-        await git(['add', '-A', '--ignore-errors'], 60000).catch(() => {})
-        const staged = await git(['ls-files', '--cached'], 20000)
-        if (staged.split('\n').length > SAFE_FILES) {
-          rmSync(this.repo(workspace), { recursive: true, force: true })
-          return null
-        }
+        if (!(await this.stage(workspace, git))) return null
         await git(['-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '--no-verify', '-m', label.slice(0, 200)])
         return { ref: (await git(['rev-parse', 'HEAD'])).trim() }
       } catch {
@@ -91,7 +138,7 @@ export class Snapshots {
     return this.serial(workspace, async () => {
       if (!(await this.available())) return []
       const git = await this.runner(workspace)
-      await git(['add', '-A', '--ignore-errors'], 60000).catch(() => {})
+      await this.stage(workspace, git).catch(() => {})
       const out = await git(['diff', '--cached', '--name-only', ref]).catch(() => '')
       return out.split('\n').filter(Boolean)
     })
@@ -105,7 +152,7 @@ export class Snapshots {
       const git = await this.runner(workspace)
       let range = [from, ...(to ? [to] : [])]
       if (!to) {
-        await git(['add', '-A', '--ignore-errors'], 60000).catch(() => {})
+        await this.stage(workspace, git).catch(() => {})
         range = ['--cached', from]
       }
       const [status, counts, patch] = await Promise.all([

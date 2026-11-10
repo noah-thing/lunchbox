@@ -53,7 +53,8 @@ function useEnter(fn: () => void, when = true) {
   ref.current = fn
   useEffect(() => {
     if (!when) return
-    const key = (e: KeyboardEvent) => { if (e.key === 'Enter' && (e.target as HTMLElement)?.tagName !== 'BUTTON') ref.current() }
+    // Enter on a focused button, link or field does its own thing and must not also move on.
+    const key = (e: KeyboardEvent) => { if (e.key === 'Enter' && !e.defaultPrevented && !(e.target as HTMLElement)?.closest?.('button, a, input, textarea, select, [contenteditable=true]')) ref.current() }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
   }, [when])

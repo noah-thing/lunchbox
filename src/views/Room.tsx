@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
-import { plan } from '../../shared/plan'
+import { plan, plansBefore, type Step } from '../../shared/plan'
 import { searchOf, stepOf, type Search } from '../../shared/steps'
-import { Loader, Mark, Meter, Thumb } from '../ui/bits'
+import { Loader, Mark, Meter, Sure, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
-import { Rich } from '../ui/Rich'
+import { Inline, Rich } from '../ui/Rich'
 import { roomCard } from '../ui/roomcard'
 import { openReport } from '../lib/report'
 import { IconBranches, IconChevron, IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
@@ -40,6 +40,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // Shown as stopped the moment the button is pressed; the engine confirms a few ms later.
   const [stopping, setStopping] = useState(false)
   const [data, setData] = useState<Data | null>(null)
+  const [failed, setFailed] = useState(false)
   const [panel, setPanel] = useState(() => remembered('panel', innerWidth >= 1280))
   const [replay, setReplay] = useState<number | null>(null)
   const [arena, setArena] = useState(false)
@@ -51,12 +52,14 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     let alive = true
     early.current = []
     setData(null)
+    setFailed(false)
     setReplay(null)
     desk.call('room', id).then((d: Data | null) => {
-      if (!alive || !d?.meta) return
+      if (!alive) return
+      if (!d?.meta) return setFailed(true)
       const seen = new Set(d.events.map((e) => e.id))
       setData({ ...d, events: [...d.events, ...early.current.filter((e) => !seen.has(e.id))] })
-    })
+    }, () => { if (alive) setFailed(true) })
     const offs = [
       desk.on('room:event', ({ room, event }: { room: string; event: Event }) => {
         if (room !== id) return
@@ -95,8 +98,10 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
         next.classList.add('kfocus')
         next.scrollIntoView({ block: 'center', behavior: 'smooth' })
       }
-      // Esc refuses a pending command first; only with nothing waiting does it stop the turn.
-      if (e.key === 'Escape' && data?.live.turns.length && !data.live.runs.some((r) => r.state === 'asking') && (e.target as HTMLElement)?.tagName !== 'TEXTAREA') stop()
+      // Esc refuses a pending command first; only with nothing waiting does it stop the turn. An Esc
+      // that closed something, or was typed into a field, a menu or a dialog, is not meant for the turn.
+      if (e.key === 'Escape' && !e.defaultPrevented && !typing && !(e.target as HTMLElement)?.closest?.('[role=dialog],[role=menu],[role=listbox]') && !document.querySelector('.scrim')
+        && data?.live.turns.length && !data.live.runs.some((r) => r.state === 'asking')) stop()
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
@@ -109,11 +114,20 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     desk.call('room:stop', id)
   }
 
-  if (!data) return <div className="room loading"><Loader size={14} /></div>
+  // Defined before the loading return: the shortcut can fire while the room is still loading.
+  const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
+  if (!data) return failed
+    ? (
+      <div className="room loading">
+        <div className="roomfail">
+          <p>This room could not be opened. It may have been deleted, or its file could not be read.</p>
+          <button className="btn small quiet" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'new' } }))}>Back to New room</button>
+        </div>
+      </div>
+    )
+    : <div className="room loading"><Loader size={14} /></div>
   const { meta, events, live } = data
   const busy = !stopping && (live.turns.length > 0 || live.runs.length > 0)
-
-  const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
   const actions: Actions = {
     decide: (ref, i) => desk.call('room:decide', id, ref, i, access),
     pick: (a, who) => desk.call('room:pick', id, a, who),
@@ -179,16 +193,24 @@ function Title({ name, rename }: { name: string; rename: (n: string) => void }) 
   useEffect(() => { const on = () => setEditing(true); addEventListener('lb:rename', on); return () => removeEventListener('lb:rename', on) }, [])
   const [value, setValue] = useState(name)
   useEffect(() => setValue(name), [name])
+  // Enter or Esc unmounts the field, and the blur that follows must not save a second time.
+  const closed = useRef(false)
+  useEffect(() => { if (editing) closed.current = false }, [editing])
   if (!editing) return <h1 onDoubleClick={() => setEditing(true)} title="Double click to rename">{name}</h1>
-  const done = (save: boolean) => { if (save && value.trim() && value !== name) rename(value.trim()); setEditing(false) }
+  const done = (save: boolean) => {
+    if (closed.current) return
+    closed.current = true
+    if (save && value.trim() && value.trim() !== name) rename(value.trim())
+    setValue(name)
+    setEditing(false)
+  }
   return (
     <input className="titleedit" autoFocus value={value} onChange={(e) => setValue(e.target.value)} onBlur={() => done(true)}
-      onKeyDown={(e) => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') { setValue(name); done(false) } }} />
+      onKeyDown={(e) => { if (e.key === 'Enter') done(true); if (e.key === 'Escape') { e.preventDefault(); done(false) } }} />
   )
 }
 
 function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: string; meta: RoomMeta; events: Event[]; canReplay: boolean; replay: () => void; open: (r: string) => void; say: (t: string) => void }) {
-  const [sure, setSure] = useState(false)
   const agents = useApp((s) => s.agents)
   return (
     <Menu bare label="Room actions" button={<IconMore />} className="right">
@@ -237,9 +259,9 @@ function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: stri
             {meta.project && <i className="check" />}
           </button>
           <div className="sep" />
-          <button className={`item danger${sure ? ' sure' : ''}`} onClick={() => { if (!sure) return setSure(true); desk.call('room:remove', id); close() }} onMouseLeave={() => setSure(false)}>
-            <span className="grow"><b>{sure ? 'Click again to delete' : 'Delete room'}</b><span>The folder and its files stay where they are</span></span>
-          </button>
+          <Sure className="item danger" act={() => { desk.call('room:remove', id); close() }}>
+            {(sure) => <span className="grow"><b>{sure ? 'Click again to delete' : 'Delete room'}</b><span>The folder and its files stay where they are</span></span>}
+          </Sure>
         </>
       )}
     </Menu>
@@ -258,10 +280,13 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // Opening a room lands at the bottom at once. After that the view eases after new content
   // instead of jumping to it, for as long as you stay at the bottom.
   const opened = useRef(false)
+  // Where the follower last put the view, so its own scrolls are not read as the reader's.
+  const ours = useRef(-1)
+  const lastTop = useRef(0)
   useLayoutEffect(() => {
     const el = box.current
     if (!el || !stick.current) return
-    if (!opened.current) { el.scrollTop = el.scrollHeight; opened.current = events.length > 0; return }
+    if (!opened.current) { el.scrollTop = el.scrollHeight; ours.current = el.scrollTop; opened.current = events.length > 0; return }
   }, [size])
   const working = !!live?.turns.length || !!live?.runs.length
   useEffect(() => {
@@ -270,7 +295,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       const el = box.current
       if (el && stick.current) {
         const gap = el.scrollHeight - el.clientHeight - el.scrollTop
-        if (gap > 0.5) el.scrollTop += Math.max(1, gap * 0.16)
+        if (gap > 0.5) { el.scrollTop += Math.max(1, gap * 0.16); ours.current = el.scrollTop }
       }
       raf = requestAnimationFrame(follow)
     }
@@ -282,22 +307,29 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // arrival again, so events that replace a live row are marked settled and never animate in.
   const settled = useRef(new Set<string>())
   // When a live row becomes its saved event the column can come out a few pixels shorter, which
-  // would pull the view up. The column keeps the tallest height it has reached, and the next
-  // thing written fills the difference. Removing events, by a rewind or a fork, lets it go.
+  // would pull the view up. While a turn is live the column keeps the tallest height it has
+  // reached, and holds it through the swap. It lets go when the next turn starts, when the width
+  // changes and text reflows, and when a rewind or a fork removes events.
   const column = useRef<HTMLDivElement>(null)
-  const tallest = useRef({ h: 0, n: 0 })
+  const tallest = useRef({ h: 0, n: 0, w: 0 })
+  const holding = useRef(working)
+  holding.current = working
+  const release = () => { tallest.current.h = 0; if (column.current) column.current.style.minHeight = '' }
   useEffect(() => {
     const el = column.current
     if (!el) return
     const ro = new ResizeObserver(() => {
+      if (el.offsetWidth !== tallest.current.w) { tallest.current.w = el.offsetWidth; release() }
+      if (!holding.current) return
       const h = el.offsetHeight
       if (h > tallest.current.h) { tallest.current.h = h; el.style.minHeight = `${h}px` }
     })
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  useLayoutEffect(() => { if (working) release() }, [working])
   useLayoutEffect(() => {
-    if (events.length < tallest.current.n && column.current) { tallest.current.h = 0; column.current.style.minHeight = '' }
+    if (events.length < tallest.current.n) release()
     tallest.current.n = events.length
   }, [events.length])
   const seen = useRef(new Map<string, LiveTurn>())
@@ -314,6 +346,8 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
 
   const chosen = useMemo(() => new Map(events.flatMap((e) => (e.kind === 'chose' ? [[e.ref, e.label] as const] : []))), [events])
   const picks = useMemo(() => new Map(events.flatMap((e) => (e.kind === 'pick' ? [[e.arena, e.who] as const] : []))), [events])
+  const priors = useMemo(() => plansBefore(events), [events])
+  const current = useMemo(() => plan(events), [events])
   const arenas = new Set<string>()
   const rows: ReactNode[] = []
   let last = ''
@@ -329,7 +363,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     }
     const speaker = e.kind === 'say' ? e.who : e.kind
     if (!settled.current.has(e.id) && [...seen.current.values()].some((t) => replaces(e, t))) settled.current.add(e.id)
-    rows.push(<Settled.Provider key={e.id} value={settled.current.has(e.id)}><Row e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} /></Settled.Provider>)
+    rows.push(<Settled.Provider key={e.id} value={settled.current.has(e.id)}><Row e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} prior={priors.get(e.id)} /></Settled.Provider>)
     last = speaker
   }
   const landed = (t: LiveTurn) => events.some((e) => replaces(e, t))
@@ -340,7 +374,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       continue
     }
     const helper = live!.turns.find((x) => x.from === t.who && x.id !== t.id)
-    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} />)
+    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} prior={current} />)
     last = t.who
   }
   // Only the first command waiting for an answer takes the keyboard, so one key never answers two.
@@ -349,8 +383,17 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
 
   return (
     <div className="transcript" ref={box}
-      onWheel={(e) => { if (e.deltaY < 0) stick.current = false }}
-      onScroll={(e) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) stick.current = true }}>
+      onScroll={(e) => {
+        // Following stops on any move up the reader makes, by wheel, scrollbar, keys or j and k,
+        // and starts again once they come back within reach of the bottom.
+        const el = e.currentTarget
+        const top = el.scrollTop
+        const up = top < lastTop.current - 0.5
+        lastTop.current = top
+        if (Math.abs(top - ours.current) < 1) return
+        const gap = el.scrollHeight - el.clientHeight - top
+        stick.current = gap < 2 || (!up && gap < 80)
+      }}>
       <div className="column" ref={column}>
         {empty && !live?.turns.length && <div className="roomempty">Nothing here yet. Say what you need and the crew takes it from there.</div>}
         {rows}
@@ -379,7 +422,7 @@ function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
   return `${why}. ${next}${e.until && e.until > Date.now() ? ` Back at ${clock(e.until)}.` : ''}`
 }
 
-function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boolean; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string> }) {
+function Row({ e, grouped, agents, actions, chosen, prior }: { e: Event; grouped: boolean; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string>; prior?: Step[] }) {
   switch (e.kind) {
     case 'you':
       return (
@@ -399,7 +442,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
       return (
         <Ev id={e.id} mark={<Mark seed={a.mark} size={16} />} grouped={grouped} className="turn">
           {!grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
-          {e.text && <Rich text={e.text} />}
+          {e.text && <Rich text={e.text} prior={prior} />}
           {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}{e.error !== 'Stopped' && <button className="reportbtn" onClick={() => openReport({ context: `${a.short}: ${e.error}` })}>Report this</button>}</div>}
           <Acts acts={e.acts} />
           {e.proof?.map((p) => (
@@ -430,7 +473,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
           </div>
           <div className="exchange">
             <p className="asked">{e.ask}</p>
-            <div className="got">{e.answer ? <Rich text={e.answer} /> : <span className="err">{e.error ?? 'No answer'}</span>}</div>
+            <div className="got">{e.answer ? <Rich text={e.answer} prior={prior} /> : <span className="err">{e.error ?? 'No answer'}</span>}</div>
             <Acts acts={e.acts} />
           </div>
           <Tools e={e} actions={actions} />
@@ -500,7 +543,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
   }
 }
 
-function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean; helper?: AgentInfo }) {
+function LiveRow({ t, agents, doing, grouped, helper, prior }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean; helper?: AgentInfo; prior?: Step[] }) {
   const a = agentOf(t.who, agents)
   // A line that hands work to a crewmate ("@grok: ...") becomes its own handoff block when the
   // turn ends, so it is never typed out here first.
@@ -524,7 +567,7 @@ function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: A
         <div className="handhead"><b className="name">{from.short}</b><span>asked</span><Mark seed={a.mark} size={12} /><b className="name">{a.short}</b></div>
         <div className="exchange">
           <p className="asked">{t.ask}</p>
-          {!quiet && <div className="got"><Rich text={shown} caret /></div>}
+          {!quiet && <div className="got"><Rich text={shown} caret prior={prior} /></div>}
           <Acts acts={t.acts} live />
           {quiet && working}
         </div>
@@ -534,7 +577,7 @@ function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: A
   return (
     <Ev mark={<Mark seed={a.mark} size={16} active />} grouped={grouped} className="turn live">
       {!grouped && <div className="who"><b className="name">{a.short}</b></div>}
-      {!quiet && <Rich text={shown} caret />}
+      {!quiet && <Rich text={shown} caret prior={prior} />}
       <Acts acts={t.acts} live />
       {(quiet || !!t.now) && working}
     </Ev>
@@ -955,7 +998,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
 
   const state = live.waiting ? 'waiting' : live.active ? 'working' : 'idle'
   const caption = live.waiting ? 'Waiting for you' : live.doing || (events.length ? 'Quiet' : 'Ready when you are')
-  const steps = useMemo(() => plan(events), [events])
+  const steps = useMemo(() => plan(events, crew), [events, meta.crew.join(), agents])
   const done = steps.filter((s) => s.done).length
 
   return (
@@ -989,7 +1032,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
           <h2>Progress<small>{done} of {steps.length}</small></h2>
           <div className="stepbar">{steps.map((s, i) => <i key={i} className={s.done ? 'done' : ''} />)}</div>
           {steps.map((s, i) => (
-            <div key={i} className={`task${s.done ? ' done' : ''}`}><i /><span className="grow">{s.text}</span><small>{agentOf(s.who, agents).short}</small></div>
+            <div key={i} className={`task${s.done ? ' done' : ''}`}><i /><span className="grow"><Inline text={s.text} /></span><small>{agentOf(s.who, agents).short}</small></div>
           ))}
         </section>
       )}

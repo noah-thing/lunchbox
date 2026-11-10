@@ -10,7 +10,7 @@ type Suggestion = { key: string; label: string; hint: string; insert: string; ma
 
 export function Composer({ crew, setCrew, onSend, access, setAccess, busy = false, onStop, arena = false, setArena, draft, autoFocus = true, placeholder, pack, folder }: {
   crew: string[]; setCrew: (c: string[]) => void; onSend: (t: string, files?: string[]) => void; access: Access; setAccess: (a: Access) => void
-  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; draft?: { text: string; n: number }; autoFocus?: boolean; placeholder?: string; pack?: string; folder?: string
+  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; draft?: { text: string; files?: string[]; n: number }; autoFocus?: boolean; placeholder?: string; pack?: string; folder?: string
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<string[]>([])
@@ -43,6 +43,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   useEffect(() => {
     if (!draft) return
     setText(draft.text)
+    if (draft.files) setFiles(draft.files)
     requestAnimationFrame(() => { area.current?.focus(); area.current?.setSelectionRange(draft.text.length, draft.text.length) })
   }, [draft])
   useLayoutEffect(() => {
@@ -153,7 +154,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           )}
         </Menu>
         {setArena && crew.length > 1 && !shell && (
-          <button className={`pill${arena ? ' open' : ''}`} onClick={() => setArena(!arena)} aria-pressed={arena} title="Everyone answers on their own, you keep the best">
+          <button className={`pill split${arena ? ' open' : ''}`} onClick={() => setArena(!arena)} aria-pressed={arena} title="Everyone answers on their own, you keep the best">
             <IconSplit />Side by side
           </button>
         )}
