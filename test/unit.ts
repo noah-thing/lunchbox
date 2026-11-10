@@ -11,6 +11,7 @@ import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
 import { asks, foldChecklists, plan, plansBefore, sincePlan } from '../shared/plan'
+import { canReplace, parseFeed, pick } from '../electron/macfeed'
 import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
 import { merge, section, strip } from '../electron/room/project'
@@ -605,4 +606,32 @@ test('cmdLine: arguments reach a .cmd shim intact through both of cmd.exe\'s pas
   assert.ok(shim.startsWith('claude.cmd '))
   assert.deepEqual(argv(cmdParse(shim.slice('claude.cmd '.length))), args)
   assert.equal(cmdLine('C:\\Program Files\\nodejs\\npx.cmd', []), 'C:\\Program^ Files\\nodejs\\npx.cmd')
+})
+
+test('mac update: the feed is read and the zip for this chip is picked', () => {
+  const yml = `version: 0.1.2
+files:
+  - url: Lunchbox-0.1.2-mac-x64.zip
+    sha512: aaa==
+    size: 121715767
+  - url: Lunchbox-0.1.2-mac-arm64.zip
+    sha512: bbb==
+    size: 117619996
+  - url: Lunchbox-0.1.2-mac-arm64.dmg
+    sha512: ccc==
+    size: 121192433
+path: Lunchbox-0.1.2-mac-x64.zip
+releaseDate: '2026-11-11T10:00:00.000Z'`
+  const feed = parseFeed(yml)!
+  assert.equal(feed.version, '0.1.2')
+  assert.equal(feed.files.length, 3)
+  assert.deepEqual(pick(feed, 'arm64'), { url: 'Lunchbox-0.1.2-mac-arm64.zip', sha512: 'bbb==', size: 117619996 })
+  assert.equal(pick(feed, 'x64')!.url, 'Lunchbox-0.1.2-mac-x64.zip')
+  assert.equal(parseFeed('nothing here'), null)
+})
+
+test('mac update: an app on the disk image or moved by Gatekeeper never tries to replace itself', () => {
+  assert.equal(canReplace('/Volumes/Lunchbox 0.1.2/Lunchbox.app'), false)
+  assert.equal(canReplace('/private/var/folders/x/AppTranslocation/ABC/d/Lunchbox.app'), false)
+  assert.equal(canReplace('/usr/local/bin/lunchbox'), false)
 })
