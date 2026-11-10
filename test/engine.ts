@@ -277,3 +277,31 @@ test('room: a message sent mid-turn is not lost', { skip: process.platform === '
   assert.ok(calls[1].input.includes('Also update the README'), 'and is given the message sent while it worked')
   store.flush()
 })
+
+// Checkpoints leave out build output and very large files, and a stage that fails stops the
+// checkpoint, so a rewind never runs without a true copy of the folder first.
+test('checkpoints: skip heavy files and refuse to rewind on a failed stage', { skip: process.platform === 'win32' }, async () => {
+  const { mkdirSync, readdirSync, truncateSync, writeFileSync } = await import('node:fs')
+  const { execFileSync } = await import('node:child_process')
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-snapcap-'))
+  const work = join(root, 'work')
+  mkdirSync(join(work, 'dist'), { recursive: true })
+  writeFileSync(join(work, 'app.js'), 'one')
+  writeFileSync(join(work, 'dist', 'app.min.js'), 'built')
+  // Sparse, so the test takes no real disk space.
+  writeFileSync(join(work, 'clip.mov'), '')
+  truncateSync(join(work, 'clip.mov'), 26 << 20)
+  const { Snapshots } = await import('../electron/snap')
+  const snaps = new Snapshots(join(root, 'snaps'))
+  const first = await snaps.take(work, 'first')
+  assert.ok(first)
+  const [repo] = readdirSync(join(root, 'snaps'))
+  const git = (...args: string[]) => execFileSync('git', args, { env: { ...process.env, GIT_DIR: join(root, 'snaps', repo), GIT_WORK_TREE: work }, cwd: work }).toString()
+  assert.deepEqual(git('ls-tree', '-r', '--name-only', first!.ref).trim().split('\n'), ['app.js'])
+
+  writeFileSync(join(work, 'app.js'), 'two')
+  writeFileSync(join(root, 'snaps', repo, 'index.lock'), '')
+  assert.equal(await snaps.take(work, 'locked'), null, 'a stage that fails is not committed')
+  await assert.rejects(snaps.restore(work, first!.ref), /nothing was changed/)
+  assert.equal(readFileSync(join(work, 'app.js'), 'utf8'), 'two')
+})
