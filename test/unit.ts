@@ -648,3 +648,15 @@ test('plan limits: only whole agent windows, or the model in use, take an agent 
   list = keepReading(list, { at: now - 40 * 86400e3, pct: 1, units: 1, start: 0 }, now)
   assert.equal(list.length, 4, 'a month old reading is dropped')
 })
+
+test('flows: a step is judged only by what it added to the room', async () => {
+  const { stepResult } = await import('../electron/flows')
+  const events = [
+    { id: '1', at: 1, kind: 'you', text: 'step one' },
+    { id: '2', at: 2, kind: 'say', who: 'claude', text: 'Here is the digest', acts: [] },
+    { id: '3', at: 3, kind: 'you', text: 'step two' },
+    { id: '4', at: 4, kind: 'wall', from: 'claude', to: '', reason: 'hit its limit' },
+  ] as Event[]
+  assert.equal(stepResult(events, 0).ok, true)
+  assert.deepEqual(stepResult(events, 2), { text: '', ok: false, stopped: false }, 'step one\'s answer does not count for step two')
+})
