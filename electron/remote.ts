@@ -1,5 +1,6 @@
 import { randomInt } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Access } from '../shared/types'
 import type { Engine } from './room/engine'
 import type { Store } from './store'
@@ -63,6 +64,7 @@ export class Remote {
       return this.changed()
     }
     this.running = true
+    this.offset = this.saved()
     this.changed()
     this.loop()
   }
@@ -80,6 +82,19 @@ export class Remote {
     this.changed()
   }
 
+  // Telegram only forgets an update once the next poll passes its offset, so the offset is kept on
+  // disk: a restart would otherwise run the last message from the phone a second time. It is
+  // kept per bot, since update numbers mean nothing to a different one.
+  private get offsetFile() { return join(this.store.dir, 'telegram-offset.json') }
+  private saved() {
+    try {
+      const o = JSON.parse(readFileSync(this.offsetFile, 'utf8'))
+      return o.bot === this.token.split(':')[0] && Number.isInteger(o.offset) ? o.offset : 0
+    } catch {
+      return 0
+    }
+  }
+
   private async loop() {
     while (this.running) {
       this.abort = new AbortController()
@@ -88,6 +103,8 @@ export class Remote {
         if (this.error) { this.error = ''; this.changed() }
         for (const u of updates) {
           this.offset = u.update_id + 1
+          // Saved before handling: a crash halfway should drop the message, not repeat it.
+          try { writeFileSync(this.offsetFile, JSON.stringify({ bot: this.token.split(':')[0], offset: this.offset })) } catch {}
           await this.handle(u).catch((e) => this.reply(u.message?.chat.id ?? u.callback_query?.message?.chat.id, `Something broke: ${(e as Error).message}`))
         }
       } catch (e) {
