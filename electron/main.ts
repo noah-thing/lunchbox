@@ -82,9 +82,12 @@ function createWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: dark ? '#080807' : '#f4f3ef',
+    // Windows draws its own buttons into the header, as tall as the room header so they sit level
+    // with it. Linux keeps the desktop's own title bar: each desktop draws overlay buttons in its
+    // own size and style, and they never line up.
     ...(mac
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 15 } }
-      : { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 44 } }),
+      : process.platform === 'win32' ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 52 } } : {}),
     // Windows and Linux take the window and taskbar icon from here; macOS from the app bundle.
     ...(mac ? {} : { icon: join(__dirname, '../build/icon-1024.png') }),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
@@ -308,7 +311,7 @@ function wire() {
     return `data:${type};base64,${readFileSync(path).toString('base64')}`
   })
   h('theme', (dark: boolean) => {
-    if (!mac && win) win.setTitleBarOverlay({ color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 44 })
+    if (process.platform === 'win32' && win) win.setTitleBarOverlay({ color: '#00000000', symbolColor: dark ? '#f2f0ea' : '#0d0d0c', height: 52 })
   })
 }
 

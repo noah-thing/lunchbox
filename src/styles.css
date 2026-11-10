@@ -850,11 +850,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 
 /* The room title takes clicks and a caret even though the header drags the window. */
 .roomhead h1,.roomhead input{-webkit-app-region:no-drag}
-/* Windows and Linux draw their window buttons over the top right; keep header buttons clear. */
-html[data-platform=win32] .roomhead,html[data-platform=linux] .roomhead,
-html[data-platform=win32] .panelhead,html[data-platform=linux] .panelhead,
-html[data-platform=win32] .bbar,html[data-platform=linux] .bbar{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)}
-html[data-platform=win32] .ntoasts,html[data-platform=linux] .ntoasts,html[data-platform=win32] .nbanner,html[data-platform=linux] .nbanner{top:56px}
+/* Windows draws its window buttons over the top right; keep header buttons clear. */
+html[data-platform=win32] .roomhead,html[data-platform=win32] .panelhead,
+html[data-platform=win32] .bbar{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)}
+html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 /* Made by, at the foot of Settings. */
 .maker{display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line);font-size:12.5px}
 .makerby{color:var(--faint)}
