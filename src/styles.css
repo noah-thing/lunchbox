@@ -248,6 +248,13 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .composer textarea{padding:14px 16px 4px;font-size:14px;line-height:1.5;min-height:48px}
 .composer textarea::placeholder{color:var(--faint)}
 .composer.shell textarea{font:13px/1.55 var(--mono)}
+/* In a narrow column the bar keeps its icons and drops the words beside them. */
+.composer{container-type:inline-size}
+@container (max-width:480px){
+  .cbar .pilltext{display:none}
+  .cbar .pill.split{font-size:0;gap:0}
+  .cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
 .cbar{display:flex;align-items:center;gap:4px;padding:8px}
 .shellnote{font:11px var(--mono);color:var(--faint);margin-left:8px}
 .send{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}
@@ -270,6 +277,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .item.off>.mark{opacity:.45}
 .item.danger b{color:var(--bad)}
 .item.danger.sure{background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.btn.danger.sure{background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.iconbtn.sure{width:auto;padding:0 8px;font-size:12px;white-space:nowrap;color:var(--bad);background:color-mix(in srgb,var(--bad) 10%,transparent)}
+/* The sidebar's right click menu, placed at the pointer. */
+.menu.ctx{position:fixed;bottom:auto;width:240px;transform-origin:top left;-webkit-app-region:no-drag}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 /* Models live in the crew menu: a quiet label beside each agent in the room. It opens that
    agent's list in place; the menu eases to its new height and the views slide, never jump. */
@@ -291,6 +302,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 @media (hover:hover){.crewrow:hover .maintag.make{display:inline-block}.maintag.make:hover{color:var(--ink)}}
 .crewrow:focus-within .maintag.make{display:inline-block}
 .menu:has(.crewrow){width:344px}
+/* The crew list scrolls inside the menu so it fits a short window. */
+.menu:has(>.fit){max-height:min(560px,calc(100vh - 140px));overflow-y:auto;overscroll-behavior:contain}
 .crewrow.off .item>.mark{opacity:.45}
 .modellist{max-height:280px;overflow-y:auto;overscroll-behavior:contain}
 .item.modelrow{align-items:center;gap:10px;padding:7px 8px}
@@ -305,6 +318,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .modelfind{display:block;width:calc(100% - 8px);height:30px;margin:2px 4px 4px;padding:0 10px;border-radius:7px;font-size:12.5px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
 @media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*{animation:none}}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
+/* Dropped below its button when there is no room above. */
+.menu.down{top:calc(100% + 6px);bottom:auto;transform-origin:top left;animation-name:menudown}
+.menuwrap.up .menu.down{transform-origin:top right}
+@keyframes menudown{from{opacity:0;transform:scale(.97) translateY(-4px)}}
 .item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px;border-radius:8px;transition:background-color 120ms var(--out)}
 .item>.modeicon,.item>.mark{margin-top:2px}
 .item .grow{display:flex;flex-direction:column}
@@ -332,7 +349,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .panel section:last-child{border:0;padding-bottom:24px}
 .panel h2{display:flex;align-items:baseline;justify-content:space-between;font-size:12px;font-weight:500;color:var(--ink);margin-bottom:10px}
 .panel h2 small{font:11px var(--mono);font-weight:400;color:var(--faint)}
-.crew{display:flex;align-items:center;gap:10px;height:40px;transition:opacity 300ms var(--out)}
+.crew{display:flex;align-items:flex-start;gap:10px;min-height:40px;padding:4px 0;transition:opacity 300ms var(--out)}
+.crew>.meter{margin-top:4px}
 .crew .grow{display:flex;flex-direction:column;line-height:1.3;font-size:12.5px}
 .crew small{font-size:11.5px;color:var(--faint)}
 .crew.on small{color:var(--dim)}
@@ -466,12 +484,15 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .plist small{margin-left:auto;flex:none;max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:11px var(--mono);color:var(--faint)}
 .plist .empty{padding:20px 12px;color:var(--faint);text-align:center}
 .toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:var(--ink);color:var(--ground);font-size:12.5px;animation:toast 2.6s var(--out) both}
-.toast.long{animation:land 260ms var(--out) both;display:flex;align-items:center;max-width:min(620px,calc(100vw - 48px))}
+.toast.long{animation:landmid 260ms var(--out) both;display:flex;align-items:center;max-width:min(620px,calc(100vw - 48px))}
 .toast .reportbtn{color:var(--ground);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ground) 30%,transparent);flex:none}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,6px)}8%,88%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
+/* land for things centred with translateX(-50%), which a plain translateY would drop. */
+@keyframes landmid{from{opacity:0;transform:translate(-50%,6px)}}
 
 /* Live rooms */
 .booting,.room.loading{height:100%;display:grid;place-items:center;color:var(--faint)}
+.roomfail{display:flex;flex-direction:column;align-items:center;gap:12px;max-width:340px;text-align:center;color:var(--dim);animation:fadein 300ms var(--out) both}
 .rise{animation:rise 640ms var(--out) both;animation-delay:calc(var(--i,0) * 70ms + 60ms)}
 .titleedit{font-size:14px;font-weight:500;height:28px;padding:0 8px;margin-left:-8px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line2);min-width:240px}
 .tag{height:20px;padding:0 6px;border-radius:4px;font:10.5px var(--mono);color:var(--faint);box-shadow:inset 0 0 0 1px var(--line2)}
@@ -537,10 +558,11 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .proof span{font:11px var(--mono);color:var(--faint)}
 .msgtools{display:flex;align-items:center;gap:12px;height:24px;margin-top:-2px;font:10.5px var(--mono);color:var(--faint);opacity:0;transition:opacity 160ms var(--out)}
 .ev:hover>.evbody>.msgtools,.msgtools:focus-within{opacity:1}
-.msgtools button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--faint);transition:color 120ms var(--out),background-color 120ms var(--out),transform 120ms var(--out)}
-.msgtools button:hover{color:var(--ink);background:var(--hover)}
-.msgtools button:active{transform:scale(.92)}
-.msgtools svg{width:14px;height:14px}
+.msgtools>button,.msgtools>.menuwrap>button{display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--faint);transition:color 120ms var(--out),background-color 120ms var(--out),transform 120ms var(--out)}
+.msgtools>button:hover,.msgtools>.menuwrap>button:hover{color:var(--ink);background:var(--hover)}
+.msgtools>button:active,.msgtools>.menuwrap>button:active{transform:scale(.92)}
+.msgtools>button svg,.msgtools>.menuwrap>button svg{width:14px;height:14px}
+.msgtools .menu{font:13px/1.5 var(--sans);color:var(--ink)}
 
 .arena{margin-top:24px;display:flex;flex-direction:column;gap:12px;animation:land 380ms var(--out) both}
 .arenahead{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
@@ -786,12 +808,14 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .menuwrap.up .menu{left:auto;right:0;width:270px;transform-origin:bottom right}
 .menuhead{padding:7px 10px 5px;font-size:11.5px;color:var(--faint)}
 .msgtools .menuwrap{display:flex}
+/* Each message is its own layer while it animates in, so the one with an open menu sits above the next. */
+.ev:has(.msgtools .menu){z-index:1}
 /* The message j and k landed on: a quiet bar in the gutter. */
 .kfocus{position:relative}
 .kfocus::before{content:"";position:absolute;left:-14px;top:2px;bottom:2px;width:2px;border-radius:1px;background:var(--ink);opacity:.5}
 
 /* Pushed messages and updates: a banner over the page, toasts in the corner, a card for big news. */
-.nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:land 320ms var(--out) both}
+.nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:landmid 320ms var(--out) both}
 .nbanner b{font-weight:500}
 .nbanner span span{color:var(--dim)}
 .ntoasts{position:fixed;top:14px;right:14px;z-index:46;display:flex;flex-direction:column;gap:8px;width:320px}
@@ -850,8 +874,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 
 /* The room title takes clicks and a caret even though the header drags the window. */
 .roomhead h1,.roomhead input{-webkit-app-region:no-drag}
-/* Windows draws its window buttons over the top right; keep header buttons clear. */
-html[data-platform=win32] .roomhead,html[data-platform=win32] .panelhead,
+/* Windows draws its window buttons over the top right; keep the right-most header clear. With the
+   room panel open that is the panel's header, and the room header keeps its own padding. */
+html[data-platform=win32] .room:not(.withdetails) .roomhead,html[data-platform=win32] .panelhead,
 html[data-platform=win32] .bbar{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)}
 html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 /* Made by, at the foot of Settings. */

@@ -64,8 +64,10 @@ export function Palette({ commands, close, openHit, anchor }: { commands: Comman
   useEffect(() => { input.current?.focus() }, [])
   useEffect(() => {
     if (q.trim().length < 2) return setHits([])
-    const t = setTimeout(() => desk.call('search', q).then((h: Hit[]) => setHits(h.filter((x) => x.event))), 120)
-    return () => clearTimeout(t)
+    // A slow answer to an older query must not replace the answer to the newer one.
+    let current = true
+    const t = setTimeout(() => desk.call('search', q).then((h: Hit[]) => { if (current) setHits((h ?? []).filter((x) => x.event)) }, () => {}), 120)
+    return () => { current = false; clearTimeout(t) }
   }, [q])
 
   const needle = q.trim().toLowerCase()
@@ -95,7 +97,7 @@ export function Palette({ commands, close, openHit, anchor }: { commands: Comman
               if (e.key === 'ArrowDown') { e.preventDefault(); setAt(sel + 1) }
               if (e.key === 'ArrowUp') { e.preventDefault(); setAt(sel - 1) }
               if (e.key === 'Enter' && ordered[sel]) pick(ordered[sel])
-              if (e.key === 'Escape' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) { e.preventDefault(); dismiss() }
+              if (e.key === 'Escape' || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k')) { e.preventDefault(); e.stopPropagation(); dismiss() }
             }} />
           <button className="pclose" onClick={dismiss} title="Close" aria-label="Close search"><kbd>esc</kbd></button>
         </div>

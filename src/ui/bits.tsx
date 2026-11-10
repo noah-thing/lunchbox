@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { dots, glyph } from './glyphs'
 
 export const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -26,12 +26,12 @@ const ALIAS: Record<string, string> = { local: 'ollama' }
 
 export function Mark({ seed, size = 16, blink = 0, active = false }: { seed: string; size?: number; blink?: number; active?: boolean }) {
   const brand = BRANDS[ALIAS[seed] ?? seed]
+  const on = useMemo(() => cells(seed), [seed])
   if (brand) return (
     <svg key={blink} className={`mark brand${blink ? ' blink' : ''}${active ? ' active' : ''}`} width={size} height={size} viewBox="0 0 24 24" fillRule="evenodd" aria-hidden="true">
       {brand.map((d, i) => <path key={i} d={d} />)}
     </svg>
   )
-  const on = useMemo(() => cells(seed), [seed])
   const grid = size >= 20
   return (
     <svg key={blink} className={`mark${blink ? ' blink' : ''}${active ? ' active' : ''}`} width={size} height={size} viewBox="0 0 7 7" aria-hidden="true">
@@ -143,10 +143,26 @@ export function Thumb({ path }: { path: string }) {
   const [src, setSrc] = useState<string | null>(null)
   const image = /\.(png|jpe?g|gif|webp)$/i.test(path)
   useEffect(() => {
+    setSrc(null)
     if (!image || !window.lb) return
     let alive = true
-    window.lb.call('file:image', path).then((url: string | null) => { if (alive && url) setSrc(url) })
+    // A file that cannot be read keeps the extension tile.
+    window.lb.call('file:image', path).then((url: string | null) => { if (alive && url) setSrc(url) }, () => {})
     return () => { alive = false }
   }, [path, image])
   return src ? <img className="thumb" src={src} alt="" /> : <i className="thumb">{path.split('.').pop()?.slice(0, 4) || 'file'}</i>
+}
+
+// A destructive button that asks twice. Moving the pointer away, tabbing away or Esc disarms it,
+// so a stray second click later never deletes anything.
+export function Sure({ act, className, label, children }: { act: () => void; className: string; label?: string; children: (sure: boolean) => ReactNode }) {
+  const [sure, setSure] = useState(false)
+  const off = () => setSure(false)
+  return (
+    <button className={`${className}${sure ? ' sure' : ''}`} aria-label={sure ? undefined : label} title={label}
+      onClick={() => { if (!sure) return setSure(true); off(); act() }} onMouseLeave={off} onBlur={off}
+      onKeyDown={(e) => { if (e.key === 'Escape' && sure) { e.preventDefault(); e.stopPropagation(); off() } }}>
+      {children(sure)}
+    </button>
+  )
 }
