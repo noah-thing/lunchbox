@@ -808,6 +808,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .menuwrap.up .menu{left:auto;right:0;width:270px;transform-origin:bottom right}
 .menuhead{padding:7px 10px 5px;font-size:11.5px;color:var(--faint)}
 .msgtools .menuwrap{display:flex}
+/* Each message is its own layer while it animates in, so the one with an open menu sits above the next. */
+.ev:has(.msgtools .menu){z-index:1}
 /* The message j and k landed on: a quiet bar in the gutter. */
 .kfocus{position:relative}
 .kfocus::before{content:"";position:absolute;left:-14px;top:2px;bottom:2px;width:2px;border-radius:1px;background:var(--ink);opacity:.5}
