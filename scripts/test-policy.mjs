@@ -29,6 +29,14 @@ const cases = [
   ['echo x > ./../../.zshrc', 'outside'], ['rm sub/../../other/file', 'outside'], ['echo x > ${HOME}/.zshrc', 'outside'],
   ['echo x >| ~/.zshrc', 'outside'], ['echo x >&~/.zshrc', 'outside'], ['dd if=a of=/tmp/b', 'outside'], ['cp a.txt $TARGET/', 'outside'],
   ['echo x > sub/../notes.txt', 'write'], ['echo x >| notes.txt', 'write'], ['npm run build --out=dist', 'write'],
+  // 2>&1 and &> point one output at another; they do not start a second command.
+  ['ls 2>&1', 'read'], ['git status 2>&1 | head', 'read'], ['git diff >&2', 'read'], ['ls 2>&-', 'read'],
+  ['npm test 2>&1', 'write'], ['ls &> out.txt', 'write'], ['ls 2>&1 > out.txt', 'write'], ['ls & touch x', 'write'],
+  // The home folder and drive roots as cmd.exe and PowerShell name them.
+  ['rd /s /q %USERPROFILE%', 'blocked'], ['rmdir /s %USERPROFILE%', 'blocked'], ['del /s /q %HOMEDRIVE%%HOMEPATH%', 'blocked'],
+  ['Remove-Item -Recurse -Force $env:USERPROFILE', 'blocked'], ['Remove-Item -Path ${env:USERPROFILE} -Recurse', 'blocked'],
+  ['ri -r $HOME', 'blocked'], ['rm -Recurse -Force $env:USERPROFILE', 'blocked'], ['Remove-Item D: -Recurse -Force', 'blocked'], ['rd /s /q D:', 'blocked'],
+  ['rd /s /q build', 'danger'], ['Remove-Item -Recurse $env:USERPROFILE/Downloads/old', 'danger'], ['Remove-Item %USERPROFILE%', 'outside'],
 ]
 let bad = 0
 for (const [cmd, want] of cases) {
