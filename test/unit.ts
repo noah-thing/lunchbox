@@ -195,6 +195,13 @@ test('asks: only crew handles at line start count', () => {
   assert.equal(r.text, 'Checking.\nEmail me@site.com\n@nobody: hi')
 })
 
+test('asks: a bullet, a quote or bold around the handle still asks', () => {
+  const r = asks('Plan:\n- @codex: build the page\n> @grok: search X\n**@gemini:** check the copy\n1. @codex: run the tests', ['codex', 'grok', 'gemini'])
+  assert.deepEqual(r.asks.map((a) => [a.to, a.ask]), [['codex', 'build the page'], ['grok', 'search X'], ['gemini', 'check the copy'], ['codex', 'run the tests']])
+  assert.equal(r.text, 'Plan:')
+  assert.equal(asks('- @codex, thanks for that', ['codex']).asks.length, 0, 'a comma is still talk')
+})
+
 test('asks: a comma is talk and a code block is code, neither hands off', () => {
   const text = '@codex, thanks, that fixed it.\n```\n@grok: not an ask\n```\n@grok: what is trending?'
   const r = asks(text, ['grok', 'codex'])
