@@ -635,3 +635,123 @@ test('mac update: an app on the disk image or moved by Gatekeeper never tries to
   assert.equal(canReplace('/private/var/folders/x/AppTranslocation/ABC/d/Lunchbox.app'), false)
   assert.equal(canReplace('/usr/local/bin/lunchbox'), false)
 })
+
+test('project memory: room text holding a marker cannot end the section early', () => {
+  const meta = {
+    id: 'r', name: 'Launch', created: 0, updated: 0, crew: [], workspace: '/tmp', sessions: {}, seen: {}, heard: {}, saved: { full: 0, sent: 0 },
+    blocks: [{ id: 'pin-1', title: 'Pinned', text: 'Keep <!-- /lunchbox:memory --> this and <!--lunchbox:memory--> that', v: 1, at: 1 }],
+  } as RoomMeta
+  const own = '# Project\n'
+  const once = merge(own, section(meta))
+  assert.equal(once.match(/lunchbox:memory/g)?.length, 2, 'only our own two markers')
+  const twice = merge(once, section(meta))
+  assert.equal(twice, once)
+  assert.equal(strip(twice), own)
+})
+
+test('ledger: a bad line costs only that row, and old rows are trimmed from the file', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { readLedger } = await import('../electron/store')
+  const file = join(mkdtempSync(join(tmpdir(), 'lb-ledger-')), 'ledger.jsonl')
+  const row = (at: number, room: string) => JSON.stringify({ at, agent: 'claude', room, usage: { input: 1, output: 1, cached: 0, cost: 0 } })
+  const now = Date.now()
+  writeFileSync(file, [row(now - 500 * 86400e3, 'ancient'), row(now - 1000, 'a'), '{"at": 1, "agent', row(now - 500, 'b'), row(now - 30 * 86400e3, 'month')].join('\n') + '\n')
+  const rows = readLedger(file, now - 14 * 86400e3)
+  assert.deepEqual(rows.map((r) => r.room), ['a', 'b'])
+  const kept = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l).room)
+  assert.deepEqual(kept, ['a', 'b', 'month'], 'the old and the broken rows leave the file, the rest stay')
+})
+
+test('store: an unreadable room list falls back to its backup and is kept aside', async () => {
+  const { mkdtempSync, readdirSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const dir = mkdtempSync(join(tmpdir(), 'lb-store-'))
+  const plain = { seal: (t: string) => t, open: (t: string) => t }
+  const meta = { id: 'r1', name: 'Kept', created: 1, updated: 1, crew: ['claude'], workspace: dir, sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 } } as RoomMeta
+  const one = new Store(dir, plain)
+  one.create(meta)
+  one.flush()
+  writeFileSync(join(dir, 'rooms.json'), '[{"id": "r1", "na')
+  const two = new Store(dir, plain)
+  assert.equal(two.room('r1')?.name, 'Kept')
+  assert.ok(readdirSync(dir).some((f) => f.startsWith('rooms.json.unreadable-')), 'the broken file is copied before anything overwrites it')
+
+  // A turn that ends after its room was deleted does not bring the log back.
+  two.remove('r1')
+  two.append('r1', { id: 'e', at: 2, kind: 'note', text: 'late' })
+  assert.ok(!readdirSync(join(dir, 'rooms')).includes('r1.jsonl'))
+  two.flush()
+})
+
+test('store: a line that does not parse keeps its place in the room log', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const dir = mkdtempSync(join(tmpdir(), 'lb-log-'))
+  const store = new Store(dir, { seal: (t: string) => t, open: (t: string) => t })
+  const ev = (id: string) => JSON.stringify({ id, at: 1, kind: 'you', text: id })
+  writeFileSync(join(dir, 'rooms', 'r.jsonl'), [ev('a'), '{"id": "b", "at', ev('c')].join('\n') + '\n')
+  const log = store.events('r')
+  assert.equal(log.length, 3, 'heard marks count lines, so a bad one still takes a slot')
+  assert.equal(log[2].id, 'c')
+})
+
+test('plan limits: tallies leave a half written last line for the next read', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const home = mkdtempSync(join(tmpdir(), 'lb-tally-'))
+  process.env.CLAUDE_CONFIG_DIR = join(home, '.claude')
+  mkdirSync(join(home, '.claude', 'projects', 'p'), { recursive: true })
+  const file = join(home, '.claude', 'projects', 'p', 's.jsonl')
+  const t = new Date().toISOString()
+  const line = (id: string, out: number) => JSON.stringify({ type: 'assistant', timestamp: t, requestId: 'r' + id, message: { id, usage: { input_tokens: 1, output_tokens: out } } }) + '\n'
+  const whole = line('a', 10)
+  const next = line('b', 100)
+  writeFileSync(file, whole + next.slice(0, 40))
+  const { update, used } = await import('../electron/tally')
+  const tally: { files: Record<string, { size: number }> } = { files: {} }
+  await update('claude', tally as never, Date.now() - 3600e3)
+  assert.equal(tally.files[file].size, Buffer.byteLength(whole), 'the read stops after the last newline')
+  appendFileSync(file, next.slice(40))
+  await update('claude', tally as never, Date.now() - 3600e3)
+  assert.equal(tally.files[file].size, statSync(file).size)
+  assert.equal(used(tally as never, Date.now() - 3600e3).fresh, 112, 'the finished line is counted once it is whole')
+  delete process.env.CLAUDE_CONFIG_DIR
+})
+
+test('plan limits: only whole agent windows, or the model in use, take an agent out', async () => {
+  const { fullWindows, keepReading } = await import('../electron/limits')
+  const later = Date.now() + 3600e3
+  const l = { agent: 'claude', at: Date.now(), windows: [
+    { id: '5h', label: '5 hours', used: 0.4, resets: later },
+    { id: 'week', label: 'Week', used: 0.7, resets: later },
+    { id: 'week-opus', label: 'Week, Opus', used: 1, resets: later },
+  ] }
+  assert.deepEqual(fullWindows(l, ''), [], 'an Opus week does not stop Claude on its default model')
+  assert.deepEqual(fullWindows(l, 'claude-sonnet-4-5'), [])
+  assert.deepEqual(fullWindows(l, 'opus').map((w) => w.id), ['week-opus'])
+  l.windows[0].used = 1
+  assert.deepEqual(fullWindows(l, '').map((w) => w.id), ['5h'])
+
+  // Sizing only needs each window's first and last reading, so nothing else is kept.
+  let list: { at: number; pct: number; units: number; start: number }[] = []
+  const now = Date.now()
+  for (let i = 0; i < 50; i++) list = keepReading(list, { at: now - 3600e3 + i * 60e3, pct: i, units: i, start: i < 25 ? 1 : 2 }, now)
+  assert.deepEqual(list.map((r) => r.pct), [0, 24, 25, 49])
+  list = keepReading(list, { at: now - 40 * 86400e3, pct: 1, units: 1, start: 0 }, now)
+  assert.equal(list.length, 4, 'a month old reading is dropped')
+})
+
+test('flows: a step is judged only by what it added to the room', async () => {
+  const { stepResult } = await import('../electron/flows')
+  const events = [
+    { id: '1', at: 1, kind: 'you', text: 'step one' },
+    { id: '2', at: 2, kind: 'say', who: 'claude', text: 'Here is the digest', acts: [] },
+    { id: '3', at: 3, kind: 'you', text: 'step two' },
+    { id: '4', at: 4, kind: 'wall', from: 'claude', to: '', reason: 'hit its limit' },
+  ] as Event[]
+  assert.equal(stepResult(events, 0).ok, true)
+  assert.deepEqual(stepResult(events, 2), { text: '', ok: false, stopped: false }, 'step one\'s answer does not count for step two')
+})

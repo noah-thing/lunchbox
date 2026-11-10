@@ -201,6 +201,30 @@ export function windowSize(readings: Reading[], minMove: number) {
   return sizes[Math.floor(0.8 * (sizes.length - 1))]
 }
 
+// windowSize only compares the first and last reading of each window, so those are all that is kept.
+export function keepReading(list: Reading[], r: Reading, now = Date.now()) {
+  const ends = new Map<number, [Reading, Reading]>()
+  for (const x of [...list, r]) {
+    if (now - x.at >= 30 * DAY) continue
+    const e = ends.get(x.start)
+    if (!e) ends.set(x.start, [x, x])
+    else ends.set(x.start, [x.at < e[0].at ? x : e[0], x.at >= e[1].at ? x : e[1]])
+  }
+  return [...ends.values()].flatMap(([a, b]) => (a === b ? [a] : [a, b])).sort((a, b) => a.at - b.at)
+}
+
+// A window for one model only (Week, Opus) has an id like week-opus. Claude's logs are tallied
+// for all models together, so such a window can neither be sized from them nor take the whole
+// agent out: it only stops the agent when that model is the one it runs.
+const modelOf = (w: PlanWindow) => /^\w+-(\w+)$/.exec(w.id)?.[1]
+
+export function fullWindows(l: PlanLimits, model = '', now = Date.now()) {
+  return l.windows.filter((w) => {
+    const only = modelOf(w)
+    return (!only || model.toLowerCase().includes(only)) && w.used >= 0.995 && !!w.resets && w.resets > now
+  })
+}
+
 // When no window has moved far enough yet, the current one still gives a first, rougher size.
 export function roughSize(units: number, pct: number) {
   return pct > 0 && units > 0 ? (units / pct) * 100 : undefined
@@ -235,6 +259,7 @@ export class Limits {
   private soon = new Map<string, NodeJS.Timeout>()
   private tallies: Record<string, Tally> = {}
   private busy = false
+  private saved = 0
 
   constructor(private store: Store, private emit: (l: Record<string, PlanLimits>) => void, private present: () => string[]) {
     // Tallies from before cost was counted are read again from the start.
@@ -250,7 +275,10 @@ export class Limits {
     this.timer = setInterval(() => this.poll(), 90e3)
   }
 
-  stop() { if (this.timer) clearInterval(this.timer) }
+  stop() {
+    if (this.timer) clearInterval(this.timer)
+    this.store.saveState()
+  }
 
   get() { return this.now }
 
@@ -260,6 +288,7 @@ export class Limits {
     this.busy = true
     try {
       const ids = (only ? [only] : this.present()).filter((id) => READERS[id])
+      let gated = false
       await Promise.all(ids.map(async (id) => {
         let l = await READERS[id]().catch(() => null)
         if (!l) return
@@ -268,9 +297,13 @@ export class Limits {
         if (!l.windows.length && prev?.windows.length && Date.now() - prev.at < 30 * 60e3) l = { ...prev, stale: true }
         await this.measure(id, l)
         this.now[id] = l
-        this.gate(id, l)
+        if (this.gate(id, l)) gated = true
       }))
-      this.store.saveState()
+      // A change to who is out is saved at once; new readings can wait, losing a few costs little.
+      if (gated || Date.now() - this.saved > 15 * 60e3) {
+        this.store.saveState()
+        this.saved = Date.now()
+      }
       this.emit(this.now)
     } finally {
       this.busy = false
@@ -278,7 +311,7 @@ export class Limits {
   }
 
   private async measure(id: string, l: PlanLimits) {
-    const timed = l.windows.filter((w) => w.unit !== 'requests')
+    const timed = l.windows.filter((w) => w.unit !== 'requests' && !modelOf(w))
     if (!timed.length) return
     const from = (w: PlanWindow) => w.start ?? (w.resets ? w.resets - (LENGTH[w.id] ?? 7 * DAY) : Date.now() - (LENGTH[w.id] ?? 7 * DAY))
     const tally = this.tallies[id]
@@ -288,9 +321,7 @@ export class Limits {
     }
     const spent = (start: number, to = Date.now()) => (id === 'grok' ? grokUsage(start, to) : tallied(id) ? usedSince(tally, start, to) : { units: 0, fresh: 0 })
     const keep = (key: string, r: Reading) => {
-      const list = (this.store.calib[key] ?? []).filter((x) => 'start' in x && Date.now() - x.at < 30 * DAY) as Reading[]
-      if (!list.some((x) => x.at === r.at)) list.push(r)
-      this.store.calib[key] = list.slice(-600)
+      this.store.calib[key] = keepReading((this.store.calib[key] ?? []).filter((x) => 'start' in x) as Reading[], r)
     }
     // Codex logs the plan's own percentage with every call, so its past windows are readings too.
     if (tallied(id)) for (const s of snapshots(tally)) keep(`${id}:${s.id}`, { at: s.at, pct: s.used * 100, units: spent(s.start, s.at).units, start: s.start })
@@ -317,14 +348,19 @@ export class Limits {
   }
 
   // A full window takes the agent out of rotation until it resets, the same way a hit limit does.
+  // Returns whether that changed.
   private gate(id: string, l: PlanLimits) {
-    const full = l.windows.filter((w) => w.used >= 0.995 && w.resets && w.resets > Date.now())
+    const full = fullWindows(l, this.store.settings.models[id])
     const spent = this.store.spent[id]
     if (full.length || l.reached) {
       const until = Math.max(...full.map((w) => w.resets!), Date.now() + HOUR)
       this.store.spent[id] = { until, reason: 'plan limit reached' }
-    } else if (spent?.reason === 'plan limit reached' && l.windows.length && !l.error) {
-      delete this.store.spent[id]
+      return spent?.until !== until || spent.reason !== 'plan limit reached'
     }
+    if (spent?.reason === 'plan limit reached' && l.windows.length && !l.error) {
+      delete this.store.spent[id]
+      return true
+    }
+    return false
   }
 }

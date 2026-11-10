@@ -48,6 +48,11 @@ if (process.env.FAKE_SCRIPT === 'subagents' && name === 'claude') {
 
 if (name === 'codex') {
   say({ type: 'thread.started', thread_id: 'thread-1' })
+  // FAKE_SCRIPT=cut: Codex runs a command and, unless told to stay quiet, writes half a reply before the limit.
+  if (process.env.FAKE_SCRIPT === 'cut') {
+    say({ type: 'item.completed', item: { id: 'c1', type: 'command_execution', command: 'npm run build', aggregated_output: 'ok', exit_code: 0, status: 'completed' } })
+    if (!process.env.FAKE_QUIET) say({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: 'Built it. Next I will deploy the' } })
+  }
   say({ type: 'error', message: "You've hit your usage limit. Try again in 2 hours." })
   process.exit(1)
 }
