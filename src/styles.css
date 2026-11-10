@@ -23,6 +23,10 @@
 html,body,#root{height:100%}
 body{background:var(--ground);color:var(--ink);font:13px/1.5 var(--sans);-webkit-font-smoothing:antialiased;font-feature-settings:"tnum";overflow:hidden;user-select:none;transition:background-color 240ms var(--out)}
 p,code,pre,dd,textarea,input{user-select:text}
+/* Linux and Windows draw a select's list from these colours, and without them it came out white
+   with the app's light text on it, so the options could not be read. macOS keeps its own menu. */
+select option{background:var(--sheet);color:var(--ink)}
+select option:checked{background:var(--well);color:var(--ink)}
 button{font:inherit;color:inherit;background:none;border:0;cursor:default;text-align:left}
 code,kbd,pre{font-family:var(--mono);font-size:11px}
 kbd{opacity:.5;margin-left:auto}
