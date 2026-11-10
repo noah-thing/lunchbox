@@ -396,6 +396,16 @@ test('savings: Claude Code turn is priced exactly like Anthropic bills it', () =
   assert.ok(Math.abs(ours - u.cost) < 1e-6, `${ours} vs ${u.cost}`)
   // Saved: 51804 reads at $0.09 off each million, minus a quarter of $0.10 on 29259 writes.
   assert.ok(Math.abs((u.saved ?? 0) - (51804 * 0.09 - 29259 * 0.025) / 1e6) < 1e-9)
+  // Gross: the reads alone, so a room shows a saving before its writes have paid off.
+  assert.ok(Math.abs((u.gross ?? 0) - (51804 * 0.09) / 1e6) < 1e-9)
+})
+
+test('savings: a result without per model rows is priced at the session model', () => {
+  const p = claudeLike()
+  p.line({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-opus-5-5' })
+  p.line({ type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 2, cache_read_input_tokens: 100000, cache_creation_input_tokens: 0, output_tokens: 4 } })
+  assert.ok(Math.abs((p.turn.usage.gross ?? 0) - (100000 * 3.8) / 1e6) < 1e-9)
+  assert.ok(Math.abs((p.turn.usage.saved ?? 0) - (100000 * 3.8) / 1e6) < 1e-9)
 })
 
 test('savings: hour long cache writes cost double, not a quarter extra', () => {

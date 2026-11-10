@@ -27,6 +27,7 @@ export function addUsage(a: Usage, b: Partial<Usage>) {
   a.cost += b.cost ?? 0
   if (b.written) a.written = (a.written ?? 0) + b.written
   if (b.saved) a.saved = (a.saved ?? 0) + b.saved
+  if (b.gross) a.gross = (a.gross ?? 0) + b.gross
   if (b.kept) a.kept = (a.kept ?? 0) + b.kept
   return a
 }
@@ -185,7 +186,7 @@ export class Store {
     const week = Date.now() - 7 * 86400e3
     const days = Array.from({ length: DAYS }, (_, i) => {
       const d = new Date(day.getTime() - (DAYS - 1 - i) * 86400e3)
-      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, kept: 0 }
+      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, gross: 0, kept: 0 }
     })
     const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
     for (const row of this.ledger) {
@@ -201,6 +202,7 @@ export class Store {
         slot.input += row.usage.input
         slot.cached += row.usage.cached
         slot.saved += row.usage.saved ?? 0
+        slot.gross += row.usage.gross ?? Math.max(0, row.usage.saved ?? 0)
         slot.kept += row.usage.kept ?? 0
       }
     }

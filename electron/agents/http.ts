@@ -1,5 +1,5 @@
 import type { Usage } from '../../shared/types'
-import { cacheSaving, claudeCost } from '../../shared/prices'
+import { cacheSaving, claudeCost, readSaving } from '../../shared/prices'
 
 type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp }
 
@@ -140,6 +140,7 @@ export async function chat(name: string, key: string, model: string, system: str
     const writes = { short: Math.max(0, (usage.written ?? 0) - hour), hour }
     usage.cost = claudeCost(id, { input: start.input_tokens ?? 0, read: usage.cached, output: usage.output, ...writes }) ?? 0
     usage.saved = cacheSaving(id, usage.cached, writes, usage.input + usage.cached) ?? undefined
+    usage.gross = readSaving(id, usage.cached, usage.input + usage.cached) ?? undefined
   } else if (p.style === 'openai') {
     res = await fetch(`${p.base}/chat/completions`, {
       method: 'POST', signal, headers: headers(p.style, key),
