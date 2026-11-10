@@ -277,6 +277,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .item.off>.mark{opacity:.45}
 .item.danger b{color:var(--bad)}
 .item.danger.sure{background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.btn.danger.sure{background:color-mix(in srgb,var(--bad) 10%,transparent)}
+.iconbtn.sure{width:auto;padding:0 8px;font-size:12px;white-space:nowrap;color:var(--bad);background:color-mix(in srgb,var(--bad) 10%,transparent)}
+/* The sidebar's right click menu, placed at the pointer. */
+.menu.ctx{position:fixed;bottom:auto;width:240px;transform-origin:top left;-webkit-app-region:no-drag}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 /* Models live in the crew menu: a quiet label beside each agent in the room. It opens that
    agent's list in place; the menu eases to its new height and the views slide, never jump. */

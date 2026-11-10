@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { dots, glyph } from './glyphs'
 
 export const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -149,4 +149,18 @@ export function Thumb({ path }: { path: string }) {
     return () => { alive = false }
   }, [path, image])
   return src ? <img className="thumb" src={src} alt="" /> : <i className="thumb">{path.split('.').pop()?.slice(0, 4) || 'file'}</i>
+}
+
+// A destructive button that asks twice. Moving the pointer away, tabbing away or Esc disarms it,
+// so a stray second click later never deletes anything.
+export function Sure({ act, className, label, children }: { act: () => void; className: string; label?: string; children: (sure: boolean) => ReactNode }) {
+  const [sure, setSure] = useState(false)
+  const off = () => setSure(false)
+  return (
+    <button className={`${className}${sure ? ' sure' : ''}`} aria-label={sure ? undefined : label} title={label}
+      onClick={() => { if (!sure) return setSure(true); off(); act() }} onMouseLeave={off} onBlur={off}
+      onKeyDown={(e) => { if (e.key === 'Escape' && sure) { e.preventDefault(); e.stopPropagation(); off() } }}>
+      {children(sure)}
+    </button>
+  )
 }

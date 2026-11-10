@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { flushSync } from 'react-dom'
-import type { Hit, Skill } from '../shared/types'
-import { Loader } from './ui/bits'
+import type { Hit, RoomSummary, Skill } from '../shared/types'
+import { Loader, Sure } from './ui/bits'
 import { Logo } from './ui/Logo'
 import { IconAgents, IconBrowser, IconClock, IconFlows, IconInbox, IconLibrary, IconPin, IconPlus, IconPool, IconSave, IconSearch, IconSettings } from './ui/icons'
 import { Onboarding } from './views/Onboarding'
@@ -14,6 +14,7 @@ import { Pool } from './views/Pool'
 import { WaitingPage } from './views/Waiting'
 import { ReportSheet } from './views/Report'
 import { Notices } from './ui/Notices'
+import { rove } from './ui/Access'
 import { Guard } from './ui/Guard'
 import { openReport, type ReportOpen } from './lib/report'
 import { Savings } from './views/Savings'
@@ -90,6 +91,14 @@ export function App() {
   const rooms = [...all.filter((r) => r.pinned && !r.archived), ...all.filter((r) => !r.pinned && !r.archived)]
   const archived = all.filter((r) => r.archived)
   const [showArchived, setShowArchived] = useState(false)
+  const [ctx, setCtx] = useState<{ room: RoomSummary; x: number; y: number; from: HTMLElement } | null>(null)
+  const menuFor = (room: RoomSummary) => (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
+    // The menu key and Shift F10 fire this too, with no pointer to open at.
+    const r = e.currentTarget.getBoundingClientRect()
+    const atPointer = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+    setCtx({ room, x: atPointer ? e.clientX : r.left + 16, y: atPointer ? e.clientY : r.bottom, from: e.currentTarget })
+  }
   const needs = all.filter((r) => r.waiting).length
   const agents = useApp((s) => s.agents)
   const skills = useApp((s) => s.skills)
@@ -223,7 +232,7 @@ export function App() {
         <div className="sblabel">Rooms</div>
         <div className="sbrooms">
           {rooms.map((r) => (
-            <button key={r.id} className={`sbroom${on('room', r.id) ? ' on' : ''}`} onClick={() => go({ name: 'room', id: r.id })} title={r.name}>
+            <button key={r.id} className={`sbroom${on('room', r.id) ? ' on' : ''}`} onClick={() => go({ name: 'room', id: r.id })} onContextMenu={menuFor(r)} title={r.name}>
               {on('room', r.id) && sel}
               {r.flow && <span className="sbflow" title="Started by a flow"><IconClock /></span>}
               {r.pinned && <span className="sbpin" title="Pinned"><IconPin /></span>}
@@ -234,7 +243,7 @@ export function App() {
           {!rooms.length && <div className="sbempty">Rooms you start show up here.</div>}
           {archived.length > 0 && <button className="sbarchived" onClick={() => setShowArchived(!showArchived)} aria-expanded={showArchived}>{showArchived ? 'Hide archived' : `Archived, ${archived.length}`}</button>}
           {showArchived && archived.map((r) => (
-            <button key={r.id} className={`sbroom archived${on('room', r.id) ? ' on' : ''}`} onClick={() => go({ name: 'room', id: r.id })} title={r.name}>
+            <button key={r.id} className={`sbroom archived${on('room', r.id) ? ' on' : ''}`} onClick={() => go({ name: 'room', id: r.id })} onContextMenu={menuFor(r)} title={r.name}>
               {on('room', r.id) && sel}
               <span className="grow">{r.name}</span><small>{ago(r.updated)}</small>
             </button>
@@ -266,6 +275,7 @@ export function App() {
       </main>
 
       <Notices />
+      {ctx && <RoomContext key={ctx.room.id + ctx.x + ctx.y} {...ctx} close={() => setCtx(null)} say={say} />}
       {report && <ReportSheet open={report} close={() => setReport(null)} say={say} />}
       {palette && <Palette commands={commands} close={() => openPalette(false)} openHit={openHit} anchor={searchButton} />}
       {toast && (
@@ -274,6 +284,47 @@ export function App() {
           {failure(toast.text) && <button className="reportbtn" onClick={() => openReport({ context: toast.text })}>Report this</button>}
         </div>
       )}
+    </div>
+  )
+}
+
+// Right click on a room in the sidebar, for the two things people look for there. Delete asks twice,
+// the same way the room's own menu does.
+function RoomContext({ room, x, y, from, close, say }: { room: RoomSummary; x: number; y: number; from: HTMLElement; close: () => void; say: (t: string) => void }) {
+  const box = useRef<HTMLDivElement>(null)
+  const done = (refocus: boolean) => { if (refocus) from.focus(); close() }
+  useLayoutEffect(() => {
+    const el = box.current!
+    const r = el.getBoundingClientRect()
+    el.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`
+    el.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`
+    el.querySelector('button')?.focus()
+  }, [])
+  useEffect(() => {
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) done(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(true) } }
+    const leave = () => done(false)
+    addEventListener('pointerdown', away)
+    addEventListener('keydown', esc, true)
+    addEventListener('blur', leave)
+    return () => { removeEventListener('pointerdown', away); removeEventListener('keydown', esc, true); removeEventListener('blur', leave) }
+  }, [])
+  const archive = () => {
+    desk.call('room:mark', room.id, { archived: !room.archived })
+    say(room.archived ? 'Back in your rooms' : 'Archived. Find it under Archived in the sidebar.')
+    done(true)
+  }
+  return (
+    <div ref={box} className="menu ctx" role="menu" aria-label={room.name} style={{ left: x, top: y }}
+      onKeyDown={(e) => rove(e, box.current)}
+      onBlur={(e) => { if (e.relatedTarget && !box.current?.contains(e.relatedTarget as Node)) done(false) }}>
+      <button className="item" onClick={archive}>
+        <span className="grow"><b>{room.archived ? 'Unarchive' : 'Archive'}</b><span>{room.archived ? 'Bring it back to your rooms' : 'Out of the list, nothing deleted'}</span></span>
+      </button>
+      <div className="sep" />
+      <Sure className="item danger" act={() => { desk.call('room:remove', room.id); done(false) }}>
+        {(sure) => <span className="grow"><b>{sure ? 'Click again to delete' : 'Delete room'}</b><span>The folder and its files stay where they are</span></span>}
+      </Sure>
     </div>
   )
 }

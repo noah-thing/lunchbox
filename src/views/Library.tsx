@@ -4,7 +4,7 @@ import { CATALOG, GROUPS, type CatalogTool } from '../../shared/catalog'
 import { FIELDS, PLAYBOOKS, fillPlaybook, type Field, type Playbook } from '../../shared/skills'
 import { HABITS } from '../../shared/habits'
 import type { Pack } from '../../shared/types'
-import { Loader, Mark } from '../ui/bits'
+import { Loader, Mark, Sure } from '../ui/bits'
 import { IconClose, IconSearch, IconShare } from '../ui/icons'
 import { agentOf, desk, reason, reload, useApp } from '../lib/desk'
 import type { View } from '../App'
@@ -287,7 +287,7 @@ function Packs({ q, go, say }: { q: string; go: (v: View) => void; say: (t: stri
               <button className="btn small quiet" onClick={() => go({ name: 'new', pack: p.id })}>New room</button>
               <span className="spacer" />
               <button className="iconbtn" title="Share as a file" aria-label="Share" onClick={() => desk.call('packs:export', p.id).then((f: string | null) => f && say('Pack saved'))}><IconShare /></button>
-              {p.source === 'user' && <button className="iconbtn" title="Remove" aria-label="Remove" onClick={() => remove(p)}><IconClose /></button>}
+              {p.source === 'user' && <Sure className="iconbtn" label="Remove" act={() => remove(p)}>{(sure) => (sure ? 'Click again to remove' : <IconClose />)}</Sure>}
             </span>
           </div>
         ))}
@@ -329,7 +329,7 @@ function Skills({ q, go, say }: { q: string; go: (v: View) => void; say: (t: str
               <button className="btn small quiet" onClick={() => go({ name: 'new', skill: s })}>Use</button>
               <span className="spacer" />
               <button className="iconbtn" title="Share as a file" aria-label="Share" onClick={() => desk.call('skills:export', s.id).then((f: string | null) => f && say('Skill saved'))}><IconShare /></button>
-              <button className="iconbtn" title="Delete" aria-label="Delete" onClick={() => desk.call('skills:remove', s.id)}><IconClose /></button>
+              <Sure className="iconbtn" label="Delete" act={() => desk.call('skills:remove', s.id)}>{(sure) => (sure ? 'Click again to delete' : <IconClose />)}</Sure>
             </span>
           </div>
         ))}

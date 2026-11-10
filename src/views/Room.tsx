@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
 import { plan, plansBefore, type Step } from '../../shared/plan'
 import { searchOf, stepOf, type Search } from '../../shared/steps'
-import { Loader, Mark, Meter, Thumb } from '../ui/bits'
+import { Loader, Mark, Meter, Sure, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
 import { Inline, Rich } from '../ui/Rich'
@@ -211,7 +211,6 @@ function Title({ name, rename }: { name: string; rename: (n: string) => void }) 
 }
 
 function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: string; meta: RoomMeta; events: Event[]; canReplay: boolean; replay: () => void; open: (r: string) => void; say: (t: string) => void }) {
-  const [sure, setSure] = useState(false)
   const agents = useApp((s) => s.agents)
   return (
     <Menu bare label="Room actions" button={<IconMore />} className="right">
@@ -260,9 +259,9 @@ function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: stri
             {meta.project && <i className="check" />}
           </button>
           <div className="sep" />
-          <button className={`item danger${sure ? ' sure' : ''}`} onClick={() => { if (!sure) return setSure(true); desk.call('room:remove', id); close() }} onMouseLeave={() => setSure(false)}>
-            <span className="grow"><b>{sure ? 'Click again to delete' : 'Delete room'}</b><span>The folder and its files stay where they are</span></span>
-          </button>
+          <Sure className="item danger" act={() => { desk.call('room:remove', id); close() }}>
+            {(sure) => <span className="grow"><b>{sure ? 'Click again to delete' : 'Delete room'}</b><span>The folder and its files stay where they are</span></span>}
+          </Sure>
         </>
       )}
     </Menu>

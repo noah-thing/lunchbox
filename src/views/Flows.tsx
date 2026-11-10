@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react'
 import { describe, DAYS, EVERY, GROUPS, TEMPLATES, type Group, type Template } from '../../shared/flow'
 import type { Access, Every, Flow, FlowStep } from '../../shared/types'
-import { Loader, Mark } from '../ui/bits'
+import { Loader, Mark, Sure } from '../ui/bits'
 import { IconClose, IconFolder, IconPlay, IconPlus } from '../ui/icons'
 import { ACCESS, agentOf, ago, desk, reason, short, unavailable, upcoming, useApp } from '../lib/desk'
 import type { View } from '../App'
@@ -241,7 +241,7 @@ function Editor({ initial, go, say }: { initial: Draft; go: (v: View) => void; s
         </section>
 
         <footer className="editorfoot rise" style={{ '--i': 5 } as CSSProperties}>
-          {d.id && <button className="btn small quiet danger" onClick={remove}>Delete</button>}
+          {d.id && <Sure className="btn small quiet danger" act={remove}>{(sure) => (sure ? 'Click again to delete' : 'Delete')}</Sure>}
           <span className="spacer" />
           <button className="btn quiet" disabled={busy} onClick={() => go({ name: 'flows' })}>Cancel</button>
           <button className="btn quiet" disabled={busy} onClick={() => save(true)}><IconPlay />Save and run</button>
