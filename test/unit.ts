@@ -540,3 +540,16 @@ test('briefing: brief always kept, newest memory first, no transcript, only chan
   const follow = briefing(meta, events, 'codex', 'Reply', false, ['Claude: here is the draft'])
   assert.match(follow.text, /The last few lines of the room:\n\nClaude: here is the draft/)
 })
+
+test('project memory: room text holding a marker cannot end the section early', () => {
+  const meta = {
+    id: 'r', name: 'Launch', created: 0, updated: 0, crew: [], workspace: '/tmp', sessions: {}, seen: {}, heard: {}, saved: { full: 0, sent: 0 },
+    blocks: [{ id: 'pin-1', title: 'Pinned', text: 'Keep <!-- /lunchbox:memory --> this and <!--lunchbox:memory--> that', v: 1, at: 1 }],
+  } as RoomMeta
+  const own = '# Project\n'
+  const once = merge(own, section(meta))
+  assert.equal(once.match(/lunchbox:memory/g)?.length, 2, 'only our own two markers')
+  const twice = merge(once, section(meta))
+  assert.equal(twice, once)
+  assert.equal(strip(twice), own)
+})
