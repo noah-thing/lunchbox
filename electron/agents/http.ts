@@ -51,6 +51,25 @@ export async function listModels(name: string, key: string): Promise<string[]> {
   return ((await res.json()).data ?? []).map((m: { id: string }) => m.id).filter((id: string) => !/embed|whisper|tts|dall|image|moderation|audio|realtime|transcribe|search-preview/i.test(id)).sort().reverse()
 }
 
+// Ollama runs every model with a small context window unless told otherwise, and quietly cuts the
+// start of anything longer. A room's instructions and history are longer, so the model lost them
+// and answered with nothing or stopped mid answer. Each request asks for room to fit, capped at
+// what the model supports and at a size an ordinary laptop can hold in memory.
+const ROOM = 16384
+const windows = new Map<string, number>()
+async function ollamaWindow(base: string, model: string, signal?: AbortSignal) {
+  if (windows.has(model)) return windows.get(model)!
+  let most = ROOM
+  try {
+    const res = await fetch(`${base}/show`, { method: 'POST', signal, body: JSON.stringify({ model }) })
+    const info = res.ok ? (await res.json()).model_info ?? {} : {}
+    const key = Object.keys(info).find((k) => k.endsWith('.context_length'))
+    if (key && Number(info[key]) > 0) most = Math.min(ROOM, Number(info[key]))
+  } catch {}
+  windows.set(model, most)
+  return most
+}
+
 async function pick(name: string, key: string, model: string) {
   if (model) return model
   const all = await listModels(name, key)
@@ -178,7 +197,10 @@ export async function chat(name: string, key: string, model: string, system: str
   } else {
     res = await fetch(`${p.base}/chat`, {
       method: 'POST', signal, headers: headers(p.style, key),
-      body: JSON.stringify({ model: id, stream: true, keep_alive: '30m', messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }] }),
+      body: JSON.stringify({
+        model: id, stream: true, keep_alive: '30m', options: { num_ctx: await ollamaWindow(p.base, id, signal) },
+        messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }],
+      }),
     })
     if (!res.ok) throw await failure(res)
     for await (const line of lines(res)) {
@@ -189,5 +211,8 @@ export async function chat(name: string, key: string, model: string, system: str
       if (o.done) Object.assign(usage, { input: o.prompt_eval_count ?? 0, output: o.eval_count ?? 0 })
     }
   }
+  // A model that streams nothing back has failed, even when the server said done. Saying so beats
+  // an empty bubble the person cannot read anything from.
+  if (!text.trim() && p.style === 'ollama') throw new Error(`${id} sent back an empty answer. Small local models often do this on long rooms; try a larger model, or start a new room.`)
   return { text: text.trim(), usage }
 }
