@@ -5,7 +5,7 @@ import { relative } from 'node:path'
 import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
 import { classify } from '../../shared/route'
-import { detect, run } from '../agents'
+import { detect, run, type Result } from '../agents'
 import { plain } from '../agents/parse'
 import type { Hands, Tool } from '../hands'
 import { openaiImage, target } from '../images'
@@ -26,12 +26,14 @@ type Hooks = {
   tools?(who: string, workspace: string, access: Access): Tool[]
 }
 
-type Task =
+// cut carries what an agent wrote before a usage limit stopped it, for whoever takes the task over.
+type Task = (
   | { kind: 'reply' }
   | { kind: 'answer'; from: string; ask: string; via?: 'tool'; quiet?: boolean; label?: string; size?: string }
-  | { kind: 'continue' }
+  | { kind: 'continue'; skipped?: { to: string; ask: string }[] }
   | { kind: 'retry'; tools: string[] }
   | { kind: 'job'; from: string; job: string; context?: string }
+) & { cut?: { who: string; text: string } }
 
 // tried holds who already failed on this message, so a failure everyone shares is not handed round in circles.
 // main is who follows the conversation for this message: the room's main agent, or its stand-in.
@@ -42,6 +44,7 @@ type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 // Failures of one command in one turn before the loop guard stops it.
 const LOOP = 3
 const MAX_HOPS = 24
+const FLOW_ASK = 15 * 60e3
 // Grok Build only loads MCP servers from config files, which the room does not touch.
 const BORROWS = new Set(['claude', 'codex', 'gemini'])
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
@@ -50,7 +53,7 @@ type Draft<E = Event> = E extends Event ? Omit<E, 'id' | 'at'> : never
 export class Engine {
   agents: AgentInfo[] = []
   private lives = new Map<string, Live>()
-  private procs = new Map<string, Set<{ stop(): void }>>()
+  private procs = new Map<string, Set<{ stop(): void; done: Promise<unknown> }>>()
   private queues = new Map<string, Promise<unknown>>()
   private gens = new Map<string, number>()
   private flushed = new Set<string>()
@@ -209,7 +212,13 @@ export class Engine {
     if (!meta || !this.snaps) throw new Error('Checkpoints are not available')
     const ref = target.ref ?? meta.checkpoints?.find((c) => c.event === target.event)?.ref
     if (!ref) throw new Error('There is no checkpoint for that message')
+    const busy = [...(this.procs.get(room) ?? [])].map((p) => p.done)
     this.stop(room)
+    // A killed agent or command can still write for a moment, and restoring under it would leave a
+    // mix of old and new files. Give them a while to exit, but never hang the rewind on one.
+    let timer: NodeJS.Timeout | undefined
+    await Promise.race([Promise.allSettled([...busy, this.idle(room)]), new Promise((ok) => { timer = setTimeout(ok, 10000) })])
+    clearTimeout(timer)
     const r = await this.snaps.restore(meta.workspace, ref)
     const said = this.store.events(room).find((e) => e.id === target.event)
     const what = said?.kind === 'you' ? `before “${title(said.text)}”` : 'where it was before the rewind'
@@ -221,6 +230,13 @@ export class Engine {
     const gen = this.gens.get(room) ?? 0
     const next = (this.queues.get(room) ?? Promise.resolve()).then(() => ((this.gens.get(room) ?? 0) === gen ? job(gen) : null)).catch((e) => {
       this.add(room, { kind: 'note', text: `Something broke: ${e instanceof Error ? e.message : String(e)}`, tone: 'bad' })
+      // The job never reached settle, so the room would keep saying someone is working.
+      const live = this.live(room)
+      if (!live.turns.length) {
+        live.active = null
+        live.doing = ''
+        this.changed(room)
+      }
     })
     this.queues.set(room, next)
     return next
@@ -309,7 +325,7 @@ export class Engine {
 
   // Stopping is instant from the user's side: what each agent wrote so far lands in the room now
   // and the live turns clear, while the processes are killed and exit in their own time.
-  stop(room: string) {
+  stop(room: string, why?: string) {
     this.gens.set(room, (this.gens.get(room) ?? 0) + 1)
     for (const p of this.procs.get(room) ?? []) p.stop()
     this.procs.get(room)?.clear()
@@ -324,6 +340,7 @@ export class Engine {
     live.turns = []
     live.doing = ''
     live.active = null
+    if (why) this.add(room, { kind: 'note', text: why, tone: 'warn' })
     this.hooks.emit('room:live', { room, live })
     this.list()
   }
@@ -455,25 +472,39 @@ export class Engine {
   private async conversation(room: string, who: string, task: Task, access: Access, ctx: Ctx) {
     let res = await this.turn(room, who, task, access, ctx)
     let rounds = 0
-    while (res && res.asks.length && ctx.hops.n < MAX_HOPS && rounds++ < 3) {
+    // Asks over the limits are not sent, but they are said out loud so nobody waits on an answer.
+    const skipped: { to: string; ask: string }[] = []
+    while (res && res.asks.length) {
+      if (ctx.hops.n >= MAX_HOPS || rounds++ >= 3) { skipped.push(...res.asks); break }
       const asker = res.who
+      const now: { to: string; ask: string }[] = []
       let answered = 0
-      for (const a of res.asks.slice(0, 2)) {
-        if (ctx.hops.n >= MAX_HOPS) break
+      for (const [i, a] of res.asks.entries()) {
+        if (i >= 2 || ctx.hops.n >= MAX_HOPS) { now.push(a); continue }
         ctx.hops.n++
         if (await this.turn(room, a.to, { kind: 'answer', from: asker, ask: a.ask }, access, ctx)) answered++
       }
+      skipped.push(...now)
       if (!answered) break
       ctx.hops.n++
-      res = await this.turn(room, asker, { kind: 'continue' }, access, ctx)
+      res = await this.turn(room, asker, { kind: 'continue', skipped: now.length ? now : undefined }, access, ctx)
+    }
+    if (skipped.length && (this.gens.get(room) ?? 0) === ctx.gen) {
+      this.add(room, { kind: 'note', tone: 'warn', text: `Not asked, to keep one message from running on: ${skipped.map((a) => `${this.name(a.to)} (“${title(a.ask)}”)`).join(', ')}. Ask again if it still matters.` })
     }
   }
 
   private task(t: Task) {
+    if (!t.cut) return this.what(t)
+    const so = t.cut.text.length > 2000 ? `…${t.cut.text.slice(-2000)}` : t.cut.text
+    return `${this.what(t)}\n\n${this.name(t.cut.who)} started on this and hit its usage limit partway. It got this far:\n${so}\n\nCarry on from there. Do not redo what is already done.`
+  }
+
+  private what(t: Task) {
     switch (t.kind) {
       case 'reply': return 'You are up. Reply to the person\'s latest message, and do the work it asks for.'
       case 'answer': return `${this.name(t.from)} asks you: ${t.ask}\n\nAnswer ${this.name(t.from)} directly and completely. Your answer goes straight back to them, so do not ask anyone else.`
-      case 'continue': return 'Your crewmates answered above. Carry on with the work and reply to the person.'
+      case 'continue': return `Your crewmates answered above. Carry on with the work and reply to the person.${t.skipped ? ` These asks were not sent, to keep the message from running on, so do that part yourself: ${t.skipped.map((a) => `@${a.to} ${title(a.ask)}`).join('; ')}.` : ''}`
       case 'retry': return `You now have permission for: ${t.tools.join(', ')}. Carry on where you stopped.`
       case 'job': return `${this.name(t.from)} brought you in for this: ${t.job}${t.context ? `\n\nWhat ${this.name(t.from)} passed you:\n${t.context}` : ''}\n\nDo it, then end with a few lines on what you did and anything ${this.name(t.from)} needs to know. Your reply goes back to ${this.name(t.from)}, so do not ask anyone else.`
     }
@@ -619,12 +650,18 @@ export class Engine {
     const procs = this.procs.get(room) ?? new Set()
     this.procs.set(room, procs)
     procs.add(running)
-    const r = await running.done
-    grant?.revoke()
-    procs.delete(running)
-    live.turns = live.turns.filter((t) => t !== lt)
-    if (live.active === who) live.active = live.turns[live.turns.length - 1]?.who ?? null
-    this.changed(room)
+    let r: Result
+    // A launch can throw, a full disk while writing the prompt file say. The turn still ends here,
+    // and the room's queue reports what broke.
+    try {
+      r = await running.done
+    } finally {
+      grant?.revoke()
+      procs.delete(running)
+      live.turns = live.turns.filter((t) => t !== lt)
+      if (live.active === who) live.active = live.turns[live.turns.length - 1]?.who ?? null
+      this.changed(room)
+    }
     if (looped) {
       this.store.record(who, room, r.usage)
       this.hooks.emit('ledger', this.ledger())
@@ -676,14 +713,10 @@ export class Engine {
       this.store.saveState()
       if (r.limit) this.hooks.emit('ledger', this.ledger())
       else this.refresh()
-      // In side by side everyone is already answering, so a failed slot stays empty and says why.
-      ctx.tried = (ctx.tried ?? new Set()).add(who)
-      const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
-      if (next && ctx.main === who) ctx.main = next
-      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until: r.limit?.until, reason: r.limit ? 'hit its limit' : r.error! })
-      if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
-      if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
-      return null
+      // Edits and commands from before the failure stay on the record, so whoever takes over and
+      // the proof check know about them.
+      if (r.acts.length) this.add(room, { kind: 'say', who, text: '', acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms })
+      return this.handOn(room, meta, who, task, access, ctx, r.limit ? 'hit its limit' : r.error!, r.limit?.until)
     }
     if (this.store.health[who]) {
       delete this.store.health[who]
@@ -743,7 +776,22 @@ export class Engine {
         options: [{ label: 'Allow and carry on', action: { type: 'retry', who, tools: r.denied } }, { label: 'Keep it read only', action: { type: 'accept' } }],
       })
     }
+    // A reply cut off by a limit is kept above, and the task carries on with someone else.
+    if (r.limit && !ctx.arena) return this.handOn(room, meta, who, { ...task, cut: { who, text: r.text } }, access, ctx, 'hit its limit', r.limit.until)
     return { who, text: r.text, asks: parsed.asks }
+  }
+
+  // Passes a task on after its agent stopped: to the next one in line, or to the person once the
+  // crew has handed it round too often.
+  private handOn(room: string, meta: RoomMeta, who: string, task: Task, access: Access, ctx: Ctx, reason: string, until?: number): Promise<Said | null> | null {
+    // In side by side everyone is already answering, so a failed slot stays empty and says why.
+    ctx.tried = (ctx.tried ?? new Set()).add(who)
+    const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
+    if (next && ctx.main === who) ctx.main = next
+    this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until, reason })
+    if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
+    if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
+    return null
   }
 
   shell(room: string, who: string, command: string, access: Access): Promise<Ran> {
@@ -759,6 +807,9 @@ export class Engine {
         lr.verdict = v
         lr.state = v.decision === 'ask' ? 'asking' : 'running'
         if (v.decision === 'ask') this.hooks.notify(meta.name, `Allow \`${command}\`?`, room)
+        // A flow often runs with nobody at the computer. The question stays open for a while in
+        // case someone is, then counts as a no, so the flow carries on instead of waiting forever.
+        if (v.decision === 'ask' && meta.flow) setTimeout(() => { if (lr.state === 'asking') kill(lr.id) }, FLOW_ASK).unref()
         this.changed(room)
       },
       start: () => { lr.state = 'running'; this.changed(room) },
@@ -801,7 +852,7 @@ export class Engine {
     const hits: Hit[] = []
     for (const m of this.store.list()) {
       if (m.name.toLowerCase().includes(needle)) hits.push({ room: m.id, roomName: m.name, text: m.name })
-      for (const e of this.store.events(m.id)) {
+      for (const e of this.store.peek(m.id)) {
         const text = e.kind === 'you' || e.kind === 'say' ? e.text : e.kind === 'hands' ? `${e.ask} ${e.answer}` : e.kind === 'run' ? e.command : ''
         const at = text.toLowerCase().indexOf(needle)
         if (at < 0) continue

@@ -305,3 +305,51 @@ test('checkpoints: skip heavy files and refuse to rewind on a failed stage', { s
   await assert.rejects(snaps.restore(work, first!.ref), /nothing was changed/)
   assert.equal(readFileSync(join(work, 'app.js'), 'utf8'), 'two')
 })
+
+// A limit partway through hands the task on with what was written so far, and a turn that failed
+// before any text still leaves its commands in the room.
+test('room: a reply cut off by a limit is carried on, and failed turns keep their acts', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-cut-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  for (const name of ['claude', 'codex']) symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, name))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  process.env.FAKE_LOG = join(root, 'calls.jsonl')
+  process.env.FAKE_SCRIPT = 'cut'
+  // The login PATH is cached by whichever test looked first; without this a real codex could run.
+  ;(await import('../electron/system')).resetPath()
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  try {
+    const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+    const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+    await engine.refresh()
+    store.saveSettings({ route: 'order' })
+    const room = engine.create({ crew: ['codex', 'claude'], workspace: root })
+    engine.send(room.id, 'Build and deploy the site', 'workspace')
+    await engine.idle(room.id)
+    const events = store.events(room.id)
+    assert.deepEqual(events.slice(0, 3).map((e) => e.kind), ['you', 'say', 'wall'])
+    const cut = events[1] as Extract<typeof events[number], { kind: 'say' }>
+    assert.match(cut.text, /deploy the$/)
+    const calls = readFileSync(process.env.FAKE_LOG!, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    assert.equal(calls[1].name, 'claude')
+    assert.match(calls[1].input, /hit its usage limit partway[\s\S]*Next I will deploy the/)
+
+    delete store.spent.codex
+    process.env.FAKE_QUIET = '1'
+    const quiet = engine.create({ crew: ['codex', 'claude'], workspace: root })
+    engine.send(quiet.id, 'Build it', 'workspace')
+    await engine.idle(quiet.id)
+    const log = store.events(quiet.id)
+    const acts = log[1] as Extract<typeof log[number], { kind: 'say' }>
+    assert.equal(acts.kind, 'say')
+    assert.equal(acts.text, '')
+    assert.ok(acts.acts.some((a) => a.t === 'cmd' && a.command === 'npm run build'), 'the build Codex ran is on the record')
+    assert.equal(log[2].kind, 'wall')
+    store.flush()
+  } finally {
+    delete process.env.FAKE_SCRIPT
+    delete process.env.FAKE_QUIET
+  }
+})
