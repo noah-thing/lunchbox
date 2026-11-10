@@ -133,6 +133,15 @@ test('plan: one message that repeats its checklist counts each step once', () =>
   assert.deepEqual(steps.map((s) => s.done), [true, true, false])
 })
 
+test('plan: when a message holds a plan and then a report in other words, the report is the plan', () => {
+  const text = ['- [ ] Read the settings layer', '- [ ] Add configuration tests', '- [ ] Run the full suite', '', 'Done.', '',
+    '- [x] Added 33 configuration tests in [test_config.py](/home/me/sysmon/tests/test_config.py)', '- [x] Checked the top_process path', '- [x] Ran the full suite: 41 passed'].join('\n')
+  const steps = plan([{ kind: 'say', who: 'codex', text, acts: [] }].map(ev))
+  assert.deepEqual(steps.map((s) => s.done), [true, true, true])
+  const short = text.split('\n').filter((l) => !l.includes('top_process')).join('\n')
+  assert.deepEqual(plan([{ kind: 'say', who: 'codex', text: short, acts: [] }].map(ev)).map((s) => s.done), [false, false, false], 'a two line report does not wipe the plan')
+})
+
 test('foldChecklists: a list posted again updates the first copy in place', () => {
   const list = (...items: [string, boolean][]) => ({ t: 'list', items: items.map(([text, check]) => ({ text, check })) })
   const para = (text: string) => ({ t: 'p', text })

@@ -1,7 +1,8 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { foldChecklists } from '../../shared/plan'
 
-const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)<>]+[^\s).,;:!?<>'"])/g
+// Code, bold, web links, links to files on disk (shown as the file name) and bare URLs.
+const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\[[^\]\n]+\]\((?!https?:)[^)\n]+\)|https?:\/\/[^\s)<>]+[^\s).,;:!?<>'"])/g
 
 function inline(text: string): ReactNode[] {
   return text.split(INLINE).map((part, i) => {
@@ -9,6 +10,7 @@ function inline(text: string): ReactNode[] {
     if (part.startsWith('`')) return <code key={i}>{part.slice(1, -1)}</code>
     if (part.startsWith('**')) return <b key={i}>{part.slice(2, -2)}</b>
     const link = part.match(/^\[([^\]]+)\]\((.+)\)$/)
+    if (link && !/^https?:/.test(link[2])) return <code key={i} title={link[2]}>{link[1]}</code>
     const href = link ? link[2] : part
     return <a key={i} href={href} target="_blank" rel="noreferrer">{link ? link[1] : part.replace(/^https?:\/\//, '')}</a>
   })

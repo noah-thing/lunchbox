@@ -36,8 +36,7 @@ export function plan(events: Event[], crew: { id: string; short: string }[] = []
     const who = e.kind === 'say' ? e.who : e.to
     const items = checklists(text ?? '')
     if (!items.length) continue
-    const open = items.filter((i) => !i.check).length
-    if (open >= 2 || items.length >= 3) {
+    if (whole(items)) {
       const before = new Map(steps.map((s) => [key(s.text), s]))
       steps = items.map((i) => {
         const prev = before.get(key(i.text))
@@ -57,8 +56,12 @@ export function plan(events: Event[], crew: { id: string; short: string }[] = []
 
 type Item = { text: string; check?: boolean }
 
-// The checklist steps of one message, with repeated copies of a list folded into one, the way the
-// message itself shows them. Blank lines do not end a list; any other line does.
+// A whole plan rather than a few ticks: three steps or more, or at least two still open.
+const whole = (items: Item[]) => items.length >= 3 || items.filter((i) => !i.check).length >= 2
+
+// The checklist of one message: repeated copies of a list fold into one, the way the message shows
+// them, and when a message holds different lists the last whole one is the plan, as across messages.
+// Blank lines do not end a list; any other line does.
 function checklists(text: string): Item[] {
   const lists: Item[][] = []
   let open = false
@@ -70,7 +73,8 @@ function checklists(text: string): Item[] {
       open = true
     } else if (line.trim()) open = false
   }
-  return foldChecklists(lists, (l) => l).flat()
+  const folded = foldChecklists(lists, (l) => l)
+  return folded.filter(whole).pop() ?? folded.pop() ?? []
 }
 
 // Agents post their checklist again as they work, with more steps ticked. Within one message the
