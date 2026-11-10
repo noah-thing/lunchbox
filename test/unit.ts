@@ -625,3 +625,26 @@ test('plan limits: tallies leave a half written last line for the next read', as
   assert.equal(used(tally as never, Date.now() - 3600e3).fresh, 112, 'the finished line is counted once it is whole')
   delete process.env.CLAUDE_CONFIG_DIR
 })
+
+test('plan limits: only whole agent windows, or the model in use, take an agent out', async () => {
+  const { fullWindows, keepReading } = await import('../electron/limits')
+  const later = Date.now() + 3600e3
+  const l = { agent: 'claude', at: Date.now(), windows: [
+    { id: '5h', label: '5 hours', used: 0.4, resets: later },
+    { id: 'week', label: 'Week', used: 0.7, resets: later },
+    { id: 'week-opus', label: 'Week, Opus', used: 1, resets: later },
+  ] }
+  assert.deepEqual(fullWindows(l, ''), [], 'an Opus week does not stop Claude on its default model')
+  assert.deepEqual(fullWindows(l, 'claude-sonnet-4-5'), [])
+  assert.deepEqual(fullWindows(l, 'opus').map((w) => w.id), ['week-opus'])
+  l.windows[0].used = 1
+  assert.deepEqual(fullWindows(l, '').map((w) => w.id), ['5h'])
+
+  // Sizing only needs each window's first and last reading, so nothing else is kept.
+  let list: { at: number; pct: number; units: number; start: number }[] = []
+  const now = Date.now()
+  for (let i = 0; i < 50; i++) list = keepReading(list, { at: now - 3600e3 + i * 60e3, pct: i, units: i, start: i < 25 ? 1 : 2 }, now)
+  assert.deepEqual(list.map((r) => r.pct), [0, 24, 25, 49])
+  list = keepReading(list, { at: now - 40 * 86400e3, pct: 1, units: 1, start: 0 }, now)
+  assert.equal(list.length, 4, 'a month old reading is dropped')
+})
