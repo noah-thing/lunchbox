@@ -111,18 +111,39 @@ export function cmdLine(path: string, args: string[]) {
   return [path.replace(META, '^$1'), ...args.map(arg)].join(' ')
 }
 
-// npm installs CLIs on Windows as .cmd shims, which only cmd.exe can start.
+// npm installs CLIs on Windows as .cmd shims, which only cmd.exe can start. Elsewhere each process
+// leads its own group, so stopping it reaches whatever it started too.
 export function launch(path: string, args: string[], options: SpawnOptions) {
   if (isBatch(path)) {
     return spawn(comspec(), ['/d', '/s', '/c', `"${cmdLine(path, args)}"`], { ...options, windowsVerbatimArguments: true, windowsHide: true })
   }
-  return spawn(path, args, { ...options, windowsHide: true })
+  return spawn(path, args, { detached: !isWin, ...options, windowsHide: true })
 }
+
+type Child = { pid?: number; exitCode?: number | null; kill: (s?: NodeJS.Signals) => boolean }
+
+function signal(child: Child, sig: NodeJS.Signals) {
+  try {
+    process.kill(-child.pid!, sig)
+  } catch {
+    if (child.exitCode === null) try { child.kill(sig) } catch {}
+  }
+}
+
+const stopping = new Set<Child>()
 
 // Stop asks politely, then insists: a process that ignores SIGTERM, or left children behind, is
 // killed after three seconds so nothing keeps running or holds the room's queue.
-export function stop(child: { pid?: number; exitCode?: number | null; kill: (s?: NodeJS.Signals) => boolean }) {
+export function stop(child: Child) {
   if (isWin && child.pid) return void spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true })
-  child.kill('SIGTERM')
-  setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL') }, 3000).unref?.()
+  if (!child.pid) return void child.kill('SIGTERM')
+  signal(child, 'SIGTERM')
+  stopping.add(child)
+  setTimeout(() => { if (stopping.delete(child)) signal(child, 'SIGKILL') }, 3000).unref?.()
+}
+
+// The app is quitting and the three second timers will never fire, so insist now.
+export function finishStops() {
+  for (const child of stopping) signal(child, 'SIGKILL')
+  stopping.clear()
 }

@@ -12,7 +12,7 @@ import { Hands } from './hands'
 import { Remote } from './remote'
 import { Engine } from './room/engine'
 import { answer, kill, type Answer } from './shell'
-import { resetPath } from './system'
+import { finishStops, resetPath } from './system'
 import { Updates } from './updates'
 import { catchErrors, diagnostics, flush, logError, send } from './report'
 import { Snapshots } from './snap'
@@ -374,5 +374,6 @@ app.whenReady().then(async () => {
   toolbox.startAll()
 })
 app.on('before-quit', () => { engine?.stopAll(); limits?.stop(); flows?.stop(); remote?.stop(); toolbox?.stopAll(); store?.flush() })
+app.on('will-quit', finishStops)
 app.on('window-all-closed', () => { if (!mac) app.quit() })
 app.on('activate', () => { if (!win) createWindow() })
