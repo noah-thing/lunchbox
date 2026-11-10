@@ -353,3 +353,61 @@ test('room: a reply cut off by a limit is carried on, and failed turns keep thei
     delete process.env.FAKE_QUIET
   }
 })
+
+// A local model leads and calls a crewmate. The stand-in Ollama answers with an ask line, first
+// plain and then dressed up the way small models write it; both must reach the crewmate.
+test('room: an Ollama main agent calls a crewmate', { skip: process.platform === 'win32' }, async () => {
+  const { createServer } = await import('node:http')
+  const { PROVIDERS } = await import('../electron/agents/http')
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-ollama-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'grok'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  const { resetPath } = await import('../electron/system')
+  resetPath()
+
+  let ask = '@grok: what is trending today?'
+  const bodies: any[] = []
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (b) => (body += b))
+    req.on('end', () => {
+      if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'tiny:1b' }] }))
+      if (req.url === '/api/show') return res.end(JSON.stringify({ model_info: { 'llama.context_length': 8192 } }))
+      const o = JSON.parse(body)
+      bodies.push(o)
+      // Once the crewmate's answer is in the conversation, the model wraps up.
+      const answered = JSON.stringify(o.messages).includes('answering')
+      const text = answered ? 'Grok says it is done.' : `Let me ask.\n${ask}`
+      res.write(JSON.stringify({ message: { content: text } }) + '\n')
+      res.end(JSON.stringify({ done: true, prompt_eval_count: 10, eval_count: 5 }) + '\n')
+    })
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const base = PROVIDERS.ollama.base
+  PROVIDERS.ollama.base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`
+  try {
+    const { Store } = await import('../electron/store')
+    const { Engine } = await import('../electron/room/engine')
+    const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+    const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+    const agents = await engine.refresh()
+    assert.ok(agents.find((a) => a.id === 'ollama')?.ready, 'the stand-in Ollama counts as ready')
+    store.saveSettings({ route: 'order' })
+
+    for (const line of ['@grok: what is trending today?', '- **@grok:** what is trending today?']) {
+      ask = line
+      const room = engine.create({ crew: ['ollama', 'grok'], workspace: root })
+      engine.send(room.id, 'Find out what is trending', 'workspace')
+      await engine.idle(room.id)
+      const hands = store.events(room.id).find((e) => e.kind === 'hands')
+      assert.ok(hands && hands.kind === 'hands' && hands.to === 'grok' && hands.from === 'ollama', `"${line}" reaches grok`)
+      assert.ok(hands.answer, 'and grok answers')
+    }
+    assert.equal(bodies[0].options?.num_ctx, 8192, 'Ollama is asked for a window that fits, capped at the model')
+  } finally {
+    PROVIDERS.ollama.base = base
+    server.close()
+  }
+})
