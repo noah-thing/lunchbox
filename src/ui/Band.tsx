@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react'
 import { still } from './bits'
 import { dots } from './glyphs'
+import { glyph, nextPattern, PATTERNS } from './patterns'
 
-// A band of code characters, like the header of an old terminal program. Characters come in runs
-// (0000 |||| \\\\ ---- llll !!!! ****) that drift slowly into each other, a soft light passes
-// through from left to right, and a label sits in a cut-out in the middle. With `word` set the
-// band spells it out of its own characters, at full brightness, the rest of the band dimmed.
+// A band of code characters drawing one of several slow patterns: ripples, tides, a weave, a vortex,
+// dunes, a moiré, a current, or the crew gathering. Each visit gets a different one. Every cell
+// holds a character, faint where the pattern is quiet, and a label sits in a cut-out in the middle.
+// With `word` set the band spells it out of its own characters, the rest of the band dimmed.
 
+// Mid-label glyphs while a new label settles in.
 const FAMILIES = ['0', '|', '\\', '-', 'l', '!', '*', '^', '~', ':', 'i', '/']
 const LH = 16
 // Brightness is drawn in steps: each row becomes one string per step, so a frame is a few dozen
@@ -17,13 +19,6 @@ const hash = (x: number, y: number) => {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
   return s - Math.floor(s)
 }
-function noise(x: number, y: number) {
-  const xi = Math.floor(x), yi = Math.floor(y)
-  const xf = x - xi, yf = y - yi
-  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf)
-  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1)
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
-}
 const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
 
 export function Band({ rows = 9, label = '', word, busy = false, className = '' }: { rows?: number; label?: string; word?: string; busy?: boolean; className?: string }) {
@@ -32,10 +27,15 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
   props.current = { label, word, busy }
 
   useEffect(() => {
+    let last: string | null = null
+    try { last = localStorage.getItem('lb.band') } catch {}
+    const name = nextPattern(last)
+    try { localStorage.setItem('lb.band', name) } catch {}
+    const pattern = PATTERNS[name]
     const el = canvas.current!
     const ctx = el.getContext('2d')!
     const dpr = Math.min(2, devicePixelRatio || 1)
-    let w = 0, cw = 7.2, raf = 0, last = 0, clock = 0, prev = performance.now()
+    let w = 0, cw = 7.2, raf = 0, drawn = 0, clock = 0, prev = performance.now()
     let ink = '#f0eee8'
     let shownWord = props.current.word, wordAt = performance.now() / 1000 + 0.3, wordK = 0
     let shownLabel = props.current.label, labelAt = 0
@@ -81,7 +81,6 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
       const mid = Math.floor(rows / 2)
       const l0 = Math.floor((cols - text.length) / 2) - 2, l1 = l0 + text.length + 4
 
-      const sweep = ((t * 9) % (cols + 60)) - 30
       const line: string[][] = Array.from({ length: STEPS }, () => [])
       for (let r = 0; r < rows; r++) {
         const y = r * LH + LH / 2
@@ -102,15 +101,9 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
             continue
           }
 
-          const v = noise(c / 22 + t * 0.035, r / 3.2 - t * 0.02) * 0.75 + noise(c / 7 - t * 0.05, r / 1.6) * 0.25
-          const jitter = (hash(c, r + Math.floor(t * 0.7)) - 0.5) * 0.09
-          const f = Math.max(0, Math.min(FAMILIES.length - 1, Math.floor((v + jitter) * FAMILIES.length * 1.15 - 0.6)))
-          const ch = FAMILIES[f]
-
-          const glow = noise(c / 11 - t * 0.08, r / 2.4 + 9)
-          let a = 0.16 + glow * 0.3 + Math.exp(-(((c - sweep) / 7) ** 2)) * 0.32
-          if (hash(c * 3.1, r * 7.7 + Math.floor(t * 1.4)) > 0.985) a += 0.35
-
+          const v = pattern(c, r, t, cols, rows)
+          const ch = glyph(v, c, r)
+          let a = 0.13 + 0.8 * v ** 1.25
           let out = ch
           if (lit) {
             const inWord = lit.has(r * 1000 + c)
@@ -135,8 +128,8 @@ export function Band({ rows = 9, label = '', word, busy = false, className = '' 
       raf = 0
       if (!visible || document.hidden) return
       raf = requestAnimationFrame(loop)
-      if (now - last < 40) return
-      last = now
+      if (now - drawn < 33) return
+      drawn = now
       draw(now)
     }
     const wake = () => { if (!raf && visible && !document.hidden && !still()) { prev = performance.now(); raf = requestAnimationFrame(loop) } }

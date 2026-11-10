@@ -755,3 +755,18 @@ test('flows: a step is judged only by what it added to the room', async () => {
   assert.equal(stepResult(events, 0).ok, true)
   assert.deepEqual(stepResult(events, 2), { text: '', ok: false, stopped: false }, 'step one\'s answer does not count for step two')
 })
+
+test('band patterns: every one stays in range, holds still for a still frame, and a visit picks a new one', async () => {
+  const { PATTERNS, NAMES, glyph, nextPattern } = await import('../src/ui/patterns')
+  assert.equal(NAMES.length, 8)
+  for (const name of NAMES) {
+    const f = PATTERNS[name]
+    for (let c = 0; c < 140; c += 7) for (let r = 0; r < 9; r++) {
+      const v = f(c, r, 12.3, 140, 9)
+      assert.ok(v >= 0 && v <= 1, `${name} ${v}`)
+      assert.equal(f(c, r, 12.3, 140, 9), v, `${name} is the same for the same frame`)
+      assert.ok(glyph(v, c, r).length === 1)
+    }
+  }
+  for (const last of NAMES) for (const roll of [0, 0.5, 0.999]) assert.notEqual(nextPattern(last, roll), last)
+})
