@@ -10,7 +10,7 @@ import { cacheSaving, claudeCost } from '../shared/prices'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
-import { asks, foldChecklists, plan } from '../shared/plan'
+import { asks, foldChecklists, plan, plansBefore, sincePlan } from '../shared/plan'
 import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
 import { merge, section, strip } from '../electron/room/project'
@@ -140,6 +140,27 @@ test('plan: when a message holds a plan and then a report in other words, the re
   assert.deepEqual(steps.map((s) => s.done), [true, true, true])
   const short = text.split('\n').filter((l) => !l.includes('top_process')).join('\n')
   assert.deepEqual(plan([{ kind: 'say', who: 'codex', text: short, acts: [] }].map(ev)).map((s) => s.done), [false, false, false], 'a two line report does not wipe the plan')
+})
+
+test('sincePlan: a later message that repeats the plan shows only what it changes', () => {
+  const list = (t: string) => ['Read the code', 'Build the page', 'Run the tests'].map((s, i) => `- [${t[i]}] ${s}`).join('\n')
+  const events = [
+    { kind: 'say', who: 'codex', text: list('   '), acts: [] },
+    { kind: 'say', who: 'codex', text: 'Read it.\n\n' + list('x  '), acts: [] },
+    { kind: 'say', who: 'codex', text: list('x  '), acts: [] },
+    { kind: 'say', who: 'codex', text: '- [x] Build the page\n- [ ] Deploy it', acts: [] },
+  ].map(ev)
+  const before = plansBefore(events)
+  const blocks = (text: string) => text.split('\n\n').map((t) => t.startsWith('- [')
+    ? { t: 'list', items: t.split('\n').map((l) => ({ text: l.slice(6), check: l[3] === 'x' })) } : { t: 'p', text: t })
+  const show = (i: number) => sincePlan(blocks((events[i] as any).text), (b: any) => b.items, before.get(events[i].id)!)
+  assert.equal((show(0)[0] as any).items.length, 3, 'the first post shows the whole plan')
+  assert.deepEqual((show(1)[1] as any).items.map((i: any) => i.text), ['Read the code'], 'a repeat shows only the newly ticked step')
+  assert.equal(show(2).length, 0, 'a repeat that changes nothing disappears')
+  assert.equal(before.get(events[1].id)![0].done, false, 'earlier snapshots never change')
+  assert.deepEqual(plan(events).map((s) => [s.text, s.done]), [['Read the code', true], ['Build the page', true], ['Run the tests', false], ['Deploy it', false]])
+  const other = sincePlan([{ t: 'list', items: [{ text: 'Buy milk', check: false }, { text: 'Call mum', check: false }] }], (b: any) => b.items, plan(events))
+  assert.equal(other.length, 1, 'a different list stays whole')
 })
 
 test('foldChecklists: a list posted again updates the first copy in place', () => {

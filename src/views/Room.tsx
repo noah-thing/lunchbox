@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
-import { plan } from '../../shared/plan'
+import { plan, plansBefore, type Step } from '../../shared/plan'
 import { searchOf, stepOf, type Search } from '../../shared/steps'
 import { Loader, Mark, Meter, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
@@ -314,6 +314,8 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
 
   const chosen = useMemo(() => new Map(events.flatMap((e) => (e.kind === 'chose' ? [[e.ref, e.label] as const] : []))), [events])
   const picks = useMemo(() => new Map(events.flatMap((e) => (e.kind === 'pick' ? [[e.arena, e.who] as const] : []))), [events])
+  const priors = useMemo(() => plansBefore(events), [events])
+  const current = useMemo(() => plan(events), [events])
   const arenas = new Set<string>()
   const rows: ReactNode[] = []
   let last = ''
@@ -329,7 +331,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     }
     const speaker = e.kind === 'say' ? e.who : e.kind
     if (!settled.current.has(e.id) && [...seen.current.values()].some((t) => replaces(e, t))) settled.current.add(e.id)
-    rows.push(<Settled.Provider key={e.id} value={settled.current.has(e.id)}><Row e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} /></Settled.Provider>)
+    rows.push(<Settled.Provider key={e.id} value={settled.current.has(e.id)}><Row e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} prior={priors.get(e.id)} /></Settled.Provider>)
     last = speaker
   }
   const landed = (t: LiveTurn) => events.some((e) => replaces(e, t))
@@ -340,7 +342,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       continue
     }
     const helper = live!.turns.find((x) => x.from === t.who && x.id !== t.id)
-    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} />)
+    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} prior={current} />)
     last = t.who
   }
   // Only the first command waiting for an answer takes the keyboard, so one key never answers two.
@@ -379,7 +381,7 @@ function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
   return `${why}. ${next}${e.until && e.until > Date.now() ? ` Back at ${clock(e.until)}.` : ''}`
 }
 
-function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boolean; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string> }) {
+function Row({ e, grouped, agents, actions, chosen, prior }: { e: Event; grouped: boolean; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string>; prior?: Step[] }) {
   switch (e.kind) {
     case 'you':
       return (
@@ -399,7 +401,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
       return (
         <Ev id={e.id} mark={<Mark seed={a.mark} size={16} />} grouped={grouped} className="turn">
           {!grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
-          {e.text && <Rich text={e.text} />}
+          {e.text && <Rich text={e.text} prior={prior} />}
           {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}{e.error !== 'Stopped' && <button className="reportbtn" onClick={() => openReport({ context: `${a.short}: ${e.error}` })}>Report this</button>}</div>}
           <Acts acts={e.acts} />
           {e.proof?.map((p) => (
@@ -430,7 +432,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
           </div>
           <div className="exchange">
             <p className="asked">{e.ask}</p>
-            <div className="got">{e.answer ? <Rich text={e.answer} /> : <span className="err">{e.error ?? 'No answer'}</span>}</div>
+            <div className="got">{e.answer ? <Rich text={e.answer} prior={prior} /> : <span className="err">{e.error ?? 'No answer'}</span>}</div>
             <Acts acts={e.acts} />
           </div>
           <Tools e={e} actions={actions} />
@@ -500,7 +502,7 @@ function Row({ e, grouped, agents, actions, chosen }: { e: Event; grouped: boole
   }
 }
 
-function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean; helper?: AgentInfo }) {
+function LiveRow({ t, agents, doing, grouped, helper, prior }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean; helper?: AgentInfo; prior?: Step[] }) {
   const a = agentOf(t.who, agents)
   // A line that hands work to a crewmate ("@grok: ...") becomes its own handoff block when the
   // turn ends, so it is never typed out here first.
@@ -524,7 +526,7 @@ function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: A
         <div className="handhead"><b className="name">{from.short}</b><span>asked</span><Mark seed={a.mark} size={12} /><b className="name">{a.short}</b></div>
         <div className="exchange">
           <p className="asked">{t.ask}</p>
-          {!quiet && <div className="got"><Rich text={shown} caret /></div>}
+          {!quiet && <div className="got"><Rich text={shown} caret prior={prior} /></div>}
           <Acts acts={t.acts} live />
           {quiet && working}
         </div>
@@ -534,7 +536,7 @@ function LiveRow({ t, agents, doing, grouped, helper }: { t: LiveTurn; agents: A
   return (
     <Ev mark={<Mark seed={a.mark} size={16} active />} grouped={grouped} className="turn live">
       {!grouped && <div className="who"><b className="name">{a.short}</b></div>}
-      {!quiet && <Rich text={shown} caret />}
+      {!quiet && <Rich text={shown} caret prior={prior} />}
       <Acts acts={t.acts} live />
       {(quiet || !!t.now) && working}
     </Ev>

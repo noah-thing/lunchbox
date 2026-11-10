@@ -1,5 +1,5 @@
 import { Fragment, memo, type ReactNode } from 'react'
-import { foldChecklists } from '../../shared/plan'
+import { foldChecklists, sincePlan, type Step } from '../../shared/plan'
 
 // Code, bold, web links, links to files on disk (shown as the file name) and bare URLs.
 const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\[[^\]\n]+\]\((?!https?:)[^)\n]+\)|https?:\/\/[^\s)<>]+[^\s).,;:!?<>'"])/g
@@ -22,7 +22,7 @@ type Block =
   | { t: 'code'; lang: string; text: string }
   | { t: 'list'; ordered: boolean; items: { text: string; check?: boolean }[] }
 
-function blocks(src: string): Block[] {
+function blocks(src: string, prior: Pick<Step, 'text' | 'done'>[] = []): Block[] {
   const out: Block[] = []
   const lines = src.replace(/\r/g, '').split('\n')
   let para: string[] = []
@@ -53,7 +53,8 @@ function blocks(src: string): Block[] {
     para.push(line)
   }
   flush()
-  return foldChecklists(out, (b) => (b.t === 'list' ? b.items : undefined))
+  const items = (b: Block) => (b.t === 'list' ? b.items : undefined)
+  return sincePlan(foldChecklists(out, items), items, prior)
 }
 
 // One line of text with code, bold and links, for places that show a single line (the plan).
@@ -61,8 +62,9 @@ export function Inline({ text }: { text: string }) {
   return <>{inline(text)}</>
 }
 
-export const Rich = memo(function Rich({ text, caret = false }: { text: string; caret?: boolean }) {
-  const list = blocks(text)
+// prior: the room's plan before this message, so a repeated checklist shows only what changed.
+export const Rich = memo(function Rich({ text, caret = false, prior }: { text: string; caret?: boolean; prior?: Pick<Step, 'text' | 'done'>[] }) {
+  const list = blocks(text, prior)
   return (
     <div className="rich">
       {list.map((b, i) => {

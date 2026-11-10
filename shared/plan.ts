@@ -30,28 +30,62 @@ function named(text: string, crew: { id: string; short: string }[]) {
 // everything ticked does not take over steps that others finished.
 export function plan(events: Event[], crew: { id: string; short: string }[] = []): Step[] {
   let steps: Step[] = []
-  for (const e of events) {
-    if (e.kind !== 'say' && e.kind !== 'hands') continue
-    const text = e.kind === 'say' ? e.text : e.answer
-    const who = e.kind === 'say' ? e.who : e.to
-    const items = checklists(text ?? '')
-    if (!items.length) continue
-    if (whole(items)) {
-      const before = new Map(steps.map((s) => [key(s.text), s]))
-      steps = items.map((i) => {
-        const prev = before.get(key(i.text))
-        const done = !!i.check || !!prev?.done
-        const owner = named(i.text, crew) ?? (prev?.done ? prev.who : done ? who : prev?.who ?? who)
-        return { text: i.text, done, who: owner }
-      })
-      continue
-    }
-    for (const i of items) {
-      const hit = steps.find((s) => same(s.text, i.text))
-      if (hit && i.check) { hit.done = true; hit.who = who }
-    }
-  }
+  for (const e of events) steps = advance(steps, e, crew)
   return steps
+}
+
+// The plan as it stood just before each event, by event id, so a message can show only what it
+// changed instead of the whole list again.
+export function plansBefore(events: Event[]): Map<string, Step[]> {
+  const out = new Map<string, Step[]>()
+  let steps: Step[] = []
+  for (const e of events) {
+    out.set(e.id, steps)
+    steps = advance(steps, e, [])
+  }
+  return out
+}
+
+// One event's effect on the plan. Returns a new list and never changes the one it was given.
+function advance(steps: Step[], e: Event, crew: { id: string; short: string }[]): Step[] {
+  if (e.kind !== 'say' && e.kind !== 'hands') return steps
+  const who = e.kind === 'say' ? e.who : e.to
+  const items = checklists((e.kind === 'say' ? e.text : e.answer) ?? '')
+  if (!items.length) return steps
+  if (whole(items)) {
+    const before = new Map(steps.map((s) => [key(s.text), s]))
+    return items.map((i) => {
+      const prev = before.get(key(i.text))
+      const done = !!i.check || !!prev?.done
+      const owner = named(i.text, crew) ?? (prev?.done ? prev.who : done ? who : prev?.who ?? who)
+      return { text: i.text, done, who: owner }
+    })
+  }
+  // A few lines: ticks close their steps, and a new open step joins the end of the plan.
+  const next = steps.map((s) => ({ ...s }))
+  for (const i of items) {
+    const hit = next.find((s) => same(s.text, i.text))
+    if (hit && i.check) { hit.done = true; hit.who = who }
+    if (!hit && !i.check && next.length) next.push({ text: i.text, done: false, who })
+  }
+  return next
+}
+
+// A checklist in a later message that repeats the room's plan shows only what it changes: steps
+// it ticks, and steps that are new. A repeat that changes nothing disappears; a different list
+// is left alone.
+export function sincePlan<B>(blocks: B[], itemsOf: (b: B) => Item[] | undefined, prior: { text: string; done: boolean }[]): B[] {
+  if (!prior.length) return blocks
+  return blocks.filter((b) => {
+    const items = itemsOf(b)
+    if (!items?.length || items.some((i) => i.check === undefined)) return true
+    const known = items.map((i) => prior.find((s) => same(s.text, i.text)))
+    const matched = known.filter(Boolean).length
+    if (matched < items.length && !(matched >= 2 && matched * 2 >= prior.length)) return true
+    const changed = items.filter((i, n) => !known[n] || (i.check && !known[n]!.done))
+    items.splice(0, items.length, ...changed)
+    return changed.length > 0
+  })
 }
 
 type Item = { text: string; check?: boolean }
