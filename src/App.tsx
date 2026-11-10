@@ -112,14 +112,15 @@ export function App() {
   const searchButton = useRef<HTMLButtonElement>(null)
   const listed = useRef(new Set<string>())
   const first = useRef(true)
+  // Archived rooms still exist, so archiving the open room leaves it open; only a deleted room sends you home.
   useEffect(() => {
     if (!loaded) return
-    const ids = new Set(rooms.map((r) => r.id))
+    const ids = new Set(all.map((r) => r.id))
     const gone = view.name === 'room' && !ids.has(view.id) && (first.current || listed.current.has(view.id))
     listed.current = ids
     first.current = false
     if (gone) setView({ name: 'new' })
-  }, [loaded, rooms, view])
+  }, [loaded, all, view])
 
   const setTheme = (t: 'dark' | 'light', e?: MouseEvent) => { if (t !== theme) reveal(() => setThemeState(t), e && { x: e.clientX, y: e.clientY }) }
   const setLook = (l: Look) => flow(() => setLookState(l))
