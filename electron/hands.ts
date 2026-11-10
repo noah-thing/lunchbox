@@ -28,16 +28,25 @@ export class Hands {
     this.server = createServer((req, res) => { this.handle(req, res).catch(() => this.send(res, 500, { error: 'internal' })) })
     this.server.requestTimeout = 0
     this.server.headersTimeout = 0
-    await new Promise<void>((ok) => this.server!.listen(0, '127.0.0.1', ok))
-    this.port = (this.server.address() as AddressInfo).port
+    const server = this.server
+    try {
+      await new Promise<void>((ok, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', ok) })
+    } catch (e) {
+      this.server = null
+      throw e
+    }
+    this.port = (server.address() as AddressInfo).port
   }
 
   stop() {
     this.server?.close()
     this.server = null
+    this.port = 0
   }
 
   grant(tools: Tool[]) {
+    // Without a server the agents run without the room's tools rather than call a dead address.
+    if (!this.port) return { url: '', revoke: () => {} }
     const token = randomBytes(18).toString('base64url')
     this.grants.set(token, tools)
     return { url: `http://127.0.0.1:${this.port}/mcp/${token}`, revoke: () => this.grants.delete(token) }

@@ -114,6 +114,8 @@ export class Toolbox {
       }
     })
     createInterface({ input: child.stderr! }).on('line', (l) => { server.log = [...server.log.slice(-20), l] })
+    // A server that crashed closes its input; the next write would be an uncaught EPIPE.
+    child.stdin?.on('error', () => {})
     child.on('exit', (code) => {
       if (this.servers.get(id) !== server) return
       this.servers.delete(id)

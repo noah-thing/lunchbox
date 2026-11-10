@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
 import { capture, env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
@@ -56,6 +56,8 @@ const prompt = (i: Input) => (i.fresh === false ? i.prompt : `${i.system}\n\n${i
 
 // Calls to a crewmate can take minutes, far past the CLIs' default tool timeouts.
 const HANDS_TIMEOUT = 15 * 60
+// Long enough for any real turn; past it the CLI is stuck, and the room's queue with it.
+const TURN_LIMIT = 60 * 60 * 1000
 
 // The hands URL carries a per-turn token, so it goes in a private file rather than the command
 // line, where any other program on the computer could read it.
@@ -219,8 +221,11 @@ const all = () => [...CATALOG, ...custom]
 export const def = (id: string) => all().find((d) => d.id === id)
 
 async function locate(bin: string) {
-  if (isAbsolute(bin)) return existsSync(bin) ? bin : ''
-  return /^[\w.@+-]+$/.test(bin) ? which(bin) : ''
+  const path = bin.replace(/^~(?=[\\/]|$)/, homedir())
+  if (isAbsolute(path)) return existsSync(path) ? path : ''
+  // The app's own working folder means nothing to the person, so ./tools/agent starts from home.
+  if (/[\\/]/.test(path)) return existsSync(resolve(homedir(), path)) ? resolve(homedir(), path) : ''
+  return /^[\w.@+-]+$/.test(path) ? which(path) : ''
 }
 
 const paths = new Map<string, string>()
@@ -230,9 +235,10 @@ export async function detect(keys: Record<string, string>, models: Record<string
     all().map(async (d): Promise<AgentInfo> => {
       const base = { ...d, spawn: undefined, key: undefined, model: models[d.id], note: health[d.id] }
       if (d.via === 'cli') {
-        const path = await locate(d.bin!)
+        // One broken install shows as not found rather than hiding every other agent with it.
+        const path = await locate(d.bin!).catch(() => '')
         if (path) paths.set(d.id, path)
-        return { ...base, found: !!path, ready: !!path, version: path ? await version(path) : undefined }
+        return { ...base, found: !!path, ready: !!path, version: path ? await version(path).catch(() => '') : undefined }
       }
       if (d.via === 'local') {
         const [list, setup] = await Promise.all([listModels(providerOf(d), '').catch(() => null), localSetup(d.id, d.bin!)])
@@ -304,25 +310,43 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
   if (d.maker === 'Your connector' && d.via === 'cli' && (input.access === 'plan' || input.access === 'ask')) {
     return { done: Promise.resolve(failed(`${d.name} runs with full permissions, so it does not run in ${input.access === 'plan' ? 'Plan' : 'Ask'} mode. Switch the room to Auto to use it.`)), stop() {} }
   }
+  const { name } = d
   let child: ReturnType<typeof launch> | null = null
   let stopped = false
+  let timedOut = false
   const done = (async (): Promise<Result> => {
     const t0 = Date.now()
     const path = paths.get(id) || (await locate(d.bin!))
     if (!path) return failed(`${d.name} is not installed on this computer`)
     const file = join(tmpdir(), `lunchbox-${process.pid}-${t0}-${Math.random().toString(36).slice(2, 8)}.txt`)
     const spec = d.spawn!(input, file)
-    if (spec.file) writeFileSync(file, spec.file, { mode: 0o600 })
-    for (const x of spec.extra ?? []) writeFileSync(x.path, x.text, { mode: 0o600 })
-    // Stop pressed while the tool was still being found: it never starts.
-    if (stopped) return failed('Stopped')
-    child = launch(path, spec.args, { cwd: input.cwd, env: { ...(await env()), ...spec.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    // The prompt and the hands token are in these files, so they go however the turn ends.
+    try {
+      if (spec.file) writeFileSync(file, spec.file, { mode: 0o600 })
+      for (const x of spec.extra ?? []) writeFileSync(x.path, x.text, { mode: 0o600 })
+      // Stop pressed while the tool was still being found: it never starts.
+      if (stopped) return failed('Stopped')
+      return await cli(path, spec, t0)
+    } finally {
+      if (spec.file) rmSync(file, { force: true })
+      for (const x of spec.extra ?? []) rmSync(x.path, { force: true })
+    }
+  })()
+  async function cli(path: string, spec: Spec, t0: number): Promise<Result> {
+    let proc: ReturnType<typeof launch>
+    try {
+      proc = child = launch(path, spec.args, { cwd: input.cwd, env: { ...(await env()), ...spec.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    } catch (err) {
+      return failed(`${name} could not start: ${(err as Error).message}`)
+    }
     let stderr = ''
-    child.stderr?.on('data', (b: Buffer) => { if (stderr.length < 65536) stderr += b.toString() })
-    child.stdin?.on('error', () => {})
-    child.stdin?.end(spec.stdin ?? '')
-    const lines = createInterface({ input: child.stdout! })
+    let over = false
+    proc.stderr?.on('data', (b: Buffer) => { if (stderr.length < 65536) stderr += b.toString() })
+    proc.stdin?.on('error', () => {})
+    proc.stdin?.end(spec.stdin ?? '')
+    const lines = createInterface({ input: proc.stdout! })
     lines.on('line', (raw) => {
+      if (over) return
       if (spec.parser.raw) {
         const u = spec.parser.raw(raw)
         if (u) onUpdate(u)
@@ -334,21 +358,26 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
         if (u) onUpdate(u)
       } catch {}
     })
+    const cap = setTimeout(() => { timedOut = true; stop(proc) }, TURN_LIMIT)
     const code = await new Promise<number | null>((ok) => {
-      child!.on('close', ok)
-      child!.on('error', (e) => { stderr += String(e); ok(-1) })
+      proc.on('close', ok)
+      // A background process the CLI started can hold its output open long after the CLI is done.
+      proc.on('exit', (c) => setTimeout(() => ok(c), 2000))
+      proc.on('error', (e) => { stderr += String(e); ok(-1) })
     })
-    if (spec.file) rmSync(file, { force: true })
-    for (const x of spec.extra ?? []) rmSync(x.path, { force: true })
+    over = true
+    clearTimeout(cap)
     const turn = spec.parser.turn
     // The CLI's final answer is only its last message. When the turn wrote before that too, keep it all.
     const text = (turn.final && turn.text.trim().endsWith(turn.final.trim()) ? turn.text : turn.final || turn.text).trim()
     let error = turn.error
-    if (stopped) error = 'Stopped'
-    else if (code !== 0 && !error && !text) error = reason(stderr) || `${d.name} exited with code ${code}`
+    if (timedOut) error = `${name} was still working after ${TURN_LIMIT / 60000} minutes, so Lunchbox stopped it`
+    else if (stopped) error = 'Stopped'
+    // A crash partway through keeps what was written, but it is not a finished answer.
+    else if (code !== 0 && !error) error = reason(stderr) || `${name} exited with code ${code}`
     const limit = (error && limitOf(error)) || (code !== 0 && !text ? limitOf(stderr) : null)
     return { text, acts: turn.acts, usage: turn.usage, session: turn.session, error, limit: limit ?? undefined, denied: turn.denied, ms: Date.now() - t0 }
-  })()
+  }
   return { done, stop: () => { stopped = true; if (child) stop(child) } }
 }
 

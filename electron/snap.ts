@@ -25,7 +25,15 @@ export class Snapshots {
   constructor(private dir: string) {}
 
   async available() {
-    if (this.git === undefined) this.git = (await which('git')) || null
+    if (this.git === undefined) {
+      const git = await which('git')
+      const runs = (file: string, args: string[]) =>
+        new Promise<boolean>((done) => { try { execFile(file, args, { timeout: 10000, windowsHide: true }, (err) => done(!err)) } catch { done(false) } })
+      // Apple's /usr/bin/git is a stub until the developer tools are installed, and running it
+      // opens their install dialog. xcode-select -p answers quietly whether they are there.
+      const stub = process.platform === 'darwin' && git === '/usr/bin/git'
+      this.git = git && (!stub || (await runs('/usr/bin/xcode-select', ['-p']))) && (await runs(git, ['--version'])) ? git : null
+    }
     return !!this.git
   }
 
