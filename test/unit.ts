@@ -10,7 +10,7 @@ import { cacheSaving, claudeCost } from '../shared/prices'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
-import { asks, plan } from '../shared/plan'
+import { asks, foldChecklists, plan } from '../shared/plan'
 import { classify, rating, route, score } from '../shared/route'
 import { fill, nextRun } from '../shared/flow'
 import { merge, section, strip } from '../electron/room/project'
@@ -110,6 +110,51 @@ test('plan: newest checklist wins and later ticks close steps', () => {
   const steps = plan(events)
   assert.deepEqual(steps.map((s) => s.done), [true, false, false])
   assert.equal(steps[0].who, 'grok')
+})
+
+test('plan: a full list posted again keeps who finished each step', () => {
+  const list = (ticks: string) => ['Read the code', 'Build the collector', 'Tests for the collector (Codex)', 'Launch it']
+    .map((s, i) => `- [${ticks[i] === 'x' ? 'x' : ' '}] ${s}`).join('\n')
+  const crew = [{ id: 'claude', short: 'Claude' }, { id: 'codex', short: 'Codex' }, { id: 'grok', short: 'Grok' }]
+  const events = [
+    { kind: 'say', who: 'claude', text: list('    '), acts: [] },
+    { kind: 'hands', from: 'claude', to: 'grok', ask: 'x', answer: '- [x] Read the code', acts: [] },
+    { kind: 'say', who: 'claude', text: list('xxxx'), acts: [] },
+  ].map(ev)
+  const steps = plan(events, crew)
+  assert.deepEqual(steps.map((s) => s.done), [true, true, true, true])
+  assert.deepEqual(steps.map((s) => s.who), ['grok', 'claude', 'codex', 'claude'])
+  assert.deepEqual(plan(events).map((s) => s.who), ['grok', 'claude', 'claude', 'claude'], 'without a crew only ticks count')
+})
+
+test('plan: one message that repeats its checklist counts each step once', () => {
+  const list = (t: string) => ['Read', 'Build', 'Test'].map((s, i) => `- [${t[i]}] ${s} the thing`).join('\n')
+  const steps = plan([{ kind: 'say', who: 'codex', text: [list('   '), 'Working on it.', list('x  '), list('xx ')].join('\n\n'), acts: [] }].map(ev))
+  assert.deepEqual(steps.map((s) => s.done), [true, true, false])
+})
+
+test('foldChecklists: a list posted again updates the first copy in place', () => {
+  const list = (...items: [string, boolean][]) => ({ t: 'list', items: items.map(([text, check]) => ({ text, check })) })
+  const para = (text: string) => ({ t: 'p', text })
+  const fold = (blocks: any[]) => foldChecklists(blocks, (b: any) => b.items)
+  const first = list(['Read the data layer', false], ['Add tests', false], ['Run the suite', false])
+  const out = fold([first, para('pytest is unavailable'), list(['Read the data layer', true], ['Add tests', false], ['Run the suite', false])])
+  assert.equal(out.length, 2, 'the repeat is dropped')
+  assert.equal(out[0], first, 'the list stays where it first appeared')
+  assert.deepEqual(first.items.map((i) => i.check), [true, false, false])
+
+  const tick = fold([list(['Write the hero section', false], ['Deploy', false]), list(['Write the hero', true])])
+  assert.equal(tick.length, 1, 'a short tick line folds into the list')
+  assert.equal((tick[0] as any).items[0].check, true)
+
+  const grown = fold([list(['A step one', false], ['B step two', false], ['C step three', false]), list(['A step one', true], ['B step two', true], ['C step three', false], ['D step four', false])])
+  assert.equal(grown.length, 1)
+  assert.deepEqual((grown[0] as any).items.map((i: any) => i.text), ['A step one', 'B step two', 'C step three', 'D step four'])
+
+  const other = fold([list(['Buy milk', false], ['Call mum', false]), list(['Deploy the site', false], ['Post on X', false])])
+  assert.equal(other.length, 2, 'a different checklist stays')
+  const plain = fold([{ t: 'list', items: [{ text: 'a note' }, { text: 'another' }] }, { t: 'list', items: [{ text: 'a note' }, { text: 'another' }] }])
+  assert.equal(plain.length, 2, 'ordinary bullet lists are never folded')
 })
 
 test('asks: only crew handles at line start count', () => {

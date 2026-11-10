@@ -5,7 +5,7 @@ import { searchOf, stepOf, type Search } from '../../shared/steps'
 import { Loader, Mark, Meter, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
-import { Rich } from '../ui/Rich'
+import { Inline, Rich } from '../ui/Rich'
 import { roomCard } from '../ui/roomcard'
 import { openReport } from '../lib/report'
 import { IconBranches, IconChevron, IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
@@ -955,7 +955,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
 
   const state = live.waiting ? 'waiting' : live.active ? 'working' : 'idle'
   const caption = live.waiting ? 'Waiting for you' : live.doing || (events.length ? 'Quiet' : 'Ready when you are')
-  const steps = useMemo(() => plan(events), [events])
+  const steps = useMemo(() => plan(events, crew), [events, meta.crew.join(), agents])
   const done = steps.filter((s) => s.done).length
 
   return (
@@ -989,7 +989,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
           <h2>Progress<small>{done} of {steps.length}</small></h2>
           <div className="stepbar">{steps.map((s, i) => <i key={i} className={s.done ? 'done' : ''} />)}</div>
           {steps.map((s, i) => (
-            <div key={i} className={`task${s.done ? ' done' : ''}`}><i /><span className="grow">{s.text}</span><small>{agentOf(s.who, agents).short}</small></div>
+            <div key={i} className={`task${s.done ? ' done' : ''}`}><i /><span className="grow"><Inline text={s.text} /></span><small>{agentOf(s.who, agents).short}</small></div>
           ))}
         </section>
       )}

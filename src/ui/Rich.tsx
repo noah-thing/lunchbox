@@ -1,4 +1,5 @@
 import { Fragment, memo, type ReactNode } from 'react'
+import { foldChecklists } from '../../shared/plan'
 
 const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s)<>]+[^\s).,;:!?<>'"])/g
 
@@ -50,7 +51,12 @@ function blocks(src: string): Block[] {
     para.push(line)
   }
   flush()
-  return out
+  return foldChecklists(out, (b) => (b.t === 'list' ? b.items : undefined))
+}
+
+// One line of text with code, bold and links, for places that show a single line (the plan).
+export function Inline({ text }: { text: string }) {
+  return <>{inline(text)}</>
 }
 
 export const Rich = memo(function Rich({ text, caret = false }: { text: string; caret?: boolean }) {

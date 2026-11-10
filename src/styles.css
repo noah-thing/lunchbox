@@ -342,8 +342,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .stepbar i{height:3px;border-radius:1px;background:var(--cell);transition:background-color 400ms var(--out)}
 .stepbar i.done{background:var(--ink)}
 .stepbar i.you{background:var(--warn)}
-.task{display:flex;align-items:center;gap:10px;height:28px;font-size:12.5px;color:var(--dim)}
-.task>i{width:8px;height:8px;border-radius:2px;box-shadow:inset 0 0 0 1.25px var(--faint);flex:none;transition:background-color 300ms var(--out),box-shadow 300ms var(--out)}
+.task{display:flex;align-items:flex-start;gap:10px;min-height:28px;padding:5px 0;font-size:12.5px;line-height:18px;color:var(--dim)}
+.task code{font:11.5px var(--mono);padding:0 4px;border-radius:3px;background:var(--hover)}
+.task>i{margin-top:5px;width:8px;height:8px;border-radius:2px;box-shadow:inset 0 0 0 1.25px var(--faint);flex:none;transition:background-color 300ms var(--out),box-shadow 300ms var(--out)}
 .task.done>i{background:var(--dim);box-shadow:none}
 .task.done .grow{color:var(--faint)}
 .task.you{color:var(--ink)}
