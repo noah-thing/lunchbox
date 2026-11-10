@@ -248,6 +248,13 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .composer textarea{padding:14px 16px 4px;font-size:14px;line-height:1.5;min-height:48px}
 .composer textarea::placeholder{color:var(--faint)}
 .composer.shell textarea{font:13px/1.55 var(--mono)}
+/* In a narrow column the bar keeps its icons and drops the words beside them. */
+.composer{container-type:inline-size}
+@container (max-width:480px){
+  .cbar .pilltext{display:none}
+  .cbar .pill.split{font-size:0;gap:0}
+  .cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
 .cbar{display:flex;align-items:center;gap:4px;padding:8px}
 .shellnote{font:11px var(--mono);color:var(--faint);margin-left:8px}
 .send{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}
@@ -473,9 +480,11 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .plist small{margin-left:auto;flex:none;max-width:40%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:11px var(--mono);color:var(--faint)}
 .plist .empty{padding:20px 12px;color:var(--faint);text-align:center}
 .toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:var(--ink);color:var(--ground);font-size:12.5px;animation:toast 2.6s var(--out) both}
-.toast.long{animation:land 260ms var(--out) both;display:flex;align-items:center;max-width:min(620px,calc(100vw - 48px))}
+.toast.long{animation:landmid 260ms var(--out) both;display:flex;align-items:center;max-width:min(620px,calc(100vw - 48px))}
 .toast .reportbtn{color:var(--ground);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ground) 30%,transparent);flex:none}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,6px)}8%,88%{opacity:1;transform:translate(-50%,0)}100%{opacity:0}}
+/* land for things centred with translateX(-50%), which a plain translateY would drop. */
+@keyframes landmid{from{opacity:0;transform:translate(-50%,6px)}}
 
 /* Live rooms */
 .booting,.room.loading{height:100%;display:grid;place-items:center;color:var(--faint)}
@@ -800,7 +809,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .kfocus::before{content:"";position:absolute;left:-14px;top:2px;bottom:2px;width:2px;border-radius:1px;background:var(--ink);opacity:.5}
 
 /* Pushed messages and updates: a banner over the page, toasts in the corner, a card for big news. */
-.nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:land 320ms var(--out) both}
+.nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:landmid 320ms var(--out) both}
 .nbanner b{font-weight:500}
 .nbanner span span{color:var(--dim)}
 .ntoasts{position:fixed;top:14px;right:14px;z-index:46;display:flex;flex-direction:column;gap:8px;width:320px}
@@ -859,8 +868,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 
 /* The room title takes clicks and a caret even though the header drags the window. */
 .roomhead h1,.roomhead input{-webkit-app-region:no-drag}
-/* Windows draws its window buttons over the top right; keep header buttons clear. */
-html[data-platform=win32] .roomhead,html[data-platform=win32] .panelhead,
+/* Windows draws its window buttons over the top right; keep the right-most header clear. With the
+   room panel open that is the panel's header, and the room header keeps its own padding. */
+html[data-platform=win32] .room:not(.withdetails) .roomhead,html[data-platform=win32] .panelhead,
 html[data-platform=win32] .bbar{padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)}
 html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 /* Made by, at the foot of Settings. */

@@ -153,7 +153,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           )}
         </Menu>
         {setArena && crew.length > 1 && !shell && (
-          <button className={`pill${arena ? ' open' : ''}`} onClick={() => setArena(!arena)} aria-pressed={arena} title="Everyone answers on their own, you keep the best">
+          <button className={`pill split${arena ? ' open' : ''}`} onClick={() => setArena(!arena)} aria-pressed={arena} title="Everyone answers on their own, you keep the best">
             <IconSplit />Side by side
           </button>
         )}
