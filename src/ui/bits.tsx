@@ -26,12 +26,12 @@ const ALIAS: Record<string, string> = { local: 'ollama' }
 
 export function Mark({ seed, size = 16, blink = 0, active = false }: { seed: string; size?: number; blink?: number; active?: boolean }) {
   const brand = BRANDS[ALIAS[seed] ?? seed]
+  const on = useMemo(() => cells(seed), [seed])
   if (brand) return (
     <svg key={blink} className={`mark brand${blink ? ' blink' : ''}${active ? ' active' : ''}`} width={size} height={size} viewBox="0 0 24 24" fillRule="evenodd" aria-hidden="true">
       {brand.map((d, i) => <path key={i} d={d} />)}
     </svg>
   )
-  const on = useMemo(() => cells(seed), [seed])
   const grid = size >= 20
   return (
     <svg key={blink} className={`mark${blink ? ' blink' : ''}${active ? ' active' : ''}`} width={size} height={size} viewBox="0 0 7 7" aria-hidden="true">
@@ -143,9 +143,11 @@ export function Thumb({ path }: { path: string }) {
   const [src, setSrc] = useState<string | null>(null)
   const image = /\.(png|jpe?g|gif|webp)$/i.test(path)
   useEffect(() => {
+    setSrc(null)
     if (!image || !window.lb) return
     let alive = true
-    window.lb.call('file:image', path).then((url: string | null) => { if (alive && url) setSrc(url) })
+    // A file that cannot be read keeps the extension tile.
+    window.lb.call('file:image', path).then((url: string | null) => { if (alive && url) setSrc(url) }, () => {})
     return () => { alive = false }
   }, [path, image])
   return src ? <img className="thumb" src={src} alt="" /> : <i className="thumb">{path.split('.').pop()?.slice(0, 4) || 'file'}</i>

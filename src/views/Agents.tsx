@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { AgentInfo, Pull } from '../../shared/types'
 import { Loader, Mark, Meter } from '../ui/bits'
-import { clock, desk, money, reload, tokens, unavailable, useApp } from '../lib/desk'
+import { clock, desk, money, reason, reload, tokens, unavailable, useApp } from '../lib/desk'
 import { ConnectorSheet, removeConnector } from './Connect'
 import type { Connector } from '../../shared/types'
 
@@ -18,7 +18,10 @@ export function Agents({ say }: { say: (t: string) => void }) {
   const [sheet, setSheet] = useState<Connector | 'new' | null>(null)
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const refresh = async () => { setBusy(true); await reload.agents(); setBusy(false); say('Checked again') }
+  const refresh = async () => {
+    setBusy(true)
+    try { await reload.agents(); say('Checked again') } catch (e) { say(reason(e)) } finally { setBusy(false) }
+  }
   let n = 0
   return (
     <div className="page">
@@ -138,11 +141,12 @@ function KeyField({ a, say }: { a: AgentInfo; say: (t: string) => void }) {
   useEffect(() => { desk.call('keys').then((k: Record<string, string>) => setMasked(k?.[p.key] ?? '')) }, [p.key, a.found])
   const save = async (key: string) => {
     setSaving(true)
-    await desk.call('keys:set', p.key, key)
-    await reload.agents()
-    setSaving(false)
-    setValue('')
-    say(key ? 'Key saved' : 'Key removed')
+    try {
+      await desk.call('keys:set', p.key, key)
+      setValue('')
+      say(key ? 'Key saved' : 'Key removed')
+      await reload.agents()
+    } catch (e) { say(reason(e)) } finally { setSaving(false) }
   }
   return (
     <label className="field">
@@ -211,9 +215,10 @@ export function LocalSetupBox({ a, say }: { a: AgentInfo; say: (t: string) => vo
   const mine = all.filter((p) => p.agent === a.id)
   const begin = async () => {
     setStarting(true)
-    const r = await desk.call('local:start', a.id)
-    setStarting(false)
-    say(r.ok ? `${a.name} is running` : r.error)
+    try {
+      const r = await desk.call('local:start', a.id)
+      say(r?.ok ? `${a.name} is running` : r?.error || `${a.name} did not start. Try starting it yourself, then press Check again.`)
+    } catch (e) { say(reason(e)) } finally { setStarting(false) }
   }
   const get = (model: string) => { if (model.trim()) desk.call('local:pull', model.trim()) }
   const open = () => window.open(s.download, '_blank')

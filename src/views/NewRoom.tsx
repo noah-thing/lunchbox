@@ -14,7 +14,7 @@ const FEATURED = ['feature', 'deep', 'qa', 'launch']
 // Below the composer: what is going on and where to pick up. Hidden on a fresh install so the
 // first screen stays a single question.
 function Glance({ go }: { go: (v: View) => void }) {
-  const rooms = useApp((s) => s.rooms)
+  const rooms = useApp((s) => s.rooms).filter((r) => !r.archived)
   const flows = useApp((s) => s.flows)
   const running = useApp((s) => s.running)
   const agents = useApp((s) => s.agents)
@@ -72,7 +72,7 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
   const [chosen, setChosen] = useState<string[] | null>(() => (skill && skill.crew.every((c) => usable.includes(c)) ? skill.crew : null))
   const crew = chosen ?? defaultCrew(usable, settings.defaultCrew)
   const [pack, setPack] = useState<string | undefined>(skill?.pack ?? startPack)
-  const [draft, setDraft] = useState<{ text: string; n: number } | undefined>(() => (skill ? { text: skillText(skill), n: 1 } : text ? { text, n: 1 } : undefined))
+  const [draft, setDraft] = useState<{ text: string; files?: string[]; n: number } | undefined>(() => (skill ? { text: skillText(skill), n: 1 } : text ? { text, n: 1 } : undefined))
   const useSkill = (s: Skill) => {
     if (s.crew.every((c) => usable.includes(c))) setChosen(s.crew)
     if (s.pack) setPack(s.pack)
@@ -95,7 +95,7 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
       onCreated(meta.id)
     } catch (e) {
       setStarting(false)
-      setDraft({ text, n: Date.now() })
+      setDraft({ text, files, n: Date.now() })
       say(reason(e))
     }
   }
