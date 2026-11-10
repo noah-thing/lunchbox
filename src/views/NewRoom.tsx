@@ -108,7 +108,7 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
   return (
     <div className={`newroom${starting ? ' starting' : ''}`}>
       <div className="newbody">
-        <Band rows={9} label={label} busy={starting} />
+        <Band rows={9} label={label} busy={starting} patterned />
         <h1 className="rise" style={{ '--i': 1 } as CSSProperties}>What are we working on?</h1>
         <div className="rise" style={{ '--i': 2 } as CSSProperties}>
           {crew.length ? (
