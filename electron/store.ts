@@ -1,5 +1,6 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { codexSaving, costSaving } from '../shared/prices'
 import { score } from '../shared/route'
 import type { Category, Event, Flow, Ledger, Ratings, RoomMeta, Settings, Skill, Spent, Usage } from '../shared/types'
 
@@ -294,7 +295,9 @@ export class Store {
       return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, gross: 0, kept: 0 }
     })
     const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
-    for (const row of this.ledger) {
+    for (const raw of this.ledger) {
+      // Rows from before Lunchbox priced a saving get one from what the agent reported.
+      const row = raw.usage.gross === undefined ? { ...raw, usage: { ...raw.usage, gross: (raw.agent === 'codex' ? codexSaving('', raw.usage.cached) : costSaving(raw.agent, raw.usage)) ?? undefined } } : raw
       if (row.at >= week) {
         addUsage((out.week[row.agent] ??= zero()), row.usage)
         addUsage((out.rooms[row.room] ??= zero()), row.usage)

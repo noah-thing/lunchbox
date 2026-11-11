@@ -67,11 +67,20 @@ export function App() {
   const [look, setLookState] = useState<Look>(() => (new URLSearchParams(location.search).get('look') as Look | null) ?? saved('look', 'lunchbox'))
   const [ready, setReady] = useState<boolean>(saved('ready', false))
   const [arriving, setArriving] = useState(false)
-  // Every launch starts at home, whatever page was open last time.
-  const [view, setView] = useState<View>({ name: 'new' })
+  // Every launch starts at home, except right after an update, which reopens the page it left.
+  const [view, setView] = useState<View>(() => {
+    const back = saved<View | null>('resume', null)
+    try { localStorage.removeItem('lb.resume') } catch {}
+    return back ?? { name: 'new' }
+  })
   const [palette, setPalette] = useState(false)
   const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
   const [report, setReport] = useState<ReportOpen | null>(null)
+  useEffect(() => {
+    const leaving = () => keep('resume', view)
+    addEventListener('lb:restarting', leaving)
+    return () => removeEventListener('lb:restarting', leaving)
+  })
   // Deep links from inside components, such as See all agents in the crew menu.
   useEffect(() => {
     const to = (e: Event) => go((e as CustomEvent<View>).detail)

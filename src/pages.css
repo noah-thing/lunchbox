@@ -66,6 +66,8 @@ input[type=number].select{width:64px}
 .poolrow .pnote{color:var(--faint);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:820px){.stats{grid-template-columns:repeat(2,1fr)}.stat:nth-child(3){border-left:0}.stat:nth-child(n+3){border-top:1px solid var(--line)}}
 .group h2 .seg{margin-left:auto}
+/* In a narrow window the filters drop below the title instead of squeezing it into scraps. */
+.group h2{flex-wrap:wrap;row-gap:10px}
 .group h2 .quiet{font-size:12px;font-weight:400}
 .days{display:flex;gap:6px;align-items:flex-end;padding:20px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line)}
 .day{flex:1;display:flex;flex-direction:column;align-items:center;gap:8px}
@@ -137,7 +139,7 @@ input[type=number].select{width:64px}
 [data-look=neyra] .libbar{background:var(--ground)}
 [data-look=neyra] .libbar::after{background:linear-gradient(var(--ground),transparent)}
 .tabs{display:inline-flex;gap:2px;padding:3px;border-radius:9px;box-shadow:inset 0 0 0 1px var(--line2)}
-.tabs button{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:6px;font-size:12.5px;color:var(--dim);transition:color 160ms var(--out),background-color 160ms var(--out)}
+.tabs button{white-space:nowrap;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:6px;font-size:12.5px;color:var(--dim);transition:color 160ms var(--out),background-color 160ms var(--out)}
 .tabs button small{font:10.5px var(--mono);color:var(--faint)}
 .tabs button.on{background:var(--ink);color:var(--ground)}
 .tabs button.on small{color:color-mix(in srgb,var(--ground) 55%,transparent)}
@@ -390,6 +392,14 @@ input[type=number].select{width:64px}
 .addconn b{font-size:13px;font-weight:500}
 .addconn span{font-size:12px;color:var(--faint)}
 @media (hover:hover){.addconn:hover{background:var(--hover);box-shadow:inset 0 0 0 1px var(--line2)}}
+.addconn.quick{gap:10px;align-items:stretch}
+.addconn.quick .row{gap:16px;align-items:center}
+.addconn.quick .grow{display:flex;flex-direction:column;gap:3px}
+.addconn.quick .cmd{align-self:flex-start;font:11.5px var(--mono);color:var(--faint);padding:3px 8px;margin-left:24px;border-radius:6px;transition:background-color 140ms var(--out),color 140ms var(--out)}
+/* Inside a list the cards are rows like the agents above them, full width with a line between. */
+.agents>.addconn{width:100%;border-radius:0;border-top:1px solid var(--line);box-shadow:none}
+.agents>.addconn:first-child{border-top:0}
+@media (hover:hover){.agents>.addconn:hover{box-shadow:none}.addconn.quick:hover{background:none}.addconn.quick .cmd:hover{background:var(--hover);color:var(--ink)}}
 .connect .quiet{font-size:12.5px;color:var(--faint);margin-top:2px}
 .connect .kinds{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .connect .kinds button{display:flex;flex-direction:column;gap:3px;align-items:flex-start;padding:10px 12px;border-radius:9px;box-shadow:inset 0 0 0 1px var(--line);text-align:left;transition:box-shadow 140ms var(--out),background-color 140ms var(--out)}

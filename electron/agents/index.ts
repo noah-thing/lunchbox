@@ -125,7 +125,7 @@ export const CATALOG: Def[] = [
           : ['exec', '--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...tail, '-'],
         env: i.hands ? { [HANDS_ENV]: i.hands.split('/').pop()! } : undefined,
         stdin: prompt(i),
-        parser: codex(),
+        parser: codex(i.model),
       }
     },
   },

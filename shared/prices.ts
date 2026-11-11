@@ -42,6 +42,21 @@ export function readSaving(model: string, read: number, prompt = 0): number | nu
   return p ? (read * (p.input - p.read)) / 1e6 : null
 }
 
+// Cached reads bill at a tenth of a fresh read for Claude and OpenAI. Other providers discount less
+// or do not say, so they count at a quarter, which can only understate the saving.
+const READ_SHARE: Record<string, number> = { claude: 0.1, codex: 0.1 }
+
+// What the cached reads of a call saved, worked back from the cost the agent reported, for agents
+// without a price here and for rows recorded before Lunchbox priced them. The cost gives the price
+// of a fresh token (writes at 1.25 times it, output at five times), and each cached token saved the
+// gap between a fresh read and a cached one.
+export function costSaving(agent: string, u: { input: number; output: number; cached: number; cost: number; written?: number }): number | null {
+  if (!(u.cost > 0) || !(u.cached > 0)) return null
+  const share = READ_SHARE[agent] ?? 0.25
+  const fresh = u.cost / (u.input + (u.written ?? 0) * 0.25 + u.cached * share + u.output * 5)
+  return u.cached * fresh * (1 - share)
+}
+
 // The bill for one call at list price, for API keys that do not report a cost themselves.
 export function claudeCost(model: string, u: { input: number; read: number; output: number } & Writes): number | null {
   const p = claudePrice(model, u.input + u.read + u.short + (u.hour ?? 0))
@@ -66,6 +81,14 @@ const CODEX: [RegExp, number, number, number][] = [
 export function codexCredits(model: string, u: { fresh: number; cached: number; output: number }) {
   const [, i, c, o] = CODEX.find(([re]) => re.test(model)) ?? [null, 50, 5, 250]
   return (u.fresh * i + u.cached * c + u.output * o) / 1e6
+}
+
+// Codex credits sell at $40 for 1,000. Codex has no write premium, so what the cached input saved
+// is the gap between the input and cached input rates.
+const CREDIT = 0.04
+export function codexSaving(model: string, cached: number) {
+  const [, i, c] = CODEX.find(([re]) => re.test(model)) ?? [null, 50, 5, 250]
+  return (cached * (i - c) * CREDIT) / 1e6
 }
 
 // What a Claude Code message would cost at list price. Unlisted models count like Sonnet 5.

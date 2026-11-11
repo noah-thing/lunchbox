@@ -3,7 +3,7 @@ import type { Connector } from '../../shared/types'
 import { Loader, Mark } from '../ui/bits'
 import { logoOf } from '../../shared/logos'
 import { IconClose } from '../ui/icons'
-import { desk, reload, useApp } from '../lib/desk'
+import { desk, now, reload, useApp } from '../lib/desk'
 
 type Kind = Connector['kind']
 type Preset = Partial<Connector> & { label: string; keyUrl?: string; free?: boolean }
@@ -41,6 +41,28 @@ const PRESETS: Record<Kind, Preset[]> = {
     { label: 'My own script', name: 'My script', command: '', args: '{prompt}' },
   ],
 }
+
+// OpenCode runs its free models without a key, so it is one click away instead of behind the form.
+export const OPENCODE: Connector = { id: 'my-opencode', name: 'OpenCode', kind: 'cli', command: 'opencode', args: 'run {prompt}', output: 'text' }
+export const OPENCODE_INSTALL = 'npm install -g opencode-ai'
+export const hasOpenCode = (list: Connector[]) => list.some((c) => c.kind === 'cli' && /^opencode(\.cmd|\.exe)?$/i.test((c.command ?? '').trim()))
+// Reads the connectors at the moment it runs, so a click on a menu drawn earlier cannot drop one
+// added since, and a second click while the first is saving waits for it instead of saving again.
+let adding: Promise<string> | null = null
+export function addOpenCode(): Promise<string> {
+  adding ??= (async () => {
+    const list = now().settings.connectors ?? []
+    const have = list.find((c) => hasOpenCode([c]))
+    if (have) return have.id
+    const taken = new Set(list.map((c) => c.id))
+    let id = OPENCODE.id
+    for (let n = 2; taken.has(id); n++) id = `${OPENCODE.id}-${n}`
+    await reload.settings({ connectors: [...list, { ...OPENCODE, id }] })
+    return id
+  })().finally(() => { adding = null })
+  return adding
+}
+export const openCodeFound = () => desk.call('connector:installed', ['opencode']).then((r: Record<string, boolean>) => !!r.opencode).catch(() => false)
 
 const KINDS: { id: Kind; name: string; line: string }[] = [
   { id: 'openai', name: 'API, OpenAI format', line: 'Most providers and local servers speak this.' },

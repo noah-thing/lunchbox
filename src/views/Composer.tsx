@@ -5,6 +5,7 @@ import { CrewMenu } from '../ui/ModelPicker'
 import { IconClip, IconClose, IconSplit, IconStop, IconUp } from '../ui/icons'
 import { agentOf, desk, machine, unavailable, useApp, type Access } from '../lib/desk'
 import { PLAYBOOKS, fillPlaybook } from '../../shared/skills'
+import { addOpenCode, hasOpenCode, openCodeFound } from './Connect'
 
 type Suggestion = { key: string; label: string; hint: string; insert: string; mark?: string }
 
@@ -35,7 +36,11 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   const [at, setAt] = useState(0)
   const [caret, setCaret] = useState(0)
   const area = useRef<HTMLTextAreaElement>(null)
+  // The crew as it is now, for a menu action that finishes after an await.
+  const crewNow = useRef(crew)
+  crewNow.current = crew
   const agents = useApp((s) => s.agents)
+  const connectors = useApp((s) => s.settings.connectors) ?? []
   const skills = useApp((s) => s.skills)
   const packs = useApp((s) => s.packs)
   useApp((s) => s.ledger)
@@ -145,9 +150,22 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
               <>
                 {!listed.length && <div className="menunote">No agents found yet.</div>}
                 <div className="sep" />
+                {!hasOpenCode(connectors) && (
+                  // Installed: added and seated in one click. Not installed: the Agents page shows how.
+                  <button className="item" onClick={async () => {
+                    const page = () => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'agents' } }))
+                    if (!(await openCodeFound())) return page()
+                    const id = await addOpenCode().catch(() => null)
+                    if (!id) return page()
+                    setCrew([...crewNow.current.filter((w) => w !== id), id])
+                  }}>
+                    <Mark seed="opencode" size={14} />
+                    <span className="grow"><b>Add OpenCode</b><span>Free models, no key needed</span></span>
+                  </button>
+                )}
                 {/* Everything else, free providers and custom agents, lives on the Agents page. */}
                 <button className="item" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'agents', add: true } }))}>
-                  <span className="grow"><b>See all agents</b><span>Free models, OpenCode, Qoder, any API or command line tool</span></span>
+                  <span className="grow"><b>See all agents</b><span>Free models, Qoder, Aider, any API or command line tool</span></span>
                 </button>
               </>
             } />
