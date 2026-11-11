@@ -55,7 +55,7 @@ export function Agents({ say }: { say: (t: string) => void }) {
                 <button className="btn small quiet" onClick={async () => { await removeConnector(a.id, connectors); say(`${a.name} removed`) }}>Remove</button>
               </div>} />
           ))}
-          {!hasOpenCode(connectors) && <OpenCodeCard connectors={connectors} say={say} />}
+          {!hasOpenCode(connectors) && <OpenCodeCard say={say} />}
           <button className="addconn" onClick={() => setSheet('new')}>
             <b>Add a connector</b>
             <span>DeepSeek, Groq, Mistral, a server you run, or a command line agent like Aider, OpenCode or Goose.</span>
@@ -268,14 +268,14 @@ export function LocalSetupBox({ a, say }: { a: AgentInfo; say: (t: string) => vo
 }
 
 // OpenCode in one click when it is installed, and the command to install it when it is not.
-function OpenCodeCard({ connectors, say }: { connectors: Connector[]; say: (t: string) => void }) {
+function OpenCodeCard({ say }: { say: (t: string) => void }) {
   const [found, setFound] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   useEffect(() => { openCodeFound().then(setFound) }, [])
   const add = async () => {
     setBusy(true)
-    try { await addOpenCode(connectors); say('OpenCode added to your agents') } catch (e) { say(reason(e)) } finally { setBusy(false) }
+    try { await addOpenCode(); say('OpenCode added to your agents') } catch (e) { say(reason(e)) } finally { setBusy(false) }
   }
   const look = async () => {
     setBusy(true)
