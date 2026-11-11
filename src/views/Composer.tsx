@@ -2,16 +2,16 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Mark, Thumb } from '../ui/bits'
 import { Menu, ModePicker } from '../ui/Access'
 import { CrewMenu } from '../ui/ModelPicker'
-import { IconClip, IconClose, IconSplit, IconStop, IconUp } from '../ui/icons'
+import { IconClip, IconClose, IconSplit, IconStudio, IconStop, IconUp } from '../ui/icons'
 import { agentOf, desk, machine, unavailable, useApp, type Access } from '../lib/desk'
 import { PLAYBOOKS, fillPlaybook } from '../../shared/skills'
 import { addOpenCode, hasOpenCode, openCodeFound } from './Connect'
 
 type Suggestion = { key: string; label: string; hint: string; insert: string; mark?: string }
 
-export function Composer({ crew, setCrew, onSend, access, setAccess, busy = false, onStop, arena = false, setArena, draft, autoFocus = true, placeholder, pack, folder }: {
+export function Composer({ crew, setCrew, onSend, access, setAccess, busy = false, onStop, arena = false, setArena, studio = false, setStudio, draft, autoFocus = true, placeholder, pack, folder }: {
   crew: string[]; setCrew: (c: string[]) => void; onSend: (t: string, files?: string[]) => void; access: Access; setAccess: (a: Access) => void
-  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; draft?: { text: string; files?: string[]; n: number }; autoFocus?: boolean; placeholder?: string; pack?: string; folder?: string
+  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; studio?: boolean; setStudio?: (on: boolean) => void; draft?: { text: string; files?: string[]; n: number; merge?: boolean }; autoFocus?: boolean; placeholder?: string; pack?: string; folder?: string
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<string[]>([])
@@ -47,16 +47,28 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
 
   useEffect(() => {
     if (!draft) return
-    setText(draft.text)
-    if (draft.files) setFiles(draft.files)
+    // Text handed back from the queue goes in front of anything typed since, not over it.
+    setText((now) => (draft.merge && now.trim() ? `${draft.text}\n\n${now}` : draft.text))
+    if (draft.files) setFiles((now) => (draft.merge ? [...draft.files!, ...now] : draft.files!))
     requestAnimationFrame(() => { area.current?.focus(); area.current?.setSelectionRange(draft.text.length, draft.text.length) })
   }, [draft])
-  useLayoutEffect(() => {
+  const fit = () => {
     const el = area.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 240) + 'px'
-  }, [text])
+  }
+  useLayoutEffect(fit, [text])
+  // A narrower window wraps the text or the hint onto more lines, so the box fits again when its
+  // width changes. Only width: reacting to its own new height would loop.
+  useEffect(() => {
+    const el = area.current
+    if (!el) return
+    let width = el.offsetWidth
+    const ro = new ResizeObserver(() => { if (el.offsetWidth !== width) { width = el.offsetWidth; fit() } })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key === '/' && (e.target as HTMLElement)?.tagName !== 'TEXTAREA' && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); area.current?.focus() }
@@ -144,7 +156,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
         }} />
       <div className="cbar">
-        <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span>{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</>}>
+        <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span><span className="crewname">{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</span></>}>
           {() => (
             <CrewMenu listed={listed} crew={crew} toggle={toggle} promote={(id) => setCrew([id, ...crew.filter((w) => w !== id)])} footer={
               <>
@@ -174,6 +186,12 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
         {setArena && crew.length > 1 && !shell && (
           <button className={`pill split${arena ? ' open' : ''}`} onClick={() => setArena(!arena)} aria-pressed={arena} title="Everyone answers on their own, you keep the best">
             <IconSplit />Side by side
+          </button>
+        )}
+        {setStudio && !shell && (
+          <button className={`pill expert${studio ? ' open' : ''}`} onClick={() => setStudio(!studio)} aria-pressed={studio}
+            title="Expert: agents set a direction, check the result in screenshots and measurements, and report what they verified. Your own design files and references come first.">
+            <IconStudio />Expert
           </button>
         )}
         {shell && <span className="shellnote">Runs on {machine()}</span>}

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
+import { wallWhy } from '../../shared/wall'
 import { plan, plansBefore, type Step } from '../../shared/plan'
 import { searchOf, stepOf, type Search } from '../../shared/steps'
 import { Loader, Mark, Meter, Sure, Thumb } from '../ui/bits'
@@ -15,6 +16,9 @@ import { Composer } from './Composer'
 
 type Data = { meta: RoomMeta; events: Event[]; live: Live }
 type Say = Extract<Event, { kind: 'say' }>
+// The last hand back each room's message box received, kept while the app runs.
+const given = new Map<string, number>()
+
 type Actions = {
   decide(ref: string, i: number): void
   pick(arena: string, who: string): void
@@ -27,6 +31,7 @@ type Actions = {
   rewind(target: { event?: string; ref?: string }): void
   review(ev: string): void
   ask(text: string): void
+  takeBack(queued: string): void
 }
 
 const remembered = (key: string, fallback: boolean) => {
@@ -116,6 +121,11 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
 
   // Defined before the loading return: the shortcut can fire while the room is still loading.
   const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
+  // Queued text handed back to the message box, once per hand back: not on every live update, and
+  // not again when the room is opened later.
+  const back = data?.live.back
+  const returned = useMemo(() => (back && given.get(id) !== back.n ? back : undefined), [id, back?.n])
+  useEffect(() => { if (returned) given.set(id, returned.n) }, [id, returned])
   if (!data) return failed
     ? (
       <div className="room loading">
@@ -145,6 +155,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
       } catch (e) { say(reason(e)) }
     },
     review: (ev) => setReview(ev),
+    takeBack: (queued) => desk.call('room:takeback', id, queued),
   }
   const reviewed = review ? events.find((e) => e.id === review) : undefined
   const send = (text: string, files?: string[]) => desk.call('room:send', id, text, access, arena, files)
@@ -173,7 +184,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
         <div className="dock">
           <Composer
             crew={meta.crew} setCrew={(c) => desk.call('room:crew', id, c)} onSend={send} access={access} setAccess={setAccess}
-            busy={busy} onStop={stop} arena={arena} setArena={setArena} pack={meta.pack} folder={meta.workspace}
+            busy={busy} onStop={stop} arena={arena} setArena={setArena} studio={!!meta.studio} setStudio={(on) => desk.call('room:studio', id, on)} pack={meta.pack} folder={meta.workspace} draft={returned}
             placeholder={meta.crew.length > 1 ? 'Message the room. @ to address one agent, ! to run a command.' : 'Message the room. Start with ! to run a command.'}
           />
         </div>
@@ -380,6 +391,14 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // Only the first command waiting for an answer takes the keyboard, so one key never answers two.
   const first = live?.runs.find((r) => r.state === 'asking')?.id
   for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} keys={r.id === first} /></Ev>)
+  // Sent while an agent was answering: they wait here, below the live turn, until their turn.
+  for (const q of live?.queued ?? []) rows.push(
+    <div key={q.id} className="mine queued">
+      <span className="to"><IconClock />queued</span>
+      <div className="bubble"><Rich text={q.text} /></div>
+      <button type="button" className="qback" onClick={() => actions.takeBack(q.id)}>Edit</button>
+    </div>,
+  )
 
   return (
     <div className="transcript" ref={box}
@@ -417,7 +436,7 @@ function Ev({ mark, grouped = false, className = '', id, children }: { mark: Rea
 
 function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
   const from = agentOf(e.from, agents).short
-  const why = /^(is |hit )/.test(e.reason) ? `${from} ${e.reason}` : `${from} could not start: ${e.reason}`
+  const why = wallWhy(from, e.reason)
   const next = e.to ? `${agentOf(e.to, agents).short} took over with the same memory.` : e.arena ? 'The others answered without it.' : 'Nobody else in the crew could take over.'
   return `${why}. ${next}${e.until && e.until > Date.now() ? ` Back at ${clock(e.until)}.` : ''}`
 }

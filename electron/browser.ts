@@ -1,7 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import { WebContentsView, type BrowserWindow, type Rectangle } from 'electron'
+import { pathToFileURL } from 'node:url'
+import { BrowserWindow, WebContentsView, type Rectangle } from 'electron'
 import type { Tool } from './hands'
+import { AXE_RUN, MEASURE, report, type Axe, type Measured } from './audit'
 
 export type BrowserState = { url: string; title: string; loading: boolean; back: boolean; forward: boolean; driver?: string; action?: string; device: Device; shown: boolean }
 export type Device = 'desktop' | 'tablet' | 'phone'
@@ -60,6 +63,17 @@ const pulse = (x: number, y: number) => `(() => {
   setTimeout(() => d.remove(), 600)
 })()`
 
+// Every step inside a page Expert looks at has a limit, so a page that freezes cannot hold up
+// every later look.
+const within = <T,>(job: Promise<T>, ms: number, what: string) =>
+  Promise.race([job, new Promise<never>((_, no) => setTimeout(() => no(new Error(`${what} took longer than ${ms / 1000} seconds`)), ms))])
+
+const web = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(169\.254\.|0\.0\.0\.0|\[?::\]?)/i.test(u)
+
+// axe-core, read once on first use. It is the accessibility engine most checkers are built on.
+let axeSource: string | null = null
+const axe = () => (axeSource ??= readFileSync(createRequire(__filename).resolve('axe-core/axe.min.js'), 'utf8'))
+
 export class Browser {
   private view: WebContentsView | null = null
   private bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
@@ -80,7 +94,6 @@ export class Browser {
     const wc = view.webContents
     // Pages open new windows in the same view, and only on the web: never file:, app or
     // javascript: schemes, whether a person clicks or a page or an agent asks.
-    const web = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(169\.254\.|0\.0\.0\.0|\[?::\]?)/i.test(u)
     wc.setWindowOpenHandler(({ url }) => { if (web(url)) wc.loadURL(url); return { action: 'deny' } })
     wc.on('will-navigate', (e, url) => { if (!web(url)) e.preventDefault() })
     wc.on('will-redirect', (e, url) => { if (!web(url)) e.preventDefault() })
@@ -233,6 +246,122 @@ export class Browser {
     wc.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'left', clickCount: 1 })
   }
 
+  // Studio looks at pages in a window nobody sees, so it never takes over the browser the person
+  // is watching. It has the same limits as that browser: the web or a file inside the room's
+  // folder, no camera, microphone or location, and nowhere else to navigate to. One at a time.
+  private looking: Promise<unknown> = Promise.resolve()
+  private queueLook<T>(job: () => Promise<T>) {
+    const next = this.looking.then(job)
+    this.looking = next.catch(() => {})
+    return next
+  }
+
+  private target(workspace: string, target: string) {
+    if (/^https?:\/\//i.test(target)) {
+      if (!web(target)) throw new Error('That address cannot be opened')
+      return target
+    }
+    if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(target)) return `http://${target}`
+    const root = realpathSync(resolve(workspace))
+    let file: string
+    try { file = realpathSync(resolve(root, target)) } catch { throw new Error(`There is no ${target} in the room's folder`) }
+    if (!file.startsWith(root + sep)) throw new Error('Local files to look at must be inside the room\'s folder')
+    return pathToFileURL(file).href
+  }
+
+  private async hidden(url: string, label: string, width: number, height: number) {
+    const win = new BrowserWindow({ show: false, width, height, useContentSize: true, enableLargerThanScreen: true, paintWhenInitiallyHidden: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'look', backgroundThrottling: false } })
+    const wc = win.webContents
+    const errors: string[] = []
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+    const stay = (e: Electron.Event, to: string) => { if (to !== url && !web(to) && !to.startsWith(url.split('#')[0])) e.preventDefault() }
+    wc.on('will-navigate', stay)
+    wc.on('will-redirect', stay)
+    wc.session.setPermissionRequestHandler((_w, _p, done) => done(false))
+    wc.session.setPermissionCheckHandler(() => false)
+    wc.on('console-message', (...args: unknown[]) => {
+      // Newer Electron passes one details object, older ones (event, level, message).
+      const d = args[0] as { level?: string | number; message?: string }
+      const level = typeof args[1] === 'number' ? args[1] : d?.level
+      const message = typeof args[2] === 'string' ? args[2] : d?.message
+      if ((level === 3 || level === 'error') && message) errors.push(String(message).slice(0, 200))
+    })
+    // A page that never finishes loading must not hold up every later look.
+    const timeout = new Promise<never>((_, no) => setTimeout(() => no(new Error('it did not finish loading within 20 seconds')), 20000))
+    try {
+      await Promise.race([wc.loadURL(url), timeout])
+      await this.settle(wc)
+      await Promise.race([wc.executeJavaScript('document.fonts ? document.fonts.ready.then(() => true) : true', true), new Promise((r) => setTimeout(r, 3000))]).catch(() => {})
+    } catch (e) {
+      win.destroy()
+      throw new Error(`Could not open ${label}: ${e instanceof Error ? e.message : e}`)
+    }
+    return { win, wc, errors }
+  }
+
+  look(workspace: string, target: string, full: boolean, name: string) {
+    return this.queueLook(async () => {
+      const url = this.target(workspace, target)
+      const root = realpathSync(resolve(workspace))
+      const stem = (name || 'look').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'look'
+      const saved: string[] = []
+      const { win, wc } = await this.hidden(url, target, 1440, 900)
+      // The page as people see it, without the scrollbar drawn into every picture.
+      await within(wc.insertCSS('::-webkit-scrollbar { display: none !important }'), 5000, 'Preparing the page').catch(() => {})
+      try {
+        // One window, resized between the widths, so the page loads once and media queries apply.
+        for (const [label, width, height] of [['desktop', 1440, 900], ['phone', 390, 844]] as const) {
+          win.setContentSize(width, height)
+          await new Promise((r) => setTimeout(r, 400))
+          // A whole page is seen the way a person scrolls it, one screen at a time, eight at most.
+          // Growing the window instead would stretch anything sized to the screen, like a hero.
+          const tall = full ? Number(await within(wc.executeJavaScript('Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)', true), 15000, 'Measuring the page').catch(() => height)) || height : height
+          const pieces = full ? Math.min(8, Math.ceil(tall / height)) : 1
+          mkdirSync(join(root, 'looks'), { recursive: true })
+          for (let i = 0; i < pieces; i++) {
+            // Scrolled into place and two frames drawn before the capture: a hidden window does not
+            // repaint on its own, and the picture would show where the page was before.
+            await within(wc.executeJavaScript(`scrollTo({ top: ${i * height}, behavior: 'instant' }); new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`, true), 5000, 'Scrolling the page').catch(() => {})
+            wc.invalidate()
+            // Entrance animations and lazy images get a moment, as a person's eye would.
+            await new Promise((r) => setTimeout(r, i ? 350 : 700))
+            // Saved at one pixel per CSS pixel: a model shrinks a huge Retina image until the text is unreadable.
+            const shot = await within(wc.capturePage(), 15000, 'Capturing the page')
+            const img = shot.getSize().width > width ? shot.resize({ width, quality: 'best' }) : shot
+            const file = join(root, 'looks', `${stem}-${label}${full ? `-${i + 1}` : ''}.png`)
+            writeFileSync(file, img.toPNG())
+            saved.push(relative(root, file))
+          }
+        }
+      } finally {
+        win.destroy()
+      }
+      return `Saved ${saved.length > 2 ? `${saved.length} images, top to bottom: ` : ''}${saved.join(saved.length > 2 ? ', ' : ' and ')}.${full ? ' The last image of each width ends at the bottom of the page, so it can repeat part of the one before it.' : ''} Open them now and judge them as the person will see them: hierarchy, spacing, alignment, contrast, overflow and anything cut off or overlapping at phone width.`
+    })
+  }
+
+  audit(workspace: string, target: string) {
+    return this.queueLook(async () => {
+      const url = this.target(workspace, target)
+      const { win, wc, errors } = await this.hidden(url, target, 1440, 900)
+      try {
+        const views: Measured[] = []
+        let found: Axe[] | null = null
+        for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+          win.setContentSize(width, height)
+          await new Promise((r) => setTimeout(r, 600))
+          views.push(await within(wc.executeJavaScript(MEASURE, true), 15000, 'Measuring the page') as Measured)
+          if (!found) {
+            found = await within(wc.executeJavaScript(`${axe()};\n${AXE_RUN}`, true), 20000, 'The accessibility check').catch(() => null) as Axe[] | null
+          }
+        }
+        return report(target, views, found, errors)
+      } finally {
+        win.destroy()
+      }
+    })
+  }
+
   // The tools every agent in a room gets. Screenshots are saved inside the room's folder.
   tools(who: string, workspace: string): Tool[] {
     const wc = () => this.ensure().webContents
@@ -301,6 +430,24 @@ export class Browser {
           await this.screenshot(file)
           return `Saved ${relative(workspace, file)}`
         }),
+      },
+      {
+        name: 'expert_look',
+        description: 'Look at your work the way people will see it: opens a URL (localhost works) or an HTML file in the folder in a hidden window, and saves screenshots at desktop (1440px) and phone (390px) width. Set full for the whole page top to bottom. Returns the image paths; open the images to judge the result.',
+        input: {
+          target: { type: 'string', description: 'A URL, a localhost address such as localhost:3000, or a path to an HTML file inside the folder' },
+          full: { type: 'boolean', description: 'Capture the whole page top to bottom instead of the first screen' },
+          name: { type: 'string', description: 'A short name for the image files, such as home or pricing' },
+        },
+        required: ['target'],
+        run: (a) => this.look(workspace, String(a.target ?? ''), a.full === true, typeof a.name === 'string' ? a.name : ''),
+      },
+      {
+        name: 'expert_audit',
+        description: 'Measure a page instead of judging it by eye, at desktop and phone width: sideways scrolling, overlapping or cut off text, small text and tap targets, long lines, broken or unsized images, the fonts, sizes and colours actually in use, spacing off a 4px grid, console errors, and accessibility through axe-core (WCAG 2.2 AA, including contrast). Returns a numbered list of problems with the elements they are on.',
+        input: { target: { type: 'string', description: 'A URL, a localhost address such as localhost:3000, or a path to an HTML file inside the folder' } },
+        required: ['target'],
+        run: (a) => this.audit(workspace, String(a.target ?? '')),
       },
       {
         name: 'browser_console',

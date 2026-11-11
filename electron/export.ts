@@ -1,4 +1,5 @@
 import type { Act, Event, RoomMeta } from '../shared/types'
+import { wallWhy } from '../shared/wall'
 
 type Names = (id: string) => string
 
@@ -60,7 +61,7 @@ function card(e: Event, name: Names): string | null {
       return `<div class="ev">${meta(name(e.who))}${prose(e.text)}${a ? `<div class="acts">${esc(a)}</div>` : ''}${proof}</div>`
     }
     case 'hands': return `<div class="ev hand">${meta(name(e.to), ` <em>${e.via === 'tool' ? 'lent a hand to' : 'answered'} ${esc(name(e.from))}</em>`)}<div class="ask">${esc(e.ask)}</div>${prose(e.answer)}</div>`
-    case 'wall': return `<div class="ev note">${esc(name(e.from))} ${esc(e.reason)}. ${e.to ? `${esc(name(e.to))} took over with the same memory.` : 'Nobody could take over.'}</div>`
+    case 'wall': return `<div class="ev note">${esc(wallWhy(name(e.from), e.reason))}. ${e.to ? `${esc(name(e.to))} took over with the same memory.` : 'Nobody could take over.'}</div>`
     case 'run': return `<div class="ev"><pre class="term">$ ${esc(e.command)}\n${esc(e.out.slice(-1500))}</pre></div>`
     case 'image': return `<div class="ev note">${esc(name(e.by))} made an image: ${esc(e.prompt.slice(0, 160))}</div>`
     case 'decide': return `<div class="ev note warn">${esc(e.text)}</div>`

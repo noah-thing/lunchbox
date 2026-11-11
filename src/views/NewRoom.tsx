@@ -79,6 +79,9 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
     setDraft({ text: skillText(s), n: Date.now() })
   }
   const [arena, setArena] = useState(false)
+  // Studio carries over from the last room started, so someone who works that way keeps it on.
+  const [studio, setStudio] = useState(() => { try { return localStorage.getItem('lb.studio') === '1' } catch { return false } })
+  const pickStudio = (on: boolean) => { setStudio(on); try { localStorage.setItem('lb.studio', on ? '1' : '0') } catch {} }
   const [starting, setStarting] = useState(false)
   const current = packs.find((p) => p.id === pack)
   const ideas = current?.ideas ?? ['Review this folder and tell me what to fix first', 'Research a topic with sources', 'Build a small tool and test it']
@@ -88,7 +91,7 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
     setStarting(true)
     // If the room can't be made, the person keeps what they wrote and hears why.
     try {
-      const meta = await desk.call('room:create', { crew, workspace, pack, about: text })
+      const meta = await desk.call('room:create', { crew, workspace, pack, about: text, studio })
       if (!meta) throw new Error('The room could not be created. Check that the folder can be written to.')
       if (workspace) remember(workspace)
       await desk.call('room:send', meta.id, text, access, arena, files)
@@ -112,7 +115,7 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
         <h1 className="rise" style={{ '--i': 1 } as CSSProperties}>What are we working on?</h1>
         <div className="rise" style={{ '--i': 2 } as CSSProperties}>
           {crew.length ? (
-            <Composer crew={crew} setCrew={setChosen} onSend={start} access={access} setAccess={setAccess} draft={draft} arena={arena} setArena={setArena} pack={pack} folder={workspace}
+            <Composer crew={crew} setCrew={setChosen} onSend={start} access={access} setAccess={setAccess} draft={draft} arena={arena} setArena={setArena} studio={studio} setStudio={pickStudio} pack={pack} folder={workspace}
               placeholder="Describe the goal in your own words. The crew plans it, splits it up and checks each other’s work." />
           ) : (
             <div className="noagents">

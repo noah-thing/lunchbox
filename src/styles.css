@@ -175,6 +175,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .mine .bubble .rich p{font-size:14px}
 .mine .to{display:inline-flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--faint)}
 .mine .to svg{width:12px;height:12px}
+.mine.queued .bubble{opacity:.55}
+.mine .qback{font:11px var(--mono);color:var(--faint);transition:color .15s}
+.mine .qback:hover{color:var(--ink)}
 .files{display:flex;gap:6px;flex-wrap:wrap}
 .files code{padding:2px 8px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2);color:var(--dim)}
 .proof{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:500}
@@ -258,11 +261,16 @@ textarea:focus-visible,input:focus-visible{outline:0}
    (lifted to 3 for the folder menu), so a menu that opens downward covers the chips and lists. */
 .composer{container-type:inline-size;position:relative;z-index:3}
 .rise:has(>.composer){position:relative;z-index:4}
-@container (max-width:480px){
+/* Labels give way to icons before the row runs out of room; pills never wrap or shrink. */
+@container (max-width:600px){
   .cbar .pilltext{display:none}
-  .cbar .pill.split{font-size:0;gap:0}
-  .cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cbar .pill.split,.cbar .pill.expert{font-size:0;gap:0}
 }
+.cbar .pill{white-space:nowrap;flex:none}
+/* A custom agent's long name gives way before the Send button does. */
+.cbar .crewname{max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.cbar .pill.split.open svg,.cbar .pill.expert.open svg{opacity:1}
+.cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cbar{display:flex;align-items:center;gap:4px;padding:8px}
 .shellnote{font:11px var(--mono);color:var(--faint);margin-left:8px}
 .send{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}
@@ -824,6 +832,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 
 /* Pushed messages and updates: a banner over the page, toasts in the corner, a card for big news. */
 .nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:landmid 320ms var(--out) both}
+/* Banners and toasts float over the draggable strip at the top of the window; without this the
+   window takes their clicks as a drag on macOS and the buttons never fire. */
+.nbanner,.ntoasts{-webkit-app-region:no-drag}
 .nbanner b{font-weight:500}
 .nbanner span span{color:var(--dim)}
 .ntoasts{position:fixed;top:14px;right:14px;z-index:46;display:flex;flex-direction:column;gap:8px;width:320px}

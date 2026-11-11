@@ -108,7 +108,7 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   assert.match(borrowed.ask, /^Search X for: agent limits/)
   const said = events[2] as Extract<typeof events[number], { kind: 'say' }>
   assert.match(said.text, /Grok found: 212 posts/)
-  assert.match(said.text, /Tools: ask_crewmate, bring_in, search_x, search_web, make_image, room_memory, remember/)
+  assert.match(said.text, /Tools: ask_crewmate, bring_in, search_x, search_web, make_image, propose_flow, room_memory, remember/)
   assert.ok(said.acts.some((a) => a.t === 'tool' && a.name === 'mcp__lunchbox__search_x'))
 
   engine.send(room.id, 'What is trending on X today?', 'workspace')
@@ -275,14 +275,88 @@ test('room: a message sent mid-turn is not lost', { skip: process.platform === '
   engine.send(room.id, 'Fix the login bug', 'workspace')
   while (!existsSync(log)) await new Promise((r) => setTimeout(r, 10))
   engine.send(room.id, 'Also update the README', 'workspace')
+  assert.deepEqual(engine.live(room.id).queued.map((q) => q.text), ['Also update the README'], 'shown as queued under the live turn')
+  assert.equal(store.events(room.id).filter((e) => e.kind === 'you').length, 1, 'and not in the room yet')
   await engine.idle(room.id)
   delete process.env.FAKE_DELAY
+
+  assert.deepEqual(engine.live(room.id).queued, [])
+  const said = store.events(room.id).filter((e) => e.kind === 'you' || e.kind === 'say').map((e) => e.kind === 'you' ? e.text : 'reply')
+  assert.deepEqual(said, ['Fix the login bug', 'reply', 'Also update the README', 'reply'], 'the transcript keeps the order things were answered in')
 
   const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   assert.equal(calls.length, 2)
   assert.ok(!calls[0].input.includes('Also update the README'), 'the first turn started before the second message')
   assert.ok(calls[1].args.includes('--resume'), 'the second turn resumes')
   assert.ok(calls[1].input.includes('Also update the README'), 'and is given the message sent while it worked')
+  store.flush()
+})
+
+// Stop ends the turn and drops what was queued behind it; the queued text goes back to the
+// message box, never into the room unanswered. Edit takes one queued message back the same way.
+test('room: stop and edit hand queued messages back', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-queue-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  const log = (process.env.FAKE_LOG = join(root, 'calls.jsonl'))
+  process.env.FAKE_DELAY = '200'
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { resetPath } = await import('../electron/system')
+  resetPath()
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+  await engine.refresh()
+
+  const room = engine.create({ crew: ['claude'], workspace: root })
+  engine.send(room.id, 'Fix the login bug', 'workspace')
+  while (!existsSync(log)) await new Promise((r) => setTimeout(r, 10))
+  engine.send(room.id, 'Then the README', 'workspace')
+  engine.send(room.id, 'And the changelog', 'workspace')
+  const queued = engine.live(room.id).queued
+  assert.equal(queued.length, 2)
+
+  engine.takeBack(room.id, queued[1].id)
+  assert.deepEqual(engine.live(room.id).queued.map((q) => q.text), ['Then the README'])
+  assert.equal(engine.live(room.id).back?.text, 'And the changelog')
+
+  engine.stop(room.id)
+  await engine.idle(room.id)
+  delete process.env.FAKE_DELAY
+  assert.deepEqual(engine.live(room.id).queued, [])
+  assert.equal(engine.live(room.id).back?.text, 'Then the README', 'stop hands the queued message back')
+  const asked = store.events(room.id).filter((e) => e.kind === 'you').map((e) => (e as { text: string }).text)
+  assert.deepEqual(asked, ['Fix the login bug'], 'nothing queued lands in the room unanswered')
+  assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 1, 'and no agent ran for it')
+  store.flush()
+})
+
+// An agent can offer a flow once per room. Accepting the card creates it with the room's crew
+// and folder, and never with full access, since a flow runs with nobody watching.
+test('room: a flow is offered once and created from the card', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-offer-'))
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const made: unknown[] = []
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [], flow: (f) => { made.push(f); return { ...f, id: 'f1', on: true, created: 0, runs: [] } as never } })
+  const room = engine.create({ crew: ['claude', 'codex'], workspace: root, studio: true })
+  assert.equal(store.room(room.id)!.studio, true)
+  const offer = (engine as unknown as { offerFlow: (r: string, w: string, f: unknown, why: string) => string }).offerFlow.bind(engine)
+  const flow = { name: 'Weekly competitor check', steps: [{ text: 'Check what changed on the three competitor sites since {{last}}' }], every: 'week', at: '09:00', day: 1 }
+  assert.match(offer(room.id, 'claude', flow, 'Saves the Monday check'), /Offered/)
+  assert.match(offer(room.id, 'claude', flow, 'Again'), /already offered/)
+  const cards = store.events(room.id).filter((e) => e.kind === 'decide')
+  assert.equal(cards.length, 1)
+  engine.decide(room.id, cards[0].id, 0, 'full')
+  assert.equal(made.length, 1)
+  assert.deepEqual({ ...(made[0] as object), steps: undefined }, { name: 'Weekly competitor check', steps: undefined, every: 'week', at: '09:00', day: 1, crew: ['claude', 'codex'], workspace: root, access: 'workspace', pack: undefined })
+  assert.ok(store.events(room.id).some((e) => e.kind === 'note' && /Created the flow/.test(e.text)))
+  engine.setStudio(room.id, false)
+  assert.equal(store.room(room.id)!.studio, undefined)
   store.flush()
 })
 
