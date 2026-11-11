@@ -824,6 +824,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 
 /* Pushed messages and updates: a banner over the page, toasts in the corner, a card for big news. */
 .nbanner{position:fixed;top:14px;left:50%;z-index:45;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 48px));padding:8px 8px 8px 16px;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line2),0 14px 40px rgba(0,0,0,.35);font-size:13px;animation:landmid 320ms var(--out) both}
+/* Banners and toasts float over the draggable strip at the top of the window; without this the
+   window takes their clicks as a drag on macOS and the buttons never fire. */
+.nbanner,.ntoasts{-webkit-app-region:no-drag}
 .nbanner b{font-weight:500}
 .nbanner span span{color:var(--dim)}
 .ntoasts{position:fixed;top:14px;right:14px;z-index:46;display:flex;flex-direction:column;gap:8px;width:320px}
