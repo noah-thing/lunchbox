@@ -261,11 +261,13 @@ textarea:focus-visible,input:focus-visible{outline:0}
    (lifted to 3 for the folder menu), so a menu that opens downward covers the chips and lists. */
 .composer{container-type:inline-size;position:relative;z-index:3}
 .rise:has(>.composer){position:relative;z-index:4}
-@container (max-width:480px){
+/* Labels give way to icons before the row runs out of room; pills never wrap or shrink. */
+@container (max-width:600px){
   .cbar .pilltext{display:none}
   .cbar .pill.split,.cbar .pill.expert{font-size:0;gap:0}
-  .cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 }
+.cbar .pill{white-space:nowrap;flex:none}
+.cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cbar{display:flex;align-items:center;gap:4px;padding:8px}
 .shellnote{font:11px var(--mono);color:var(--faint);margin-left:8px}
 .send{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}

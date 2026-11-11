@@ -336,7 +336,8 @@ export class Engine {
   }
 
   setWorkspace(room: string, workspace: string) {
-    this.store.update(room, (m) => { m.workspace = workspace; m.sessions = {} })
+    // With Expert on, the new folder's own design files lead from now on.
+    this.store.update(room, (m) => { m.workspace = workspace; m.sessions = {}; if (m.studio) m.design = designFiles(workspace) })
     this.hooks.emit('room:meta', this.store.room(room))
     this.list()
   }
@@ -614,9 +615,9 @@ export class Engine {
       memory: () => this.store.room(room)?.blocks ?? [],
       remember: (title, text) => this.block(room, `note-${uid()}`, title, text, me.id),
       offerFlow: (flow, why) => this.offerFlow(room, me.id, flow, why),
-      // Only the agent leading the room offers flows: not crewmates, side by side answers or a
-      // room that is itself a flow's run.
-      lead: me.id === ctx.main && !ctx.arena && !this.store.room(room)?.flow,
+      // Only the agent leading the room offers flows, never in a room that is itself a flow's run.
+      // Side by side keeps the tool too, so the lead's instructions do not change between the two.
+      lead: me.id === ctx.main && !this.store.room(room)?.flow,
     }
   }
 
@@ -852,9 +853,10 @@ export class Engine {
       const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms,
         // A CLI can fail after writing part of its answer: the text is kept and the failure shown under it.
         ...(r.error && !r.limit ? { error: plain(r.error) } : {}) }
-      const proof = check(draft.text, [...events, { ...draft, id: '', at: 0 }])
+      const proof = check(draft.text, [...events, { ...draft, id: '', at: 0 }], !!meta.studio && tools.length > 0)
       event = this.add(room, proof.length ? { ...draft, proof } : draft)
-      const bad = proof.find((x) => !x.ok)
+      // An unproved look stays a mark on the message. Only command claims ask the person to act.
+      const bad = proof.find((x) => !x.ok && x.claim !== 'it looks right')
       if (bad) {
         const cmd = suggest(bad.claim, meta.workspace)
         this.add(room, {

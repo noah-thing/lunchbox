@@ -63,6 +63,11 @@ const pulse = (x: number, y: number) => `(() => {
   setTimeout(() => d.remove(), 600)
 })()`
 
+// Every step inside a page Expert looks at has a limit, so a page that freezes cannot hold up
+// every later look.
+const within = <T,>(job: Promise<T>, ms: number, what: string) =>
+  Promise.race([job, new Promise<never>((_, no) => setTimeout(() => no(new Error(`${what} took longer than ${ms / 1000} seconds`)), ms))])
+
 const web = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(169\.254\.|0\.0\.0\.0|\[?::\]?)/i.test(u)
 
 // axe-core, read once on first use. It is the accessibility engine most checkers are built on.
@@ -301,26 +306,37 @@ export class Browser {
       const stem = (name || 'look').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'look'
       const saved: string[] = []
       const { win, wc } = await this.hidden(url, target, 1440, 900)
+      // The page as people see it, without the scrollbar drawn into every picture.
+      await wc.insertCSS('::-webkit-scrollbar { display: none !important }').catch(() => {})
       try {
         // One window, resized between the widths, so the page loads once and media queries apply.
         for (const [label, width, height] of [['desktop', 1440, 900], ['phone', 390, 844]] as const) {
           win.setContentSize(width, height)
           await new Promise((r) => setTimeout(r, 400))
-          if (full) {
-            const tall = Number(await wc.executeJavaScript('Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)', true).catch(() => height)) || height
-            win.setContentSize(width, Math.min(Math.max(tall, height), 8000))
+          // A whole page is seen the way a person scrolls it, one screen at a time, eight at most.
+          // Growing the window instead would stretch anything sized to the screen, like a hero.
+          const tall = full ? Number(await within(wc.executeJavaScript('Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)', true), 15000, 'Measuring the page').catch(() => height)) || height : height
+          const pieces = full ? Math.min(8, Math.ceil(tall / height)) : 1
+          mkdirSync(join(root, 'looks'), { recursive: true })
+          for (let i = 0; i < pieces; i++) {
+            // Scrolled into place and two frames drawn before the capture: a hidden window does not
+            // repaint on its own, and the picture would show where the page was before.
+            await within(wc.executeJavaScript(`scrollTo(0, ${i * height}); new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`, true), 5000, 'Scrolling the page').catch(() => {})
+            wc.invalidate()
+            // Entrance animations and lazy images get a moment, as a person's eye would.
+            await new Promise((r) => setTimeout(r, i ? 350 : 700))
+            // Saved at one pixel per CSS pixel: a model shrinks a huge Retina image until the text is unreadable.
+            const shot = await within(wc.capturePage(), 15000, 'Capturing the page')
+            const img = shot.getSize().width > width ? shot.resize({ width, quality: 'best' }) : shot
+            const file = join(root, 'looks', `${stem}-${label}${full ? `-${i + 1}` : ''}.png`)
+            writeFileSync(file, img.toPNG())
+            saved.push(relative(root, file))
           }
-          // Entrance animations and lazy images get a moment, as a person's eye would.
-          await new Promise((r) => setTimeout(r, 700))
-          const file = join(root, 'looks', `${stem}-${label}${full ? '-full' : ''}.png`)
-          mkdirSync(dirname(file), { recursive: true })
-          writeFileSync(file, (await wc.capturePage()).toPNG())
-          saved.push(relative(root, file))
         }
       } finally {
         win.destroy()
       }
-      return `Saved ${saved.join(' and ')}. Open both images now and judge them as the person will see them: hierarchy, spacing, alignment, contrast, overflow and anything cut off or overlapping at phone width.`
+      return `Saved ${saved.length > 2 ? `${saved.length} images, top to bottom: ` : ''}${saved.join(saved.length > 2 ? ', ' : ' and ')}. Open them now and judge them as the person will see them: hierarchy, spacing, alignment, contrast, overflow and anything cut off or overlapping at phone width.`
     })
   }
 
@@ -334,9 +350,9 @@ export class Browser {
         for (const [width, height] of [[1440, 900], [390, 844]] as const) {
           win.setContentSize(width, height)
           await new Promise((r) => setTimeout(r, 600))
-          views.push(await wc.executeJavaScript(MEASURE, true) as Measured)
+          views.push(await within(wc.executeJavaScript(MEASURE, true), 15000, 'Measuring the page') as Measured)
           if (!found) {
-            found = await wc.executeJavaScript(`${axe()};\n${AXE_RUN}`, true).catch(() => null) as Axe[] | null
+            found = await within(wc.executeJavaScript(`${axe()};\n${AXE_RUN}`, true), 20000, 'The accessibility check').catch(() => null) as Axe[] | null
           }
         }
         return report(target, views, found, errors)

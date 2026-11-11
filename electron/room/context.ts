@@ -1,6 +1,6 @@
 import type { Access, Act, AgentInfo, Event, Pack, RoomMeta } from '../../shared/types'
 import { habitRules } from '../../shared/habits'
-import { LUNCHBOX, studioCore } from '../../shared/studio'
+import { lunchbox, studioCore } from '../../shared/studio'
 
 const ACCESS: Record<Access, string> = {
   plan: 'Plan. Read only: do not edit files or run commands that change anything. Investigate and propose.',
@@ -54,7 +54,7 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
     pack ? `Room focus, ${pack.name}: ${pack.brief}` : '',
     rules.length ? `How this person wants the work done:\n${rules.join('\n')}` : '',
     studio ? studioCore(studio) : '',
-    main === me.id ? LUNCHBOX : '',
+    main === me.id ? lunchbox(tools.includes('propose_flow')) : '',
   ].filter(Boolean).join('\n\n')
 }
 

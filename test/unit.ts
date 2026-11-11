@@ -819,12 +819,17 @@ test('proof: a look claim needs an image of the work made after the last edit', 
   const looked = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'tool', name: 'mcp__lunchbox__expert_look', detail: 'index.html' }] }
   const opened = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'tool', name: 'Read', detail: 'looks/home-phone.png' }] }
   const said = 'The page looks clean on both widths now.'
-  assert.equal(check(said, [edited, looked].map(ev))[0].ok, true)
-  assert.equal(check(said, [edited, opened].map(ev))[0].ok, true)
-  assert.equal(check(said, [looked, edited].map(ev))[0].ok, false)
-  assert.equal(check(said, [edited].map(ev))[0].ok, false)
-  // Talk about a plan or code is not a visual claim.
-  assert.equal(check('The plan looks good to me.', [edited].map(ev)).length, 0)
+  assert.equal(check(said, [edited, looked].map(ev), true)[0].ok, true)
+  assert.equal(check(said, [edited, opened].map(ev), true)[0].ok, true)
+  assert.equal(check(said, [looked, edited].map(ev), true)[0].ok, false)
+  assert.equal(check(said, [edited].map(ev), true)[0].ok, false)
+  // Outside Expert rooms the claim is not read at all.
+  assert.equal(check(said, [edited].map(ev)).length, 0)
+  // Talk about a plan, a condition or the person's own work is not a claim about what was made.
+  for (const t of ['The plan looks good to me.', 'Let me know if the page looks good to you.', 'Check whether the layout looks right on your phone.', 'Your design looks great.', 'Once the page looks good, we can deploy.']) {
+    assert.equal(check(t, [edited].map(ev), true).length, 0, t)
+  }
+  assert.equal(check('The header now looks good.', [edited].map(ev), true).length, 1)
 })
 
 test('studio: craft kinds, checklists and the project\'s own design files', async () => {
@@ -847,7 +852,9 @@ test('studio: instructions change only when Studio is on, and stay the same turn
   assert.ok(!off.includes('Expert mode is on'))
   assert.ok(on.includes('Expert mode is on') && on.includes('DESIGN.md'))
   assert.equal(on, protocol(meta, crew[0], crew, 'workspace', undefined, [], [], 'claude', ['DESIGN.md']), 'byte for byte the same, so the cache holds')
-  // Only the agent leading the room hears about the rest of Lunchbox.
-  assert.ok(off.includes('propose_flow'))
-  assert.ok(!protocol(meta, crew[1], crew, 'workspace', undefined, [], [], 'claude', null).includes('propose_flow'))
+  // Only the agent leading the room hears about the rest of Lunchbox, and about offering flows
+  // only when it holds the tool.
+  assert.ok(off.includes('Lunchbox around this room') && !off.includes('propose_flow'))
+  assert.ok(protocol(meta, crew[0], crew, 'workspace', undefined, ['propose_flow'], [], 'claude', null).includes('offer one with propose_flow'))
+  assert.ok(!protocol(meta, crew[1], crew, 'workspace', undefined, ['propose_flow'], [], 'claude', null).includes('Lunchbox around this room'))
 })

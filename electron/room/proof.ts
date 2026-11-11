@@ -14,7 +14,7 @@ export const CLAIMS: Claim[] = [
   { id: 'types', label: 'the types check', said: /\b(type ?check(s|ing)?|types?)\b[^.\n]{0,30}\b(pass(es)?|clean|no errors)\b/i, ran: /\btsc\b|typecheck|mypy|pyright|vue-tsc/i },
   { id: 'lint', label: 'lint is clean', said: /\blint(s|ing|er)?\b[^.\n]{0,30}\b(pass(es)?|clean|no (errors|warnings))\b/i, ran: /\blint\b|eslint|ruff|flake8|clippy|biome|golangci/i },
   { id: 'pushed', label: 'it is pushed', said: /\b(i(?:'ve| have)?\s+)?pushed\b(?![^.\n]{0,20}\b(yet|later|soon)\b)|\bis (now )?(on|up on) (github|gitlab|the remote)\b/i, ran: /\bgit\b(?![^|;&\n]*--dry-run)[^|;&\n]*\bpush\b/i },
-  { id: 'looks', label: 'it looks right', looked: true, said: /\b(the|this|your|my)\s+(page|site|website|design|layout|ui|screen|hero|header|footer|landing page|poster|logo|icon|banner|graphic|render|model|scene|deck|slides?)\s+(now\s+)?(looks|is looking)\s+(good|great|right|clean|polished|correct|sharp|perfect|professional|consistent)\b|\bpixel[- ]perfect\b|\bvisually (checked|verified|correct)\b/i, ran: /\bscreen(shot|capture)\b|--screenshot|\bplaywright\b[^|;&\n]*\bscreenshot\b|\bblender\b[^|;&\n]*\s-(f|a|b)\b|\brender\b/i },
+  { id: 'looks', label: 'it looks right', looked: true, said: /\b(the|this|my)\s+(page|site|website|design|layout|ui|screen|hero|header|footer|landing page|poster|logo|icon|banner|graphic|render|model|scene|deck|slides?)\s+(now\s+)?(looks|is looking)\s+(good|great|right|clean|polished|correct|sharp|perfect|professional|consistent)\b|\bpixel[- ]perfect\b|\bvisually (checked|verified|correct)\b/i, ran: /\bscreen(shot|capture)\b|--screenshot|\bplaywright\b[^|;&\n]*\bscreenshot\b|\bblender\b[^|;&\n]*\s-(f|a|b)\b|\brender\b/i },
   { id: 'lighthouse', label: 'the Lighthouse score', said: /\blighthouse\b[^.\n]{0,40}\b(\d{2,3}|perfect|green|pass(es)?)\b/i, ran: /lighthouse|lhci/i },
 ]
 
@@ -44,13 +44,17 @@ export function history(events: Event[]) {
 // "I couldn't get the tests to pass" or "haven't pushed yet" is not a claim.
 const DENIED = /(\bnot|n't|\bnever|\bcould not|\bcannot|\bunable|\bfail(s|ed)? to|\byet to|\bno longer)\b[^.\n]{0,40}$/i
 
-export function check(text: string, events: Event[]): Proof[] {
+// looks is on in Expert rooms where the agent could make an image; elsewhere that claim is not read.
+export function check(text: string, events: Event[], looks = false): Proof[] {
   const steps = history(events)
   const lastEdit = steps.filter((s) => s.edit).pop()?.seq ?? -1
   const out: Proof[] = []
   for (const c of CLAIMS) {
+    if (c.looked && !looks) continue
     const hit = text.match(c.said)
     if (!hit || DENIED.test(text.slice(Math.max(0, hit.index! - 60), hit.index!)) || /^\S*\s*pushed (back|through|aside|out)\b/i.test(text.slice(hit.index!, hit.index! + 30))) continue
+    // "Let me know if the page looks good" or "once the layout looks right" is not a claim.
+    if (c.looked && /\b(if|whether|once|when|until|before|after|so that|make sure)\b[^.\n]{0,40}$/i.test(text.slice(Math.max(0, hit.index! - 60), hit.index!))) continue
     if (c.looked) {
       const looks = steps.filter((s) => s.look || (s.command && c.ran.test(s.command) && s.exit === 0))
       const seen = looks.filter((s) => s.seq > lastEdit).pop()

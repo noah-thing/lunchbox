@@ -49,6 +49,17 @@ console.log('room studio pressed:', await page.getAttribute('.room .pill.expert'
 await page.screenshot({ path: out + '4-room.png' })
 console.log('room wide', JSON.stringify(await fits()))
 await size(700, 760); await page.waitForTimeout(500); await page.screenshot({ path: out + '5-room-narrow.png' }); console.log('room narrow', JSON.stringify(await fits()))
+for (const w of [1680, 1440, 1280, 1100, 960, 820]) {
+  await size(w, 860); await page.waitForTimeout(450)
+  const info = await page.evaluate(() => {
+    const c = document.querySelector('.room .composer').getBoundingClientRect().width
+    const label = getComputedStyle(document.querySelector('.room .pill.expert')).fontSize !== '0px'
+    return { composer: Math.round(c), labels: label }
+  })
+  console.log('window', w, JSON.stringify(info), JSON.stringify(await fits()))
+  if (w === 1100) await page.screenshot({ path: out + '6-room-1100.png' })
+}
+await size(1440, 900)
 await page.click('.room .pill.expert')
 await page.waitForTimeout(400)
 console.log('after toggle off:', await page.getAttribute('.room .pill.expert', 'aria-pressed'))

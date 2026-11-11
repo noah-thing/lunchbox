@@ -7,8 +7,9 @@ import { join } from 'node:path'
 
 // expert_look in a real Electron: a local page captured at desktop and phone width, then full
 // length, and a path outside the folder refused. node test/look.mjs
-// Built inside the project so axe-core resolves from node_modules, as it does in the app.
-const out = new URL('../out/look-test/', import.meta.url).pathname
+// Built under node_modules/.cache: axe-core resolves from there as it does in the app, and
+// nothing in it is ever packaged.
+const out = new URL('../node_modules/.cache/lunchbox-look-test/', import.meta.url).pathname
 mkdirSync(out, { recursive: true })
 const work = mkdtempSync(join(tmpdir(), 'lunchbox-look-work-'))
 writeFileSync(join(work, 'page.html'), `<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><style>body{margin:0;font:18px system-ui;background:#f4f1ea;color:#1b1a18}section{min-height:120vh;padding:48px}h1{font-size:clamp(32px,6vw,72px);margin:0}</style><section><h1>Studio look</h1><p>First screen.</p></section><section><p>Below the fold.</p></section>`)

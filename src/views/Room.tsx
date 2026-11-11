@@ -16,6 +16,9 @@ import { Composer } from './Composer'
 
 type Data = { meta: RoomMeta; events: Event[]; live: Live }
 type Say = Extract<Event, { kind: 'say' }>
+// The last hand back each room's message box received, kept while the app runs.
+const given = new Map<string, number>()
+
 type Actions = {
   decide(ref: string, i: number): void
   pick(arena: string, who: string): void
@@ -118,9 +121,11 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
 
   // Defined before the loading return: the shortcut can fire while the room is still loading.
   const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
-  // Queued text handed back to the message box, once per hand back rather than on every live update.
+  // Queued text handed back to the message box, once per hand back: not on every live update, and
+  // not again when the room is opened later.
   const back = data?.live.back
-  const returned = useMemo(() => back, [back?.n])
+  const returned = useMemo(() => (back && given.get(id) !== back.n ? back : undefined), [id, back?.n])
+  useEffect(() => { if (returned) given.set(id, returned.n) }, [id, returned])
   if (!data) return failed
     ? (
       <div className="room loading">

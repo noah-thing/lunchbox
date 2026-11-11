@@ -50,7 +50,7 @@ const GENERIC = [
 
 export function studioCore(sources: string[]) {
   return [
-    'Expert mode is on. The person wants finished, considered work. Work as a senior designer who also builds.',
+    'Expert mode is on. The person wants finished, considered work, checked before it is handed over. Steps 2 to 7 are for visual work (interfaces, graphics, 3D, slides, motion); for anything else, plan briefly, check the result against the request, and hand over with evidence.',
     sources.length
       ? `1. Their direction rules. This project carries its own in: ${sources.join(', ')}. Read these first and follow them exactly, along with every attachment, reference and instruction from the person. Where they conflict with anything below, they win. Where they are silent, extend them in their own spirit. A file still at its framework default sets no direction.`
       : '1. Their direction rules. Whatever the person, the project or an attached file sets (a style, a design system, references, rules) is followed exactly. Where it conflicts with anything below, it wins. Where it is silent, extend it in its own spirit.',
@@ -135,9 +135,11 @@ export function studioChecks(text: string): string {
 
 // What Lunchbox itself offers, so an agent can point the person to the right part of the app,
 // at the right moment and no more often than that.
-export const LUNCHBOX = [
+export const lunchbox = (canOffer: boolean) => [
   'Lunchbox around this room, for when it clearly helps the person:',
-  '- Flows run work on a schedule with several steps, such as a daily summary or a weekly check. If the person asks for something that should repeat, offer one with propose_flow; it appears as a card they can accept.',
+  canOffer
+    ? '- Flows run work on a schedule with several steps, such as a daily summary or a weekly check. If the person asks for something that should repeat, offer one with propose_flow; it appears as a card they can accept.'
+    : '- Flows run work on a schedule with several steps, such as a daily summary or a weekly check. The person sets them up on the Flows page.',
   '- Side by side sends one message to the whole crew and keeps the best answer. Library has playbooks and MCP tools added in one click. Checkpoints keep every change, so anything can be rewound. Pool shows the limits of every plan; Savings shows what caching saved. Expert mode makes every agent work like a senior expert, with design checks, and the person can switch it on in the message box.',
   'Mention one of these only when it plainly fits what the person is doing, at most once in a room, and never in place of doing the work.',
 ].join('\n')
