@@ -111,6 +111,7 @@
         "releaseType": "release"
       }
     ],
-    "artifactName": "Lunchbox-${version}-${os}-${arch}.${ext}"
+    "artifactName": "Lunchbox-${version}-${os}-${arch}.${ext}",
+    "afterPack": "scripts/adhoc-sign.cjs"
   }
 }
