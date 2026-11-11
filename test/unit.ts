@@ -816,7 +816,7 @@ test('takeover lines say what went wrong, without terminal colours', () => {
 
 test('proof: a look claim needs an image of the work made after the last edit', () => {
   const edited = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'edit', path: 'index.html', change: 'edit' }] }
-  const looked = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'tool', name: 'mcp__lunchbox__studio_look', detail: 'index.html' }] }
+  const looked = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'tool', name: 'mcp__lunchbox__expert_look', detail: 'index.html' }] }
   const opened = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'tool', name: 'Read', detail: 'looks/home-phone.png' }] }
   const said = 'The page looks clean on both widths now.'
   assert.equal(check(said, [edited, looked].map(ev))[0].ok, true)
@@ -844,8 +844,8 @@ test('studio: instructions change only when Studio is on, and stay the same turn
   const crew = [agent('claude'), agent('codex')]
   const off = protocol(meta, crew[0], crew, 'workspace', undefined, [], [], 'claude', null)
   const on = protocol(meta, crew[0], crew, 'workspace', undefined, [], [], 'claude', ['DESIGN.md'])
-  assert.ok(!off.includes('Studio is on'))
-  assert.ok(on.includes('Studio is on') && on.includes('DESIGN.md'))
+  assert.ok(!off.includes('Expert mode is on'))
+  assert.ok(on.includes('Expert mode is on') && on.includes('DESIGN.md'))
   assert.equal(on, protocol(meta, crew[0], crew, 'workspace', undefined, [], [], 'claude', ['DESIGN.md']), 'byte for byte the same, so the cache holds')
   // Only the agent leading the room hears about the rest of Lunchbox.
   assert.ok(off.includes('propose_flow'))

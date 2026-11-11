@@ -126,7 +126,7 @@ export const AXE_RUN = `axe.run(document, { runOnly: { type: 'tag', values: ['wc
 const ORDER: Record<string, number> = { critical: 0, serious: 1, moderate: 2, minor: 3 }
 
 export function report(target: string, views: Measured[], axe: Axe[] | null, errors: string[]): string {
-  const lines = [`Studio audit of ${target}`]
+  const lines = [`Audit of ${target}`]
   let n = 0
   // A problem already listed for an earlier width is not listed again, only noted.
   const seen = new Set<string>()
@@ -155,6 +155,6 @@ export function report(target: string, views: Measured[], axe: Axe[] | null, err
     lines.push('', `Design system on the desktop view: ${notes.join('; ')}.`)
   }
   lines.push('', errors.length ? `Console errors (${errors.length}): ${errors.slice(0, 4).join(' | ')}` : 'Console errors: none')
-  lines.push('', n ? 'Fix the most serious problems first, then run studio_audit again to confirm.' : 'Nothing to fix from the measurements. Still look at the screenshots for what numbers cannot judge.')
+  lines.push('', n ? 'Fix the most serious problems first, then run expert_audit again to confirm.' : 'Nothing to fix from the measurements. Still look at the screenshots for what numbers cannot judge.')
   return lines.join('\n')
 }

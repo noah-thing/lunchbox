@@ -263,7 +263,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .rise:has(>.composer){position:relative;z-index:4}
 @container (max-width:480px){
   .cbar .pilltext{display:none}
-  .cbar .pill.split,.cbar .pill.studio{font-size:0;gap:0}
+  .cbar .pill.split,.cbar .pill.expert{font-size:0;gap:0}
   .cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 }
 .cbar{display:flex;align-items:center;gap:4px;padding:8px}

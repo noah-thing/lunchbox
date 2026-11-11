@@ -22,7 +22,7 @@ type Step = { seq: number; command?: string; exit?: number | null; edit?: boolea
 
 // Tools that produce or open an image of the work: Lunchbox's own look and screenshot tools,
 // a render, or reading a picture file.
-const LOOK_TOOL = /studio_look|screenshot|render/i
+const LOOK_TOOL = /expert_look|screenshot|render/i
 const IMAGE = /\.(png|jpe?g|webp|gif|avif)\b/i
 
 export function history(events: Event[]) {

@@ -189,9 +189,9 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           </button>
         )}
         {setStudio && !shell && (
-          <button className={`pill studio${studio ? ' open' : ''}`} onClick={() => setStudio(!studio)} aria-pressed={studio}
-            title="Studio: agents set a direction, look at what they make and refine it before handing over. Your own design files and references always come first.">
-            <IconStudio />Studio
+          <button className={`pill expert${studio ? ' open' : ''}`} onClick={() => setStudio(!studio)} aria-pressed={studio}
+            title="Expert mode: agents work like senior experts. They set a direction, look at what they make and refine it before handing over. Your own design files and references always come first.">
+            <IconStudio />Expert
           </button>
         )}
         {shell && <span className="shellnote">Runs on {machine()}</span>}

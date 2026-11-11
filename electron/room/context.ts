@@ -17,8 +17,8 @@ const TOOL_LINES: Record<string, string> = {
   make_image: 'make_image creates an image and saves it in the folder.',
   remember: 'remember saves a finding to the shared memory.',
   browser_open: 'browser_open, browser_click and browser_type drive the Lunchbox browser the person is watching; use it to check what you build on localhost and take browser_screenshot to show it.',
-  studio_look: 'studio_look captures a page or local HTML file at desktop and phone width, or a whole page top to bottom, and saves the images in the folder for you to read.',
-  studio_audit: 'studio_audit measures a page at desktop and phone width and lists layout, accessibility and design system problems with the elements they are on.',
+  expert_look: 'expert_look captures a page or local HTML file at desktop and phone width, or a whole page top to bottom, and saves the images in the folder for you to read.',
+  expert_audit: 'expert_audit measures a page at desktop and phone width and lists layout, accessibility and design system problems with the elements they are on.',
   propose_flow: 'propose_flow offers the person a scheduled flow as a card they can accept.',
 }
 

@@ -50,18 +50,18 @@ const GENERIC = [
 
 export function studioCore(sources: string[]) {
   return [
-    'Studio is on. The person wants finished, considered work. Work as a senior designer who also builds.',
+    'Expert mode is on. The person wants finished, considered work. Work as a senior designer who also builds.',
     sources.length
       ? `1. Their direction rules. This project carries its own in: ${sources.join(', ')}. Read these first and follow them exactly, along with every attachment, reference and instruction from the person. Where they conflict with anything below, they win. Where they are silent, extend them in their own spirit. A file still at its framework default sets no direction.`
       : '1. Their direction rules. Whatever the person, the project or an attached file sets (a style, a design system, references, rules) is followed exactly. Where it conflicts with anything below, it wins. Where it is silent, extend it in its own spirit.',
     '2. Decide before building new visual work. In three lines: who it is for and what they should do or feel; one direction concrete enough to be wrong (a period, a material, a printed object, a named maker or place); what that rules out. If the design would still fit under another brand\'s name, sharpen it. Then fix the system: type families and scale, colours with roles, spacing unit, radius. For existing work, name the system already there and stay inside it.',
     `3. Unless asked for, avoid the machine made look: ${GENERIC.join('; ')}.`,
     '4. Build from the system: tokens first, then parts that use only those tokens.',
-    '5. Look at the real result. Capture pages with studio_look at desktop and phone width (or browser_screenshot), render 3D and graphics to image files, then open the images and read them.',
+    '5. Look at the real result. Capture pages with expert_look at desktop and phone width (or browser_screenshot), render 3D and graphics to image files, then open the images and read them.',
     '6. Criticise honestly. In each image, find the weakest area first and name where it is. Squint: note what reads first, second and third, and compare with the order you intended, the direction and the checklist. List faults as what, where and the fix. Fix the worst three and capture again. New visual work gets two rounds at least; stop when a round finds nothing a careful person would notice, after four at most. Praise is no finding.',
     '7. A second eye. When a crewmate can read images, ask it once for the three weakest points in the final images, passing the paths and the direction. Act on what holds up.',
     '8. Hand over with evidence: what you checked, the image paths, and what is still weak or unverified. Every claim about how it looks rests on an image made after your last edit. If nothing could capture it, say so.',
-    'Keep the size of the job. A one line fix stays a one line fix: skip steps 2 and 7, look once, report. Studio never adds pages, features, restyling or dependencies nobody asked for. Offer such an idea in one line and let the person choose.',
+    'Keep the size of the job. A one line fix stays a one line fix: skip steps 2 and 7, look once, report. Expert mode never adds pages, features, restyling or dependencies nobody asked for. Offer such an idea in one line and let the person choose.',
   ].join('\n')
 }
 
@@ -130,7 +130,7 @@ export function studioChecks(text: string): string {
   const kinds = crafts(text)
   if (!kinds.length) return ''
   const names: Record<Craft, string> = { ui: 'interface', graphic: 'graphic design', '3d': '3D', slides: 'slides', motion: 'motion', writing: 'writing', code: 'code' }
-  return kinds.map((k) => `Studio checklist for ${names[k]}:\n${CHECKS[k].map((c) => `- ${c}`).join('\n')}`).join('\n\n')
+  return kinds.map((k) => `Expert checklist for ${names[k]}:\n${CHECKS[k].map((c) => `- ${c}`).join('\n')}`).join('\n\n')
 }
 
 // What Lunchbox itself offers, so an agent can point the person to the right part of the app,
@@ -138,6 +138,6 @@ export function studioChecks(text: string): string {
 export const LUNCHBOX = [
   'Lunchbox around this room, for when it clearly helps the person:',
   '- Flows run work on a schedule with several steps, such as a daily summary or a weekly check. If the person asks for something that should repeat, offer one with propose_flow; it appears as a card they can accept.',
-  '- Side by side sends one message to the whole crew and keeps the best answer. Library has playbooks and MCP tools added in one click. Checkpoints keep every change, so anything can be rewound. Pool shows the limits of every plan; Savings shows what caching saved. Studio is a working mode for design that the person can switch on in the message box.',
+  '- Side by side sends one message to the whole crew and keeps the best answer. Library has playbooks and MCP tools added in one click. Checkpoints keep every change, so anything can be rewound. Pool shows the limits of every plan; Savings shows what caching saved. Expert mode makes every agent work like a senior expert, with design checks, and the person can switch it on in the message box.',
   'Mention one of these only when it plainly fits what the person is doing, at most once in a room, and never in place of doing the work.',
 ].join('\n')

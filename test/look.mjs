@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// studio_look in a real Electron: a local page captured at desktop and phone width, then full
+// expert_look in a real Electron: a local page captured at desktop and phone width, then full
 // length, and a path outside the folder refused. node test/look.mjs
 // Built inside the project so axe-core resolves from node_modules, as it does in the app.
 const out = new URL('../out/look-test/', import.meta.url).pathname

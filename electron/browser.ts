@@ -416,7 +416,7 @@ export class Browser {
         }),
       },
       {
-        name: 'studio_look',
+        name: 'expert_look',
         description: 'Look at your work the way people will see it: opens a URL (localhost works) or an HTML file in the folder in a hidden window, and saves screenshots at desktop (1440px) and phone (390px) width. Set full for the whole page top to bottom. Returns the image paths; open the images to judge the result.',
         input: {
           target: { type: 'string', description: 'A URL, a localhost address such as localhost:3000, or a path to an HTML file inside the folder' },
@@ -427,7 +427,7 @@ export class Browser {
         run: (a) => this.look(workspace, String(a.target ?? ''), a.full === true, typeof a.name === 'string' ? a.name : ''),
       },
       {
-        name: 'studio_audit',
+        name: 'expert_audit',
         description: 'Measure a page instead of judging it by eye, at desktop and phone width: sideways scrolling, overlapping or cut off text, small text and tap targets, long lines, broken or unsized images, the fonts, sizes and colours actually in use, spacing off a 4px grid, console errors, and accessibility through axe-core (WCAG 2.2 AA, including contrast). Returns a numbered list of problems with the elements they are on.',
         input: { target: { type: 'string', description: 'A URL, a localhost address such as localhost:3000, or a path to an HTML file inside the folder' } },
         required: ['target'],

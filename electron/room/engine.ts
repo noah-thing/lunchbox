@@ -725,7 +725,7 @@ export class Engine {
     this.changed(room)
 
     const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
-      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? []).filter((t) => meta.studio || !t.name.startsWith('studio_'))]
+      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
       : []
     const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
