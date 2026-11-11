@@ -151,10 +151,11 @@ export function asks(text: string, handles: string[]) {
   let fenced = false
   for (const line of text.split('\n')) {
     // Only "@handle:" asks. "@codex, thanks" is talk, and a line inside a code block is code. Small
-    // models dress the line up as a bullet, a quote or in bold ("- **@codex:** ..."), so those wrappers
-    // are looked past.
+    // models dress the line up: bullets, numbers, quotes and headings in front, any of them stacked,
+    // and bold, italics or backticks around the handle ("> - **@codex**: ..."), so all of that is
+    // looked past. A checklist step that names someone is a plan, not an ask.
     if (/^\s*(```|~~~)/.test(line)) fenced = !fenced
-    const m = fenced ? null : line.match(/^\s*(?:[-*>]\s+|\d+[.)]\s+)?(?:\*\*|__)?@([a-z][\w-]*)(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.+)$/i)
+    const m = fenced ? null : line.match(/^\s*(?:(?:[-*+>]|\d+[.)]|#{1,6})\s*)*(?:\*\*|__|[*_`])*@([a-z][\w-]*?)(?:\*\*|__|[*_`])*\s*:\s*(?:\*\*|__|[*_`])*\s*(.+?)\s*$/i)
     const to = m && handles.find((h) => h.toLowerCase() === m[1].toLowerCase())
     if (m && to) out.push({ to, ask: m[2].trim() })
     else rest.push(line)

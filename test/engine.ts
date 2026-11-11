@@ -404,7 +404,7 @@ test('room: an Ollama main agent calls a crewmate', { skip: process.platform ===
     assert.ok(agents.find((a) => a.id === 'ollama')?.ready, 'the stand-in Ollama counts as ready')
     store.saveSettings({ route: 'order' })
 
-    for (const line of ['@grok: what is trending today?', '- **@grok:** what is trending today?']) {
+    for (const line of ['@grok: what is trending today?', '- **@grok:** what is trending today?', '> `@grok`: what is trending today?', '### @Grok: what is trending today?']) {
       ask = line
       const room = engine.create({ crew: ['ollama', 'grok'], workspace: root })
       engine.send(room.id, 'Find out what is trending', 'workspace')

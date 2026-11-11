@@ -200,6 +200,14 @@ test('asks: a bullet, a quote or bold around the handle still asks', () => {
   assert.deepEqual(r.asks.map((a) => [a.to, a.ask]), [['codex', 'build the page'], ['grok', 'search X'], ['gemini', 'check the copy'], ['codex', 'run the tests']])
   assert.equal(r.text, 'Plan:')
   assert.equal(asks('- @codex, thanks for that', ['codex']).asks.length, 0, 'a comma is still talk')
+  const more = [
+    '**@grok**: search X', '*@grok:* search X', '`@grok`: search X', '### @grok: search X', '> - **@grok:** search X',
+    '2) __@grok__: search X', '+ @Grok : search X', '@grok:search X', '  -   @grok:   search X  ',
+  ]
+  for (const line of more) assert.deepEqual(asks(line, ['grok']).asks, [{ to: 'grok', ask: 'search X' }], line)
+  assert.deepEqual(asks('- @my-tool: run it\n- @my_bot: run it', ['my-tool', 'my_bot']).asks.map((a) => a.to), ['my-tool', 'my_bot'])
+  assert.equal(asks('- [ ] @grok: search X', ['grok']).asks.length, 0, 'a checklist step is a plan, not an ask')
+  assert.equal(asks('I will ask @grok: search X', ['grok']).asks.length, 0, 'mid sentence is talk')
 })
 
 test('asks: a comma is talk and a code block is code, neither hands off', () => {
