@@ -6,7 +6,7 @@ import { claudeLike, codex, gemini, limitOf, plain, reason } from '../electron/a
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
 import { chat, PROVIDERS } from '../electron/agents/http'
-import { cacheSaving, claudeCost } from '../shared/prices'
+import { cacheSaving, claudeCost, codexSaving, costSaving } from '../shared/prices'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
@@ -776,4 +776,20 @@ test('band patterns: every one stays in range, holds still for a still frame, an
     }
   }
   for (const last of NAMES) for (const roll of [0, 0.5, 0.999]) assert.notEqual(nextPattern(last, roll), last)
+})
+
+test('savings: worked back from a reported cost, and Codex priced in credits', () => {
+  // A Grok row from a real ledger: $2 a million fresh, cached reads counted at a quarter.
+  const grok = costSaving('grok', { input: 21066, output: 151, cached: 10112, cost: 0.048094, written: 0 })!
+  assert.ok(grok > 0.014 && grok < 0.016, String(grok))
+  // Claude rows recorded before 0.1.2 carry no gross; a cached read is a tenth of a fresh one.
+  const claude = costSaving('claude', { input: 31717, output: 61, cached: 11507, cost: 0.0810522 })!
+  assert.ok(claude > 0.02 && claude < 0.03, String(claude))
+  assert.equal(costSaving('ollama', { input: 900, output: 10, cached: 500, cost: 0 }), null)
+  assert.equal(costSaving('grok', { input: 900, output: 10, cached: 0, cost: 0.01 }), null)
+  // GPT-6.1 Terra: 25 - 1.25 credits a million at $0.04 a credit.
+  assert.ok(Math.abs(codexSaving('gpt-6.1-terra', 1_000_000) - 0.95) < 1e-9)
+  const turn = codex('gpt-6.1-terra')
+  turn.line({ type: 'turn.completed', usage: { input_tokens: 2_000_000, cached_input_tokens: 1_000_000, output_tokens: 10 } })
+  assert.ok(Math.abs(turn.turn.usage.gross! - 0.95) < 1e-9)
 })

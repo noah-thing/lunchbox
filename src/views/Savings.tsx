@@ -17,7 +17,7 @@ const reused = (u: { cached: number; kept?: number }) => u.cached + (u.kept ?? 0
 const ratio = (u: { input: number; cached: number; kept?: number }) => (read(u) ? reused(u) / read(u) : 0)
 // What the cached reads saved at list price. Rows from before it was recorded fall back to the net.
 const gross = (u: Usage) => u.gross ?? Math.max(0, u.saved ?? 0)
-// Only Claude has published prices in Lunchbox; the rest are counted in tokens, never guessed.
+// Agents that report no cost and have no price here are counted in tokens, never guessed.
 const priced = (u: Usage) => u.gross !== undefined || u.saved !== undefined
 const cash = (n: number) => (n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00')
 const pct = (n: number) => (n > 0 && n < 0.005 ? '<1%' : `${(n * 100).toFixed(n >= 0.995 || n === 0 ? 0 : 1)}%`)
@@ -54,8 +54,8 @@ export function Savings({ go }: { go: (v: View) => void }) {
         <div className="sv-kpis rise" style={{ '--i': 1 } as CSSProperties}>
           <Kpi label="Saved with prompt caching" value={gross(week) > 0 ? cash(gross(week)) : reused(week) > 0 ? `${tokens(reused(week))} tokens` : '$0.00'}
             series={last7.map((d) => d.gross ?? Math.max(0, d.saved))}
-            note={gross(week) <= 0 && reused(week) > 0 ? 'Counted in tokens for agents without published prices' : undefined}
-            info={`At API list prices: cached reads cost about a tenth of a fresh read. Writing the cache costs a little extra on the first turn of a room${gross(week) > 0 ? `, ${cash(Math.max(0, gross(week) - (week.saved ?? 0)))} this week, so the net saving is ${cash(Math.max(0, week.saved ?? 0))}` : ''}. Claude has published prices in Lunchbox; other agents are counted in tokens. On a plan this means more room before your limit.`} />
+            note={gross(week) <= 0 && reused(week) > 0 ? 'Counted in tokens for agents that report no cost' : undefined}
+            info={`At API list prices: cached reads cost about a tenth of a fresh read. Writing the cache costs a little extra on the first turn of a room${gross(week) > 0 ? `, ${cash(Math.max(0, gross(week) - (week.saved ?? 0)))} this week, so the net saving is ${cash(Math.max(0, week.saved ?? 0))}` : ''}. Claude is priced per model; other agents are worked out from the cost they report, with a cached read counted at a quarter of a fresh one, so their saving is if anything higher. Agents that report no cost are counted in tokens. On a plan this means more room before your limit.`} />
           <Kpi label="Tokens saved" value={tokens(reused(week))} series={last7.map(reused)}
             info="Tokens your agents read without paying full price: either the provider had them cached and charged about a tenth, or the agent already had them and Lunchbox skipped sending them." />
           <Kpi label="Savings rate" value={pct(ratio(week))} series={last7.map(ratio)} unit

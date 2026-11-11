@@ -1,4 +1,4 @@
-import { cacheSaving, readSaving } from '../../shared/prices'
+import { cacheSaving, codexSaving, readSaving } from '../../shared/prices'
 import type { Act, Usage } from '../../shared/types'
 
 // Each CLI prints one JSON object per line. A parser folds those lines into a Turn and reports
@@ -220,7 +220,7 @@ const unwrap = (cmd: string) => cmd.match(/^\S*(?:zsh|bash|sh)\s+-l?c\s+'([\s\S]
 
 // Codex prints thread and item lifecycle events. Warnings arrive as items of type "error", which
 // do not end the turn; only turn.failed and top level errors do.
-export function codex() {
+export function codex(model = '') {
   const turn = newTurn()
   function line(o: any): Update | null {
     switch (o.type) {
@@ -250,7 +250,9 @@ export function codex() {
       }
       case 'turn.completed': {
         const u = o.usage ?? {}
-        turn.usage = { input: (u.input_tokens ?? 0) - (u.cached_input_tokens ?? 0), output: (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0), cached: u.cached_input_tokens ?? 0, cost: 0 }
+        const cached = u.cached_input_tokens ?? 0
+        const saved = codexSaving(model, cached)
+        turn.usage = { input: (u.input_tokens ?? 0) - cached, output: (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0), cached, cost: 0, saved, gross: saved }
         return null
       }
       case 'turn.failed':
