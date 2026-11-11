@@ -813,3 +813,41 @@ test('takeover lines say what went wrong, without terminal colours', () => {
   assert.equal(wallWhy('OpenCode', 'OpenCode is not installed on this computer'), 'OpenCode is not installed on this computer')
   assert.equal(wallWhy('Codex', 'hit its limit'), 'Codex hit its limit')
 })
+
+test('proof: a look claim needs an image of the work made after the last edit', () => {
+  const edited = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'edit', path: 'index.html', change: 'edit' }] }
+  const looked = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'tool', name: 'mcp__lunchbox__studio_look', detail: 'index.html' }] }
+  const opened = { kind: 'say', who: 'claude', text: '', acts: [{ t: 'tool', name: 'Read', detail: 'looks/home-phone.png' }] }
+  const said = 'The page looks clean on both widths now.'
+  assert.equal(check(said, [edited, looked].map(ev))[0].ok, true)
+  assert.equal(check(said, [edited, opened].map(ev))[0].ok, true)
+  assert.equal(check(said, [looked, edited].map(ev))[0].ok, false)
+  assert.equal(check(said, [edited].map(ev))[0].ok, false)
+  // Talk about a plan or code is not a visual claim.
+  assert.equal(check('The plan looks good to me.', [edited].map(ev)).length, 0)
+})
+
+test('studio: craft kinds, checklists and the project\'s own design files', async () => {
+  const { crafts, studioChecks, studioCore } = await import('../shared/studio')
+  assert.ok(crafts('Model a low poly chair in Blender').includes('3d'))
+  assert.ok(crafts('Design a logo and a poster for the launch').includes('graphic'))
+  assert.ok(crafts('Redesign the landing page hero').includes('ui'))
+  assert.equal(studioChecks('What time is it in Tokyo?'), '')
+  assert.ok(studioChecks('Make a pitch deck').length > 0)
+  assert.ok(studioCore(['DESIGN.md', 'tokens.json']).includes('DESIGN.md, tokens.json'))
+})
+
+test('studio: instructions change only when Studio is on, and stay the same turn to turn', async () => {
+  const { protocol } = await import('../electron/room/context')
+  const meta = { id: 'r', name: 'Room', created: 0, updated: 0, crew: ['claude', 'codex'], workspace: '/w', sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 } } as RoomMeta
+  const agent = (id: string) => ({ id, short: id, name: id, maker: 'x', via: 'cli', good: 'good', tools: true, ready: true, mark: id }) as never
+  const crew = [agent('claude'), agent('codex')]
+  const off = protocol(meta, crew[0], crew, 'workspace', undefined, [], [], 'claude', null)
+  const on = protocol(meta, crew[0], crew, 'workspace', undefined, [], [], 'claude', ['DESIGN.md'])
+  assert.ok(!off.includes('Studio is on'))
+  assert.ok(on.includes('Studio is on') && on.includes('DESIGN.md'))
+  assert.equal(on, protocol(meta, crew[0], crew, 'workspace', undefined, [], [], 'claude', ['DESIGN.md']), 'byte for byte the same, so the cache holds')
+  // Only the agent leading the room hears about the rest of Lunchbox.
+  assert.ok(off.includes('propose_flow'))
+  assert.ok(!protocol(meta, crew[1], crew, 'workspace', undefined, [], [], 'claude', null).includes('propose_flow'))
+})

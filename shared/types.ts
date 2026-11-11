@@ -56,6 +56,7 @@ export type DecideAction =
   | { type: 'ask'; who: string; text: string }
   | { type: 'retry'; who: string; tools: string[] }
   | { type: 'accept' }
+  | { type: 'flow'; flow: { name: string; steps: FlowStep[]; every?: Every; at?: string; day?: number } }
 
 export type Event = { id: string; at: number } & (
   | { kind: 'you'; text: string; to?: string[]; arena?: boolean; cat?: Category; lead?: string; files?: string[]; from?: 'flow' | 'phone' }
@@ -84,6 +85,11 @@ export type RoomMeta = {
   crew: string[]
   workspace: string
   pack?: string
+  // Studio: agents decide a direction, look at what they make and refine it before handing over.
+  studio?: boolean
+  // The project's own design files, found once when Studio is switched on, so the instructions stay
+  // the same turn to turn and files an agent creates later are never taken for the person's taste.
+  design?: string[]
   sessions: Record<string, string>
   seen: Record<string, Record<string, number>>
   heard: Record<string, number>

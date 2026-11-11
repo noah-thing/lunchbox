@@ -1,4 +1,4 @@
-import type { AgentInfo, Block } from '../../shared/types'
+import type { AgentInfo, Block, Every, FlowStep } from '../../shared/types'
 import type { Tool } from '../hands'
 
 export type Host = {
@@ -12,6 +12,8 @@ export type Host = {
   image(prompt: string, file?: string, size?: string): Promise<string>
   memory(): Block[]
   remember(title: string, text: string): void
+  offerFlow(flow: { name: string; steps: FlowStep[]; every?: Every; at?: string; day?: number }, why: string): string
+  lead: boolean
 }
 
 const SEARCHERS = { x: ['grok'], web: ['gemini', 'grok'] }
@@ -100,6 +102,34 @@ export function kit(h: Host): Tool[] {
       },
       required: ['prompt'],
       run: (a) => h.image(str(a.prompt, 'prompt'), typeof a.file === 'string' ? a.file : undefined, typeof a.size === 'string' ? a.size : undefined),
+    })
+  }
+
+  // Only the agent leading the room offers flows, and only one per room (the engine refuses more).
+  if (!h.nested && h.lead) {
+    tools.push({
+      name: 'propose_flow',
+      description: [
+        'Offer the person a Lunchbox flow: work that runs by itself on a schedule, with one or more steps, each a message to the crew. It appears as a card they accept or dismiss.',
+        'Use it only when the person wants something that clearly repeats (a daily digest, a weekly check, watching a page) or asks for automation. Never for one-off work, and never more than once in a room.',
+      ].join('\n'),
+      input: {
+        name: { type: 'string', description: 'A short name, such as "Weekly competitor check"' },
+        why: { type: 'string', description: 'One sentence on what it saves the person' },
+        steps: { type: 'array', items: { type: 'object', properties: { text: { type: 'string', description: 'The message for this step. {{date}} is today, {{last}} the previous run\'s result, {{previous}} the previous step\'s.' } }, required: ['text'] }, description: 'One to five steps, run in order' },
+        every: { type: 'string', enum: ['hour', 'day', 'weekday', 'week', 'manual'], description: 'How often it runs; manual runs only when started' },
+        at: { type: 'string', description: 'Time of day as HH:MM, 24 hour. Default 09:00' },
+        day: { type: 'number', description: 'For weekly flows, 0 is Sunday and 1 is Monday' },
+      },
+      required: ['name', 'steps', 'every'],
+      run: async (a) => {
+        const steps = (Array.isArray(a.steps) ? a.steps : []).map((s) => (typeof s === 'string' ? s : (s as { text?: unknown })?.text)).filter((x): x is string => typeof x === 'string' && !!x.trim()).slice(0, 5).map((text) => ({ text: text.trim() }))
+        if (!steps.length) throw new Error('A flow needs at least one step')
+        const every = ['hour', 'day', 'weekday', 'week'].includes(String(a.every)) ? (a.every as Every) : undefined
+        const at = typeof a.at === 'string' && /^\d{1,2}:\d{2}$/.test(a.at) ? a.at.padStart(5, '0') : undefined
+        const day = typeof a.day === 'number' && a.day >= 0 && a.day <= 6 ? Math.floor(a.day) : undefined
+        return h.offerFlow({ name: str(a.name, 'name').slice(0, 60), steps, every, at, day }, typeof a.why === 'string' ? a.why.trim().slice(0, 240) : '')
+      },
     })
   }
 

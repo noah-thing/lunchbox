@@ -140,7 +140,7 @@ function wire() {
   h('agents:models', (id: string) => modelsFor(id, store.keys()).catch((e: Error) => ({ error: e.message })))
   h('rooms', () => engine.summaries())
   h('room', (id: string) => ({ meta: store.room(id), events: store.events(id), live: engine.live(id) }))
-  h('room:create', (opts: { crew: string[]; workspace: string; pack?: string; name?: string; about?: string }) => {
+  h('room:create', (opts: { crew: string[]; workspace: string; pack?: string; name?: string; about?: string; studio?: boolean }) => {
     const folder = opts.workspace || roomFolder(opts.about ?? opts.name ?? '')
     mkdirSync(folder, { recursive: true })
     return engine.create({ ...opts, workspace: folder })
@@ -227,6 +227,7 @@ function wire() {
   })
   h('remote:unpair', () => { remote.unpair(); return remote.status() })
   h('room:stop', (id: string) => engine.stop(id))
+  h('room:studio', (id: string, on: boolean) => engine.setStudio(id, on))
   h('room:takeback', (id: string, queued: string) => engine.takeBack(id, queued))
   h('room:decide', (id: string, ref: string, index: number, access: Access) => { engine.decide(id, ref, index, access) })
   h('room:pick', (id: string, arena: string, who: string) => engine.pick(id, arena, who))
@@ -358,7 +359,7 @@ app.whenReady().then(async () => {
     ...(access === 'plan' ? [] : toolbox.tools()),
   ]
   limits = new Limits(store, (l) => { emit('limits', l); emit('ledger', engine.ledger()) }, () => engine.agents.filter((a) => a.found && a.via === 'cli').map((a) => a.id))
-  engine = new Engine(store, { emit, notify, packs, tools, turned: (who, u) => limits.turned(who, u) }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
+  engine = new Engine(store, { emit, notify, packs, tools, turned: (who, u) => limits.turned(who, u), flow: (f) => flows?.put(f) }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
   flows = new Flows(store, engine, { emit, notify })
   remote = new Remote(store, engine, { emit, defaults })
   wire()

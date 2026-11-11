@@ -2,7 +2,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Event, Proof } from '../../shared/types'
 
-type Claim = { id: string; label: string; said: RegExp; ran: RegExp }
+// A claim is settled by a command that exited 0 after the last edit, or for looks by an image
+// of the work made after the last edit: a screenshot, a render, or the agent opening one.
+type Claim = { id: string; label: string; said: RegExp; ran: RegExp; looked?: boolean }
 
 // What an agent says against what actually ran. A claim counts as proved only when a matching
 // command exited 0 after the last file edit in the room.
@@ -12,10 +14,16 @@ export const CLAIMS: Claim[] = [
   { id: 'types', label: 'the types check', said: /\b(type ?check(s|ing)?|types?)\b[^.\n]{0,30}\b(pass(es)?|clean|no errors)\b/i, ran: /\btsc\b|typecheck|mypy|pyright|vue-tsc/i },
   { id: 'lint', label: 'lint is clean', said: /\blint(s|ing|er)?\b[^.\n]{0,30}\b(pass(es)?|clean|no (errors|warnings))\b/i, ran: /\blint\b|eslint|ruff|flake8|clippy|biome|golangci/i },
   { id: 'pushed', label: 'it is pushed', said: /\b(i(?:'ve| have)?\s+)?pushed\b(?![^.\n]{0,20}\b(yet|later|soon)\b)|\bis (now )?(on|up on) (github|gitlab|the remote)\b/i, ran: /\bgit\b(?![^|;&\n]*--dry-run)[^|;&\n]*\bpush\b/i },
+  { id: 'looks', label: 'it looks right', looked: true, said: /\b(the|this|your|my)\s+(page|site|website|design|layout|ui|screen|hero|header|footer|landing page|poster|logo|icon|banner|graphic|render|model|scene|deck|slides?)\s+(now\s+)?(looks|is looking)\s+(good|great|right|clean|polished|correct|sharp|perfect|professional|consistent)\b|\bpixel[- ]perfect\b|\bvisually (checked|verified|correct)\b/i, ran: /\bscreen(shot|capture)\b|--screenshot|\bplaywright\b[^|;&\n]*\bscreenshot\b|\bblender\b[^|;&\n]*\s-(f|a|b)\b|\brender\b/i },
   { id: 'lighthouse', label: 'the Lighthouse score', said: /\blighthouse\b[^.\n]{0,40}\b(\d{2,3}|perfect|green|pass(es)?)\b/i, ran: /lighthouse|lhci/i },
 ]
 
-type Step = { seq: number; command?: string; exit?: number | null; edit?: boolean }
+type Step = { seq: number; command?: string; exit?: number | null; edit?: boolean; look?: string }
+
+// Tools that produce or open an image of the work: Lunchbox's own look and screenshot tools,
+// a render, or reading a picture file.
+const LOOK_TOOL = /studio_look|screenshot|render/i
+const IMAGE = /\.(png|jpe?g|webp|gif|avif)\b/i
 
 export function history(events: Event[]) {
   const steps: Step[] = []
@@ -26,6 +34,7 @@ export function history(events: Event[]) {
       for (const a of e.acts) {
         if (a.t === 'cmd') steps.push({ seq: seq++, command: a.command, exit: a.exit })
         if (a.t === 'edit') steps.push({ seq: seq++, edit: true })
+        if (a.t === 'tool' && a.ok !== false && (LOOK_TOOL.test(a.name) || (/^(read|view|image)/i.test(a.name.replace(/^mcp__\w+__/, '')) && IMAGE.test(a.detail)))) steps.push({ seq: seq++, look: `${a.name} ${a.detail}`.trim() })
       }
     }
   }
@@ -42,6 +51,13 @@ export function check(text: string, events: Event[]): Proof[] {
   for (const c of CLAIMS) {
     const hit = text.match(c.said)
     if (!hit || DENIED.test(text.slice(Math.max(0, hit.index! - 60), hit.index!)) || /^\S*\s*pushed (back|through|aside|out)\b/i.test(text.slice(hit.index!, hit.index! + 30))) continue
+    if (c.looked) {
+      const looks = steps.filter((s) => s.look || (s.command && c.ran.test(s.command) && s.exit === 0))
+      const seen = looks.filter((s) => s.seq > lastEdit).pop()
+      if (seen) out.push({ claim: c.label, ok: true, text: `looked at after the last edit: ${(seen.look ?? `\`${seen.command}\``).slice(0, 120)}` })
+      else out.push({ claim: c.label, ok: false, text: looks.length ? 'the last screenshot or render was taken before the latest edit' : 'no screenshot or render of it was made in this room' })
+      continue
+    }
     const runs = steps.filter((s) => s.command && c.ran.test(s.command))
     const after = runs.filter((s) => s.seq > lastEdit)
     const passed = after.filter((s) => s.exit === 0).pop()

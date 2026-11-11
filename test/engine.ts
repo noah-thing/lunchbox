@@ -108,7 +108,7 @@ test('room: borrowed hands over MCP', { skip: process.platform === 'win32' }, as
   assert.match(borrowed.ask, /^Search X for: agent limits/)
   const said = events[2] as Extract<typeof events[number], { kind: 'say' }>
   assert.match(said.text, /Grok found: 212 posts/)
-  assert.match(said.text, /Tools: ask_crewmate, bring_in, search_x, search_web, make_image, room_memory, remember/)
+  assert.match(said.text, /Tools: ask_crewmate, bring_in, search_x, search_web, make_image, propose_flow, room_memory, remember/)
   assert.ok(said.acts.some((a) => a.t === 'tool' && a.name === 'mcp__lunchbox__search_x'))
 
   engine.send(room.id, 'What is trending on X today?', 'workspace')
@@ -331,6 +331,32 @@ test('room: stop and edit hand queued messages back', { skip: process.platform =
   const asked = store.events(room.id).filter((e) => e.kind === 'you').map((e) => (e as { text: string }).text)
   assert.deepEqual(asked, ['Fix the login bug'], 'nothing queued lands in the room unanswered')
   assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 1, 'and no agent ran for it')
+  store.flush()
+})
+
+// An agent can offer a flow once per room. Accepting the card creates it with the room's crew
+// and folder, and never with full access, since a flow runs with nobody watching.
+test('room: a flow is offered once and created from the card', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-offer-'))
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const made: unknown[] = []
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [], flow: (f) => { made.push(f); return { ...f, id: 'f1', on: true, created: 0, runs: [] } as never } })
+  const room = engine.create({ crew: ['claude', 'codex'], workspace: root, studio: true })
+  assert.equal(store.room(room.id)!.studio, true)
+  const offer = (engine as unknown as { offerFlow: (r: string, w: string, f: unknown, why: string) => string }).offerFlow.bind(engine)
+  const flow = { name: 'Weekly competitor check', steps: [{ text: 'Check what changed on the three competitor sites since {{last}}' }], every: 'week', at: '09:00', day: 1 }
+  assert.match(offer(room.id, 'claude', flow, 'Saves the Monday check'), /Offered/)
+  assert.match(offer(room.id, 'claude', flow, 'Again'), /already offered/)
+  const cards = store.events(room.id).filter((e) => e.kind === 'decide')
+  assert.equal(cards.length, 1)
+  engine.decide(room.id, cards[0].id, 0, 'full')
+  assert.equal(made.length, 1)
+  assert.deepEqual({ ...(made[0] as object), steps: undefined }, { name: 'Weekly competitor check', steps: undefined, every: 'week', at: '09:00', day: 1, crew: ['claude', 'codex'], workspace: root, access: 'workspace', pack: undefined })
+  assert.ok(store.events(room.id).some((e) => e.kind === 'note' && /Created the flow/.test(e.text)))
+  engine.setStudio(room.id, false)
+  assert.equal(store.room(room.id)!.studio, undefined)
   store.flush()
 })
 

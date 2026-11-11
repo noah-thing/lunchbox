@@ -124,5 +124,8 @@
     ],
     "artifactName": "Lunchbox-${version}-${os}-${arch}.${ext}",
     "afterPack": "scripts/adhoc-sign.cjs"
+  },
+  "dependencies": {
+    "axe-core": "4.14.0"
   }
 }

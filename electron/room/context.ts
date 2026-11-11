@@ -1,5 +1,6 @@
 import type { Access, Act, AgentInfo, Event, Pack, RoomMeta } from '../../shared/types'
 import { habitRules } from '../../shared/habits'
+import { LUNCHBOX, studioCore } from '../../shared/studio'
 
 const ACCESS: Record<Access, string> = {
   plan: 'Plan. Read only: do not edit files or run commands that change anything. Investigate and propose.',
@@ -16,6 +17,9 @@ const TOOL_LINES: Record<string, string> = {
   make_image: 'make_image creates an image and saves it in the folder.',
   remember: 'remember saves a finding to the shared memory.',
   browser_open: 'browser_open, browser_click and browser_type drive the Lunchbox browser the person is watching; use it to check what you build on localhost and take browser_screenshot to show it.',
+  studio_look: 'studio_look captures a page or local HTML file at desktop and phone width, or a whole page top to bottom, and saves the images in the folder for you to read.',
+  studio_audit: 'studio_audit measures a page at desktop and phone width and lists layout, accessibility and design system problems with the elements they are on.',
+  propose_flow: 'propose_flow offers the person a scheduled flow as a card they can accept.',
 }
 
 // Connected MCP servers are named after their id: "github_create_issue" comes from GitHub.
@@ -25,7 +29,8 @@ const connected = (tools: string[]) => {
   return groups.size ? `Connected tools from: ${[...groups].join(', ')}. Use them when they fit better than guessing.` : ''
 }
 
-export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = [], habits: string[] = [], main = meta.crew[0]) {
+// studio is the list of the project's own design files when Studio is on, and null when it is off.
+export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], access: Access, pack?: Pack, tools: string[] = [], habits: string[] = [], main = meta.crew[0], studio: string[] | null = null) {
   const rules = habitRules(habits)
   const mates = crew
     .filter((a) => a.id !== me.id)
@@ -48,6 +53,8 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
     ].filter(Boolean).join('\n'),
     pack ? `Room focus, ${pack.name}: ${pack.brief}` : '',
     rules.length ? `How this person wants the work done:\n${rules.join('\n')}` : '',
+    studio ? studioCore(studio) : '',
+    main === me.id ? LUNCHBOX : '',
   ].filter(Boolean).join('\n\n')
 }
 

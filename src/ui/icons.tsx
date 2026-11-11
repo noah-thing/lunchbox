@@ -18,6 +18,8 @@ export const IconReview = () => <svg {...P}><path d="M7 12.5a5.5 5.5 0 1 1 3.9-1
 export const IconPin = () => <svg {...P}><path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5" /></svg>
 export const IconFork = () => <svg {...P}><circle cx="4.5" cy="3.5" r="1.25" /><circle cx="11.5" cy="3.5" r="1.25" /><circle cx="8" cy="12.5" r="1.25" /><path d="M4.5 4.75V6c0 1.5 1 2.25 3.5 2.75V11.25M11.5 4.75V6c0 1.5-1 2.25-3.5 2.75" /></svg>
 export const IconCopy = () => <svg {...P}><rect x="5.5" y="5.5" width="8" height="8" rx="1.25" /><path d="M10.5 3.5v-1h-8v8h1" /></svg>
+// Printer's crop marks around the work: Studio.
+export const IconStudio = () => <svg {...P}><path d="M2.5 5.5v-3h3M10.5 2.5h3v3M13.5 10.5v3h-3M5.5 13.5h-3v-3" /><rect x="6" y="6" width="4" height="4" rx=".75" /></svg>
 export const IconSplit = () => <svg {...P}><rect x="2.5" y="3" width="4.75" height="10" rx="1.25" /><rect x="8.75" y="3" width="4.75" height="10" rx="1.25" /></svg>
 export const IconCheck = () => <svg {...P} strokeWidth={1.5}><path d="M3.5 8.5l3 3 6-7" /></svg>
 export const IconClose = () => <svg {...P}><path d="M4 4l8 8M12 4l-8 8" /></svg>

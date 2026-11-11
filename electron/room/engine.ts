@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { sentence } from '../../shared/steps'
 import { existsSync } from 'node:fs'
-import { relative } from 'node:path'
-import type { Access, AgentInfo, Block, Event, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
+import { join, relative } from 'node:path'
+import type { Access, AgentInfo, Block, DecideAction, Event, Flow, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
 import { classify } from '../../shared/route'
+import { DESIGN_SOURCES, studioChecks } from '../../shared/studio'
+import { describe as schedule } from '../../shared/flow'
 import { detect, run, type Result } from '../agents'
 import { plain } from '../agents/parse'
 import type { Hands, Tool } from '../hands'
@@ -24,6 +26,8 @@ type Hooks = {
   packs(): Pack[]
   // Tools from outside the room: the built-in browser and any MCP servers the person connected.
   tools?(who: string, workspace: string, access: Access): Tool[]
+  // Creates a flow the person accepted from a card in a room. Set once the app's flows exist.
+  flow?(f: Pick<Flow, 'name' | 'steps' | 'crew' | 'workspace' | 'access' | 'every' | 'at' | 'day' | 'pack'>): Flow | undefined
 }
 
 // cut carries what an agent wrote before a usage limit stopped it, for whoever takes the task over.
@@ -49,6 +53,12 @@ const FLOW_ASK = 15 * 60e3
 const BORROWS = new Set(['claude', 'codex', 'gemini'])
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
 type Draft<E = Event> = E extends Event ? Omit<E, 'id' | 'at'> : never
+
+// The design files a project carries, each listed once even on a disk that ignores case.
+function designFiles(workspace: string) {
+  const seen = new Set<string>()
+  return DESIGN_SOURCES.filter((f) => existsSync(join(workspace, f)) && !seen.has(f.toLowerCase()) && !!seen.add(f.toLowerCase()))
+}
 
 export class Engine {
   agents: AgentInfo[] = []
@@ -261,14 +271,23 @@ export class Engine {
     return this.queues.get(room) ?? Promise.resolve()
   }
 
-  create(opts: { crew: string[]; workspace: string; pack?: string; name?: string; flow?: string }): RoomMeta {
+  create(opts: { crew: string[]; workspace: string; pack?: string; name?: string; flow?: string; studio?: boolean }): RoomMeta {
     const meta: RoomMeta = {
-      id: uid(), name: opts.name || 'New room', created: Date.now(), updated: Date.now(), crew: opts.crew, workspace: opts.workspace, pack: opts.pack, flow: opts.flow,
+      id: uid(), name: opts.name || 'New room', created: Date.now(), updated: Date.now(), crew: opts.crew, workspace: opts.workspace, pack: opts.pack, flow: opts.flow, studio: opts.studio || undefined, design: opts.studio ? designFiles(opts.workspace) : undefined,
       sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 },
     }
     this.store.create(meta)
     this.list()
     return meta
+  }
+
+  // Switching Studio on reads the project's own design files once and keeps the list with the room.
+  setStudio(room: string, on: boolean) {
+    this.store.update(room, (m) => {
+      m.studio = on || undefined
+      m.design = on ? designFiles(m.workspace) : undefined
+    })
+    this.hooks.emit('room:meta', this.store.room(room))
   }
 
   mark(room: string, patch: { pinned?: boolean; archived?: boolean }) {
@@ -515,6 +534,14 @@ export class Engine {
     } else if (a.type === 'ask') {
       this.add(room, { kind: 'you', text: a.text, to: [a.who] })
       this.enqueue(room, async (gen) => { await this.conversation(room, a.who, { kind: 'reply' }, access, { gen, hops: { n: 0 }, main: this.main(this.store.room(room)) }); this.settle(room) })
+    } else if (a.type === 'flow') {
+      const meta = this.store.room(room)
+      let made: Flow | undefined
+      let why = ''
+      try { made = meta && this.hooks.flow?.({ ...a.flow, crew: meta.crew, workspace: meta.workspace, access: access === 'full' ? 'workspace' : access, pack: meta.pack }) } catch (e) { why = e instanceof Error ? e.message : String(e) }
+      this.add(room, made
+        ? { kind: 'note', text: `Created the flow "${made.name}". It is in Flows, where you can change it or turn it off.` }
+        : { kind: 'note', text: `The flow could not be created${why ? `: ${why}` : ''}.`, tone: 'bad' })
     } else if (a.type === 'retry') {
       this.enqueue(room, async (gen) => { await this.conversation(room, a.who, { kind: 'retry', tools: a.tools }, access, { gen, hops: { n: 0 }, allow: a.tools, main: this.main(this.store.room(room)) }); this.settle(room) })
     }
@@ -586,7 +613,28 @@ export class Engine {
       image: (prompt, file, size) => this.image(room, me.id, prompt, access, ctx, file, size),
       memory: () => this.store.room(room)?.blocks ?? [],
       remember: (title, text) => this.block(room, `note-${uid()}`, title, text, me.id),
+      offerFlow: (flow, why) => this.offerFlow(room, me.id, flow, why),
+      // Only the agent leading the room offers flows: not crewmates, side by side answers or a
+      // room that is itself a flow's run.
+      lead: me.id === ctx.main && !ctx.arena && !this.store.room(room)?.flow,
     }
+  }
+
+  // A flow an agent thinks the person would want, shown as a card with Create flow and Not now.
+  // One offer per room: a second is refused, so suggestions never pile up.
+  private offerFlow(room: string, who: string, flow: Extract<DecideAction, { type: 'flow' }>['flow'], why: string) {
+    const events = this.store.events(room)
+    if (events.some((e) => e.kind === 'decide' && e.options.some((o) => o.action.type === 'flow'))) {
+      return 'A flow was already offered in this room. Do not offer another; carry on with the work.'
+    }
+    const steps = flow.steps.map((s, i) => `${i + 1}. ${s.text}`).join(' ')
+    const when = flow.every ? schedule(flow).toLowerCase() : 'when you run it'
+    this.add(room, {
+      kind: 'decide',
+      text: `${this.name(who)} suggests a flow: "${flow.name}", running ${when}. ${steps}${why ? ` Why: ${why}` : ''}`,
+      options: [{ label: 'Create flow', action: { type: 'flow', flow } }, { label: 'Not now', action: { type: 'accept' } }],
+    })
+    return 'Offered. The person sees a card and can create the flow with one click; do not ask again.'
   }
 
   private async consult(room: string, from: string, to: string, ask: string, access: Access, ctx: Ctx, models?: Record<string, string>, quiet = false, label?: string, size?: string) {
@@ -657,7 +705,9 @@ export class Engine {
     // Crewmates who are out right now are named in the request, not the protocol, so the cached
     // protocol stays the same when someone hits a limit and comes back.
     const out = meta.crew.filter((id) => id !== who && this.why(id)).map(this.name)
-    const ask = this.task(task) + (out.length ? `\n(Out right now, so do not ask them: ${out.join(', ')}.)` : '')
+    const asked = meta.studio ? events.findLast((e) => e.kind === 'you') : undefined
+    const checks = asked?.kind === 'you' ? studioChecks(task.kind === 'answer' || task.kind === 'job' ? `${asked.text}\n${task.kind === 'answer' ? task.ask : task.job}` : asked.text) : ''
+    const ask = this.task(task) + (out.length ? `\n(Out right now, so do not ask them: ${out.join(', ')}.)` : '') + (checks ? `\n\n${checks}` : '')
     // Only the agent following the conversation reads it. Anyone joining for a task, a question
     // or because the person named them gets a briefing, which costs a fraction of the log.
     const briefed = !ctx.arena && !!ctx.main && who !== ctx.main
@@ -675,13 +725,13 @@ export class Engine {
     this.changed(room)
 
     const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
-      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? [])]
+      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? []).filter((t) => meta.studio || !t.name.startsWith('studio_'))]
       : []
     const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
     const fails = new Map<string, number>()
     let looped = ''
-    const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits, ctx.main ?? this.main(meta))
+    const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits, ctx.main ?? this.main(meta), meta.studio ? meta.design ?? [] : null)
     const running = run(who, {
       prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || this.protos.get(`${room}:${who}`) !== system, cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
