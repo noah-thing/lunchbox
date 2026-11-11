@@ -749,7 +749,9 @@ export class Engine {
         this.block(room, `answer-${event.id}`, `${me.short} for ${this.name(task.from)}: ${task.ask.slice(0, 60)}`, r.text, who)
       }
     } else {
-      const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms }
+      const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms,
+        // A CLI can fail after writing part of its answer: the text is kept and the failure shown under it.
+        ...(r.error && !r.limit ? { error: plain(r.error) } : {}) }
       const proof = check(draft.text, [...events, { ...draft, id: '', at: 0 }])
       event = this.add(room, proof.length ? { ...draft, proof } : draft)
       const bad = proof.find((x) => !x.ok)
