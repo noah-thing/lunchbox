@@ -34,6 +34,8 @@ try {
   const r = await fetch('https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Duck/glTF-Binary/Duck.glb')
   if (r.ok) writeFileSync(join(work, 'duck.glb'), Buffer.from(await r.arrayBuffer()))
 } catch {}
+// expert_view loads three.js from vendor/ next to the bundle, as the app does from out/.
+await import('node:fs').then(({ cpSync }) => cpSync(new URL('../out/vendor', import.meta.url).pathname, join(out, 'vendor'), { recursive: true }))
 await build({ entryPoints: ['electron/browser.ts'], outfile: join(out, 'browser.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['electron'], logLevel: 'warning' })
 writeFileSync(join(out, 'main.cjs'), `
 const { app } = require('electron')

@@ -2,8 +2,7 @@
 // will be used, and a 3D model from three sides. Each is a small local page loaded in the hidden
 // window; it writes what it learned to window.__view.
 
-import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
@@ -27,10 +26,10 @@ img{object-fit:contain;display:block}figcaption{opacity:.55}
 // A model lit with a key, a fill and a rim light, framed from the front, three quarters and the
 // top, with the numbers that matter for the web: triangles, meshes, materials, size.
 export function modelPage(file: string) {
-  const req = createRequire(__filename)
-  const build = dirname(req.resolve('three'))
-  const three = pathToFileURL(join(build, 'three.module.js')).href
-  const gltf = pathToFileURL(join(build, '..', 'examples', 'jsm', 'loaders', 'GLTFLoader.js')).href
+  // Copied next to main.cjs by the build (scripts/build.mjs), inside the app archive once packaged.
+  const vendor = join(__dirname, 'vendor', 'three')
+  const three = pathToFileURL(join(vendor, 'three.module.js')).href
+  const gltf = pathToFileURL(join(vendor, 'jsm', 'loaders', 'GLTFLoader.js')).href
   const model = pathToFileURL(file).href
   return `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:#1c1c1a}canvas{display:block}</style>
 <script type="importmap">{"imports":{"three":${JSON.stringify(three)}}}</script>
