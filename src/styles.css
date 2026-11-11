@@ -253,7 +253,11 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .composer textarea::placeholder{color:var(--faint)}
 .composer.shell textarea{font:13px/1.55 var(--mono)}
 /* In a narrow column the bar keeps its icons and drops the words beside them. */
-.composer{container-type:inline-size}
+/* The container query, and the rise animation around it, make the composer and its wrapper layers
+   of their own, so a menu inside can only stack within them. The wrapper sits one above the chip row
+   (lifted to 3 for the folder menu), so a menu that opens downward covers the chips and lists. */
+.composer{container-type:inline-size;position:relative;z-index:3}
+.rise:has(>.composer){position:relative;z-index:4}
 @container (max-width:480px){
   .cbar .pilltext{display:none}
   .cbar .pill.split{font-size:0;gap:0}
