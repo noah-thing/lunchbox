@@ -16,6 +16,9 @@ const KEY = createPublicKey('-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAcUzrUWr
 
 const HOUR = 3600e3
 const mac = process.platform === 'darwin'
+// A copy installed from the Microsoft Store is updated by the Store, which also owns the install
+// folder, so the app's own updater stays out of it.
+const fromStore = !!process.windowsStore
 // Where releases live. A test build can point this at a local copy of the release files.
 const BASE = process.env.LUNCHBOX_UPDATE_BASE || `${RELEASES}/releases`
 
@@ -67,7 +70,7 @@ export class Updates {
   start() {
     this.feed()
     setInterval(() => this.feed(), HOUR / 2)
-    if (!app.isPackaged) return
+    if (!app.isPackaged || fromStore) return
     // Coming back to the app after an hour or more looks again, so a release reaches people within
     // the hour they next use the app instead of up to four hours later.
     app.on('browser-window-focus', () => {
@@ -103,6 +106,10 @@ export class Updates {
 
   check() {
     if (!app.isPackaged) return Promise.resolve(this.state)
+    if (fromStore) {
+      this.set({ state: 'none' })
+      return Promise.resolve(this.state)
+    }
     this.checked = Date.now()
     if (mac) return this.macCheck()
     return updater.autoUpdater.checkForUpdates().then(() => this.state).catch((e) => this.manual(String(e?.message ?? e)))
@@ -116,7 +123,7 @@ export class Updates {
   }
 
   setAuto(on: boolean) {
-    if (!app.isPackaged) return
+    if (!app.isPackaged || fromStore) return
     if (mac) {
       if (on && this.state.state === 'available') this.download()
       return

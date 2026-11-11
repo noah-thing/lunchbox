@@ -92,6 +92,18 @@
       "allowToChangeInstallationDirectory": true,
       "artifactName": "Lunchbox-Setup-${version}.${ext}"
     },
+    "appx": {
+      "applicationId": "Lunchbox",
+      "displayName": "Lunchbox",
+      "identityName": "Lunchbox",
+      "publisher": "CN=Lunchbox",
+      "publisherDisplayName": "Lunchbox",
+      "backgroundColor": "#1b1a18",
+      "languages": [
+        "en-US"
+      ],
+      "artifactName": "Lunchbox-${version}-store.${ext}"
+    },
     "linux": {
       "icon": "build/icon-1024.png",
       "category": "Development",

@@ -1,0 +1,81 @@
+name: store
+
+# Builds the Microsoft Store package (MSIX). The Store signs what it publishes, so the package that
+# goes to Partner Center is unsigned. A second copy is signed with a throwaway certificate and
+# installed on the runner, to prove the package installs and opens before anyone uploads it.
+#
+# The Store gives the app its identity when the name is reserved in Partner Center
+# (Product identity page). Put those three values in the repository variables
+# STORE_IDENTITY_NAME, STORE_PUBLISHER and STORE_PUBLISHER_NAME; until then the package uses
+# placeholders and only the test install means anything.
+
+on:
+  push:
+    tags: ['v*']
+    # Tag pushes ignore the path filter, so every release builds the Store package too.
+    branches: ['**']
+    paths: ['.github/workflows/store.yml', 'build/appx/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    env:
+      IDENTITY: ${{ vars.STORE_IDENTITY_NAME || 'Lunchbox' }}
+      PUBLISHER: ${{ vars.STORE_PUBLISHER || 'CN=Lunchbox' }}
+      PUBLISHER_NAME: ${{ vars.STORE_PUBLISHER_NAME || 'Lunchbox' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Package for Partner Center
+        run: npx electron-builder --win appx --publish never "-c.appx.identityName=$env:IDENTITY" "-c.appx.publisher=$env:PUBLISHER" "-c.appx.publisherDisplayName=$env:PUBLISHER_NAME"
+
+      - name: Package a signed test copy
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Lunchbox Test' -CertStoreLocation Cert:\CurrentUser\My -TextExtension @('2.5.29.19={text}')
+          $pw = ConvertTo-SecureString -String 'test' -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath "$env:RUNNER_TEMP\test.pfx" -Password $pw | Out-Null
+          Import-Certificate -FilePath (Export-Certificate -Cert $cert -FilePath "$env:RUNNER_TEMP\test.cer").FullName -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          $env:CSC_LINK = "$env:RUNNER_TEMP\test.pfx"
+          $env:CSC_KEY_PASSWORD = 'test'
+          npx electron-builder --win appx --publish never '-c.appx.identityName=LunchboxTest' '-c.appx.publisher=CN=Lunchbox Test' '-c.directories.output=release-test'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Install and open the test copy
+        shell: pwsh
+        run: |
+          $appx = Get-ChildItem release-test -Filter *.appx | Select-Object -First 1
+          Add-AppxPackage -Path $appx.FullName
+          $pkg = Get-AppxPackage -Name LunchboxTest
+          "installed $($pkg.PackageFullName)"
+          Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!Lunchbox"
+          Start-Sleep -Seconds 40
+          $running = Get-Process -Name Lunchbox -ErrorAction SilentlyContinue
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:RUNNER_TEMP\store-test.png")
+          if (-not $running) { throw 'Lunchbox did not stay open after install' }
+          "running: $($running.Count) processes"
+          # Data a packaged app writes under AppData lands in its own package folder.
+          Get-ChildItem "$env:LOCALAPPDATA\Packages\$($pkg.PackageFamilyName)" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 30 FullName
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lunchbox-store
+          path: |
+            release/*.appx
+            ${{ runner.temp }}/store-test.png
+          if-no-files-found: warn
