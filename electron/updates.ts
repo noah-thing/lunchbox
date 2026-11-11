@@ -60,6 +60,7 @@ export class Updates {
   // The unpacked new version on a Mac, waiting to be swapped in.
   private fresh = ''
   private swapping = false
+  private checked = 0
 
   constructor(private store: Store, private emit: (channel: string, value: unknown) => void) {}
 
@@ -67,6 +68,11 @@ export class Updates {
     this.feed()
     setInterval(() => this.feed(), HOUR / 2)
     if (!app.isPackaged) return
+    // Coming back to the app after an hour or more looks again, so a release reaches people within
+    // the hour they next use the app instead of up to four hours later.
+    app.on('browser-window-focus', () => {
+      if (Date.now() - this.checked > HOUR && ['idle', 'none', 'error', 'manual'].includes(this.state.state)) this.check()
+    })
     if (mac) {
       // Installed when the app quits, the way electron-updater does it on Windows and Linux.
       app.on('will-quit', () => {
@@ -97,6 +103,7 @@ export class Updates {
 
   check() {
     if (!app.isPackaged) return Promise.resolve(this.state)
+    this.checked = Date.now()
     if (mac) return this.macCheck()
     return updater.autoUpdater.checkForUpdates().then(() => this.state).catch((e) => this.manual(String(e?.message ?? e)))
   }

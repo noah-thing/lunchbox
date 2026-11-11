@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Notice, UpdateState } from '../../shared/types'
 import { IconClose } from './icons'
-import { desk } from '../lib/desk'
+import { desk, useApp } from '../lib/desk'
 
 // Messages pushed from the signed feed, and the app's own update state, in three forms: a toast in
 // the corner, a designed card for big news, and a banner across the top of the page.
@@ -9,6 +9,11 @@ export function Notices() {
   const [list, setList] = useState<Notice[]>([])
   const [update, setUpdate] = useState<UpdateState>({ state: 'idle' })
   const [later, setLater] = useState(false)
+  // Restarting stops every agent, so a restart asked for mid task waits until the rooms are quiet.
+  const busy = useApp((s) => s.rooms.some((r) => r.busy))
+  const [queued, setQueued] = useState(false)
+  const restart = () => { dispatchEvent(new CustomEvent('lb:restarting')); desk.call('update:install') }
+  useEffect(() => { if (queued && !busy && update.state === 'ready') restart() }, [queued, busy, update.state])
   useEffect(() => {
     desk.call('notices').then((n: Notice[]) => setList(n ?? [])).catch(() => {})
     desk.call('update').then((u: UpdateState) => u && setUpdate(u)).catch(() => {})
@@ -34,7 +39,9 @@ export function Notices() {
       {ready ? (
         <div className="nbanner" role="status">
           <span className="grow">{update.state === 'ready' ? `Lunchbox ${update.version} is ready. It installs when you restart.` : update.state === 'downloading' ? `Downloading Lunchbox ${update.version}${update.progress ? `, ${Math.round(update.progress * 100)}%` : ''}` : `Lunchbox ${update.version} is out.`}</span>
-          {update.state === 'ready' && <button className="btn small" onClick={() => desk.call('update:install')}>Restart now</button>}
+          {update.state === 'ready' && (busy
+            ? <button className="btn small" onClick={() => setQueued(true)} disabled={queued}>{queued ? 'Restarts when your agents finish' : 'Restart when agents finish'}</button>
+            : <button className="btn small" onClick={restart}>Restart now</button>)}
           {update.state === 'available' && <button className="btn small" onClick={() => desk.call('update:download')}>Get it</button>}
           {update.state === 'manual' && <button className="btn small" onClick={() => window.open(update.url, '_blank')}>Download</button>}
           <button className="iconbtn" onClick={() => setLater(true)} aria-label="Later"><IconClose /></button>
