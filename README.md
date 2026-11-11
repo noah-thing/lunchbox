@@ -5,12 +5,12 @@
 <h1 align="center">Lunchbox</h1>
 
 <p align="center">
-  A desktop app that runs Claude Code, Codex, Grok and Gemini together on your projects, with the logins you already have.
+  A shared agent room: Claude Code, Codex, Grok, Gemini and local models work as one team on one task, with the logins you already have.
 </p>
 
 <p align="center">
   <a href="https://github.com/noah-thing/lunchbox/actions/workflows/ci.yml"><img src="https://github.com/noah-thing/lunchbox/raw/badges/ci.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.1-F2F0EA?style=flat-square&labelColor=121110" alt="Version 0.1.1">
+  <img src="https://img.shields.io/badge/version-0.1.3-F2F0EA?style=flat-square&labelColor=121110" alt="Version 0.1.3">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-F2F0EA?style=flat-square&labelColor=121110&label=runs%20on" alt="Runs on macOS, Windows and Linux">
   <img src="https://img.shields.io/badge/Electron-45-F2F0EA?style=flat-square&labelColor=121110&logo=electron&logoColor=F2F0EA" alt="Electron 45">
   <img src="https://img.shields.io/badge/license-all%20rights%20reserved-F2F0EA?style=flat-square&labelColor=121110" alt="All rights reserved">
@@ -46,7 +46,9 @@ https://github.com/user-attachments/assets/92e057ae-6206-4a41-ae07-bffed98bee19
 
 ## What it is
 
-Lunchbox runs your AI coding tools side by side in one window and lets them work on the same task. It supports Claude Code, Codex, Grok Build and Gemini CLI, local models through Ollama or LM Studio, and API keys from Anthropic, OpenAI, xAI, Google and others.
+Lunchbox is a shared agent room: a desktop app where AI agents from different vendors work in one conversation with one memory, hand tasks to each other, and check each other's results. Most tools for running several agents start each one in its own window or copy of the code. In Lunchbox they work on the same task together, and when one hits its usage limit the next carries on with the same memory.
+
+It supports Claude Code, Codex, Grok Build and Gemini CLI, OpenCode and other command line agents, local models through Ollama, LM Studio or llama.cpp, and API keys from 16 providers including Anthropic, OpenAI, xAI and Google. Lunchbox is free; get it at [mylunchbox.dev](https://mylunchbox.dev).
 
 Each tool uses your own login and plan. Your work goes from your computer to the company behind the tool, with no Lunchbox server in between.
 
