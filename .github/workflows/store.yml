@@ -46,9 +46,12 @@ jobs:
           $pw = ConvertTo-SecureString -String 'test' -Force -AsPlainText
           Export-PfxCertificate -Cert $cert -FilePath "$env:RUNNER_TEMP\test.pfx" -Password $pw | Out-Null
           Import-Certificate -FilePath (Export-Certificate -Cert $cert -FilePath "$env:RUNNER_TEMP\test.cer").FullName -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
-          $env:CSC_LINK = "$env:RUNNER_TEMP\test.pfx"
-          $env:CSC_KEY_PASSWORD = 'test'
           npx electron-builder --win appx --publish never '-c.appx.identityName=LunchboxTest' '-c.appx.publisher=CN=Lunchbox Test' '-c.directories.output=release-test'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The signtool electron-builder brings is too old for MSIX, so the SDK's own signs it.
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object FullName -like '*\x64\*' | Sort-Object FullName | Select-Object -Last 1
+          $appx = Get-ChildItem release-test -Filter *.appx | Select-Object -First 1
+          & $signtool.FullName sign /fd SHA256 /f "$env:RUNNER_TEMP\test.pfx" /p test $appx.FullName
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Install and open the test copy
