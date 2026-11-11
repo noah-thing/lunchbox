@@ -63,6 +63,14 @@ test('room: handover, handoff, resume and proof', { skip: process.platform === '
   const fork = engine.fork(room.id, events[3].id)!
   assert.equal(store.events(fork.id).length, 4)
   assert.ok(engine.skill(room.id)?.steps.includes('Research'))
+
+  // The open decision marks the room as waiting and fills the inbox; answering it clears both.
+  assert.equal(engine.summaries().find((r) => r.id === room.id)?.waiting, true)
+  assert.equal(engine.inbox().find((w) => w.room === room.id)?.items[0]?.kind, 'decide')
+  engine.decide(room.id, events[5].id, 0, 'plan')
+  assert.equal(engine.summaries().find((r) => r.id === room.id)?.waiting, false)
+  assert.equal(engine.inbox().some((w) => w.room === room.id), false)
+  await engine.idle(room.id)
   store.flush()
 })
 

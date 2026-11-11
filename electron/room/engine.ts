@@ -122,11 +122,21 @@ export class Engine {
     }, 120)
   }
 
+  // Whether a room has a decision nobody answered, per room. The room list asks this of every room,
+  // so the answer is kept and worked out again only when a decision is asked or answered; reading
+  // each log every time would also keep every room in memory.
+  private undecided = new Map<string, boolean>()
+
   private waiting(room: string) {
     if (this.live(room).runs.some((r) => r.state === 'asking')) return true
-    const events = this.store.events(room)
-    const chosen = new Set(events.filter((e) => e.kind === 'chose').map((e) => (e as { ref: string }).ref))
-    return events.some((e) => e.kind === 'decide' && !chosen.has(e.id))
+    let open = this.undecided.get(room)
+    if (open === undefined) {
+      const events = this.store.peek(room)
+      const chosen = new Set(events.filter((e) => e.kind === 'chose').map((e) => (e as { ref: string }).ref))
+      open = events.some((e) => e.kind === 'decide' && !chosen.has(e.id))
+      this.undecided.set(room, open)
+    }
+    return open
   }
 
   summaries(): RoomSummary[] {
@@ -139,6 +149,7 @@ export class Engine {
   private add(room: string, draft: Draft): Event {
     const event = { ...draft, id: uid(), at: Date.now() } as Event
     this.store.append(room, event)
+    if (event.kind === 'decide' || event.kind === 'chose') this.undecided.delete(room)
     this.hooks.emit('room:event', { room, event })
     this.list()
     return event
@@ -268,7 +279,9 @@ export class Engine {
   // Every decision and command waiting for a person, across all rooms, newest room first.
   inbox(): Waiting[] {
     return this.store.list().flatMap((m) => {
-      const events = this.store.events(m.id)
+      // Only rooms with something open are read, through the cache that does not pin them.
+      if (!this.waiting(m.id)) return []
+      const events = this.store.peek(m.id)
       const chosen = new Set(events.filter((e) => e.kind === 'chose').map((e) => (e as { ref: string }).ref))
       const items: Waiting['items'] = [
         ...events.flatMap((e) => (e.kind === 'decide' && !chosen.has(e.id) ? [{ kind: 'decide' as const, ref: e.id, text: e.text, options: e.options.map((o) => o.label) }] : [])),
@@ -286,6 +299,7 @@ export class Engine {
   remove(room: string) {
     this.stop(room)
     this.store.remove(room)
+    this.undecided.delete(room)
     this.lives.delete(room)
     this.list()
   }
