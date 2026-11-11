@@ -55,6 +55,8 @@ export class Engine {
   private lives = new Map<string, Live>()
   private procs = new Map<string, Set<{ stop(): void; done: Promise<unknown> }>>()
   private queues = new Map<string, Promise<unknown>>()
+  // Jobs waiting or running per room. A message sent while this is above zero is queued.
+  private pending = new Map<string, number>()
   private gens = new Map<string, number>()
   private flushed = new Set<string>()
   // The protocol last sent to each resumed session, so an unchanged one is not sent again.
@@ -100,7 +102,7 @@ export class Engine {
 
   live(room: string): Live {
     let l = this.lives.get(room)
-    if (!l) this.lives.set(room, (l = { turns: [], runs: [], doing: '', active: null, waiting: false }))
+    if (!l) this.lives.set(room, (l = { turns: [], runs: [], doing: '', active: null, waiting: false, queued: [] }))
     return l
   }
 
@@ -239,7 +241,9 @@ export class Engine {
 
   private enqueue(room: string, job: (gen: number) => Promise<unknown>) {
     const gen = this.gens.get(room) ?? 0
-    const next = (this.queues.get(room) ?? Promise.resolve()).then(() => ((this.gens.get(room) ?? 0) === gen ? job(gen) : null)).catch((e) => {
+    this.pending.set(room, (this.pending.get(room) ?? 0) + 1)
+    const done = () => this.pending.set(room, (this.pending.get(room) ?? 1) - 1)
+    const next = (this.queues.get(room) ?? Promise.resolve()).then(() => ((this.gens.get(room) ?? 0) === gen ? job(gen) : null)).finally(done).catch((e) => {
       this.add(room, { kind: 'note', text: `Something broke: ${e instanceof Error ? e.message : String(e)}`, tone: 'bad' })
       // The job never reached settle, so the room would keep saying someone is working.
       const live = this.live(room)
@@ -354,7 +358,10 @@ export class Engine {
     live.turns = []
     live.doing = ''
     live.active = null
+    const queued = live.queued ?? []
+    live.queued = []
     if (why) this.add(room, { kind: 'note', text: why, tone: 'warn' })
+    this.giveBack(room, queued)
     this.hooks.emit('room:live', { room, live })
     this.list()
   }
@@ -392,34 +399,77 @@ export class Engine {
     const mentioned = this.agents.filter((a) => a.ready && named(a).some((h) => new RegExp(`@${h}(?![\\w-])`, 'i').test(head))).map((a) => a.id)
     const joining = mentioned.filter((id) => !meta.crew.includes(id))
     if (joining.length) this.setCrew(room, [...meta.crew, ...joining])
-    const first = !this.store.events(room).some((e) => e.kind === 'you')
     const cat = classify(text)
     // The main agent, first in the crew, takes every message the person does not address to someone.
     const main = this.main(meta)
     const lead = mentioned[0] ?? main
-    const said = this.add(room, { kind: 'you', text, to: mentioned.length ? mentioned : undefined, arena: arena || undefined, cat, lead: arena ? undefined : lead, files: files?.length ? files : undefined, from })
-    if (first) {
-      this.block(room, 'brief', 'Brief', text, 'you')
-      if (meta.name === 'New room') this.rename(room, title(text))
-    }
-    return this.enqueue(room, async (gen) => {
-      await this.checkpoint(room, said.id, access)
-      const ctx: Ctx = { gen, hops: { n: 0 }, main }
-      if (arena) {
-        const id = uid()
-        const crew = meta.crew.filter((c) => !this.why(c))
-        if (!crew.length) this.add(room, { kind: 'note', tone: 'warn', text: 'Nobody in the crew can answer right now. Each agent is out, turned off or over its budget; see Pool for when they are back.' })
-        await Promise.all(crew.map((who) => this.turn(room, who, { kind: 'reply' }, access, { ...ctx, arena: id })))
-      } else {
-        await this.conversation(room, lead, { kind: 'reply' }, access, ctx)
-        // Everyone else named at the start answers in turn, each seeing what came before.
-        for (const who of mentioned.slice(1)) {
-          if ((this.gens.get(room) ?? 0) !== gen) break
-          await this.conversation(room, who, { kind: 'reply' }, access, ctx)
-        }
+    const record = () => {
+      const first = !this.store.events(room).some((e) => e.kind === 'you')
+      const said = this.add(room, { kind: 'you', text, to: mentioned.length ? mentioned : undefined, arena: arena || undefined, cat, lead: arena ? undefined : lead, files: files?.length ? files : undefined, from })
+      if (first) {
+        this.block(room, 'brief', 'Brief', text, 'you')
+        if (meta.name === 'New room') this.rename(room, title(text))
       }
-      this.settle(room)
-    })
+      return said
+    }
+    // While an agent is still answering, the message waits under the live turn and joins the
+    // room when its turn comes, so the transcript keeps the order things were answered in.
+    if ((this.pending.get(room) ?? 0) > 0) {
+      const q = { id: uid(), text, files: files?.length ? files : undefined }
+      const live = this.live(room)
+      live.queued = [...(live.queued ?? []), q]
+      this.hooks.emit('room:live', { room, live })
+      return this.enqueue(room, async (gen) => {
+        if (!this.unqueue(room, q.id)) return
+        await this.answer(room, record(), { access, arena, mentioned, main, lead, gen })
+      })
+    }
+    const said = record()
+    return this.enqueue(room, (gen) => this.answer(room, said, { access, arena, mentioned, main, lead, gen }))
+  }
+
+  private async answer(room: string, said: Event, o: { access: Access; arena: boolean; mentioned: string[]; main: string; lead: string; gen: number }) {
+    const { access, arena, mentioned, main, lead, gen } = o
+    const meta = this.store.room(room)
+    if (!meta) return
+    await this.checkpoint(room, said.id, access)
+    const ctx: Ctx = { gen, hops: { n: 0 }, main }
+    if (arena) {
+      const id = uid()
+      const crew = meta.crew.filter((c) => !this.why(c))
+      if (!crew.length) this.add(room, { kind: 'note', tone: 'warn', text: 'Nobody in the crew can answer right now. Each agent is out, turned off or over its budget; see Pool for when they are back.' })
+      await Promise.all(crew.map((who) => this.turn(room, who, { kind: 'reply' }, access, { ...ctx, arena: id })))
+    } else {
+      await this.conversation(room, lead, { kind: 'reply' }, access, ctx)
+      // Everyone else named at the start answers in turn, each seeing what came before.
+      for (const who of mentioned.slice(1)) {
+        if ((this.gens.get(room) ?? 0) !== gen) break
+        await this.conversation(room, who, { kind: 'reply' }, access, ctx)
+      }
+    }
+    this.settle(room)
+  }
+
+  private unqueue(room: string, id: string) {
+    const live = this.live(room)
+    const q = live.queued?.find((x) => x.id === id)
+    if (!q) return null
+    live.queued = live.queued.filter((x) => x.id !== id)
+    this.hooks.emit('room:live', { room, live })
+    return q
+  }
+
+  // A queued message the person wants back goes into the message box to be edited and sent again.
+  takeBack(room: string, id: string) {
+    const q = this.unqueue(room, id)
+    if (q) this.giveBack(room, [q])
+  }
+
+  private giveBack(room: string, list: { text: string; files?: string[] }[]) {
+    if (!list.length) return
+    const live = this.live(room)
+    live.back = { text: list.map((q) => q.text).join('\n\n'), files: list.flatMap((q) => q.files ?? []), n: Date.now(), merge: true }
+    this.hooks.emit('room:live', { room, live })
   }
 
   // The first crewmate that is still set up; a removed connector does not keep the role.

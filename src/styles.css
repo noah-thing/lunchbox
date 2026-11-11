@@ -175,6 +175,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .mine .bubble .rich p{font-size:14px}
 .mine .to{display:inline-flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--faint)}
 .mine .to svg{width:12px;height:12px}
+.mine.queued .bubble{opacity:.55}
+.mine .qback{font:11px var(--mono);color:var(--faint);transition:color .15s}
+.mine .qback:hover{color:var(--ink)}
 .files{display:flex;gap:6px;flex-wrap:wrap}
 .files code{padding:2px 8px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2);color:var(--dim)}
 .proof{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:500}

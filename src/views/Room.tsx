@@ -28,6 +28,7 @@ type Actions = {
   rewind(target: { event?: string; ref?: string }): void
   review(ev: string): void
   ask(text: string): void
+  takeBack(queued: string): void
 }
 
 const remembered = (key: string, fallback: boolean) => {
@@ -117,6 +118,9 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
 
   // Defined before the loading return: the shortcut can fire while the room is still loading.
   const togglePanel = () => setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
+  // Queued text handed back to the message box, once per hand back rather than on every live update.
+  const back = data?.live.back
+  const returned = useMemo(() => back, [back?.n])
   if (!data) return failed
     ? (
       <div className="room loading">
@@ -146,6 +150,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
       } catch (e) { say(reason(e)) }
     },
     review: (ev) => setReview(ev),
+    takeBack: (queued) => desk.call('room:takeback', id, queued),
   }
   const reviewed = review ? events.find((e) => e.id === review) : undefined
   const send = (text: string, files?: string[]) => desk.call('room:send', id, text, access, arena, files)
@@ -174,7 +179,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
         <div className="dock">
           <Composer
             crew={meta.crew} setCrew={(c) => desk.call('room:crew', id, c)} onSend={send} access={access} setAccess={setAccess}
-            busy={busy} onStop={stop} arena={arena} setArena={setArena} pack={meta.pack} folder={meta.workspace}
+            busy={busy} onStop={stop} arena={arena} setArena={setArena} pack={meta.pack} folder={meta.workspace} draft={returned}
             placeholder={meta.crew.length > 1 ? 'Message the room. @ to address one agent, ! to run a command.' : 'Message the room. Start with ! to run a command.'}
           />
         </div>
@@ -381,6 +386,14 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // Only the first command waiting for an answer takes the keyboard, so one key never answers two.
   const first = live?.runs.find((r) => r.state === 'asking')?.id
   for (const r of live?.runs ?? []) rows.push(<Ev key={r.id} mark={null} className="evrun"><RunBlock run={r} answer={actions.answer} kill={actions.kill} keys={r.id === first} /></Ev>)
+  // Sent while an agent was answering: they wait here, below the live turn, until their turn.
+  for (const q of live?.queued ?? []) rows.push(
+    <div key={q.id} className="mine queued">
+      <span className="to"><IconClock />queued</span>
+      <div className="bubble"><Rich text={q.text} /></div>
+      <button type="button" className="qback" onClick={() => actions.takeBack(q.id)}>Edit</button>
+    </div>,
+  )
 
   return (
     <div className="transcript" ref={box}

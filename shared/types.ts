@@ -141,6 +141,10 @@ export type Live = {
   active: string | null
   waiting: boolean
   cable?: { from: string; to: string; at: number }
+  // Messages sent while an agent was answering, in the order they will run.
+  queued: { id: string; text: string; files?: string[] }[]
+  // Queued text handed back to the message box, after a stop or when taken back. n changes each time.
+  back?: { text: string; files?: string[]; n: number; merge: true }
 }
 
 export type Spent = { until: number; reason: string }

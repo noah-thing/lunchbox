@@ -227,6 +227,7 @@ function wire() {
   })
   h('remote:unpair', () => { remote.unpair(); return remote.status() })
   h('room:stop', (id: string) => engine.stop(id))
+  h('room:takeback', (id: string, queued: string) => engine.takeBack(id, queued))
   h('room:decide', (id: string, ref: string, index: number, access: Access) => { engine.decide(id, ref, index, access) })
   h('room:pick', (id: string, arena: string, who: string) => engine.pick(id, arena, who))
   h('room:pin', (id: string, event: string) => engine.pin(id, event))

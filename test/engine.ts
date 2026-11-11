@@ -275,14 +275,62 @@ test('room: a message sent mid-turn is not lost', { skip: process.platform === '
   engine.send(room.id, 'Fix the login bug', 'workspace')
   while (!existsSync(log)) await new Promise((r) => setTimeout(r, 10))
   engine.send(room.id, 'Also update the README', 'workspace')
+  assert.deepEqual(engine.live(room.id).queued.map((q) => q.text), ['Also update the README'], 'shown as queued under the live turn')
+  assert.equal(store.events(room.id).filter((e) => e.kind === 'you').length, 1, 'and not in the room yet')
   await engine.idle(room.id)
   delete process.env.FAKE_DELAY
+
+  assert.deepEqual(engine.live(room.id).queued, [])
+  const said = store.events(room.id).filter((e) => e.kind === 'you' || e.kind === 'say').map((e) => e.kind === 'you' ? e.text : 'reply')
+  assert.deepEqual(said, ['Fix the login bug', 'reply', 'Also update the README', 'reply'], 'the transcript keeps the order things were answered in')
 
   const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   assert.equal(calls.length, 2)
   assert.ok(!calls[0].input.includes('Also update the README'), 'the first turn started before the second message')
   assert.ok(calls[1].args.includes('--resume'), 'the second turn resumes')
   assert.ok(calls[1].input.includes('Also update the README'), 'and is given the message sent while it worked')
+  store.flush()
+})
+
+// Stop ends the turn and drops what was queued behind it; the queued text goes back to the
+// message box, never into the room unanswered. Edit takes one queued message back the same way.
+test('room: stop and edit hand queued messages back', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-queue-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  const log = (process.env.FAKE_LOG = join(root, 'calls.jsonl'))
+  process.env.FAKE_DELAY = '200'
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { resetPath } = await import('../electron/system')
+  resetPath()
+  const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+  await engine.refresh()
+
+  const room = engine.create({ crew: ['claude'], workspace: root })
+  engine.send(room.id, 'Fix the login bug', 'workspace')
+  while (!existsSync(log)) await new Promise((r) => setTimeout(r, 10))
+  engine.send(room.id, 'Then the README', 'workspace')
+  engine.send(room.id, 'And the changelog', 'workspace')
+  const queued = engine.live(room.id).queued
+  assert.equal(queued.length, 2)
+
+  engine.takeBack(room.id, queued[1].id)
+  assert.deepEqual(engine.live(room.id).queued.map((q) => q.text), ['Then the README'])
+  assert.equal(engine.live(room.id).back?.text, 'And the changelog')
+
+  engine.stop(room.id)
+  await engine.idle(room.id)
+  delete process.env.FAKE_DELAY
+  assert.deepEqual(engine.live(room.id).queued, [])
+  assert.equal(engine.live(room.id).back?.text, 'Then the README', 'stop hands the queued message back')
+  const asked = store.events(room.id).filter((e) => e.kind === 'you').map((e) => (e as { text: string }).text)
+  assert.deepEqual(asked, ['Fix the login bug'], 'nothing queued lands in the room unanswered')
+  assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 1, 'and no agent ran for it')
   store.flush()
 })
 

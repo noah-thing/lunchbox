@@ -11,7 +11,7 @@ type Suggestion = { key: string; label: string; hint: string; insert: string; ma
 
 export function Composer({ crew, setCrew, onSend, access, setAccess, busy = false, onStop, arena = false, setArena, draft, autoFocus = true, placeholder, pack, folder }: {
   crew: string[]; setCrew: (c: string[]) => void; onSend: (t: string, files?: string[]) => void; access: Access; setAccess: (a: Access) => void
-  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; draft?: { text: string; files?: string[]; n: number }; autoFocus?: boolean; placeholder?: string; pack?: string; folder?: string
+  busy?: boolean; onStop?: () => void; arena?: boolean; setArena?: (a: boolean) => void; draft?: { text: string; files?: string[]; n: number; merge?: boolean }; autoFocus?: boolean; placeholder?: string; pack?: string; folder?: string
 }) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<string[]>([])
@@ -47,8 +47,9 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
 
   useEffect(() => {
     if (!draft) return
-    setText(draft.text)
-    if (draft.files) setFiles(draft.files)
+    // Text handed back from the queue goes in front of anything typed since, not over it.
+    setText((now) => (draft.merge && now.trim() ? `${draft.text}\n\n${now}` : draft.text))
+    if (draft.files) setFiles((now) => (draft.merge ? [...draft.files!, ...now] : draft.files!))
     requestAnimationFrame(() => { area.current?.focus(); area.current?.setSelectionRange(draft.text.length, draft.text.length) })
   }, [draft])
   useLayoutEffect(() => {
