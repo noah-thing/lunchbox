@@ -156,7 +156,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
         }} />
       <div className="cbar">
-        <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span>{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</>}>
+        <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span><span className="crewname">{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</span></>}>
           {() => (
             <CrewMenu listed={listed} crew={crew} toggle={toggle} promote={(id) => setCrew([id, ...crew.filter((w) => w !== id)])} footer={
               <>
@@ -190,7 +190,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
         )}
         {setStudio && !shell && (
           <button className={`pill expert${studio ? ' open' : ''}`} onClick={() => setStudio(!studio)} aria-pressed={studio}
-            title="Expert mode: agents work like senior experts. They set a direction, look at what they make and refine it before handing over. Your own design files and references always come first.">
+            title="Expert: agents set a direction, check the result in screenshots and measurements, and report what they verified. Your own design files and references come first.">
             <IconStudio />Expert
           </button>
         )}

@@ -307,7 +307,7 @@ export class Browser {
       const saved: string[] = []
       const { win, wc } = await this.hidden(url, target, 1440, 900)
       // The page as people see it, without the scrollbar drawn into every picture.
-      await wc.insertCSS('::-webkit-scrollbar { display: none !important }').catch(() => {})
+      await within(wc.insertCSS('::-webkit-scrollbar { display: none !important }'), 5000, 'Preparing the page').catch(() => {})
       try {
         // One window, resized between the widths, so the page loads once and media queries apply.
         for (const [label, width, height] of [['desktop', 1440, 900], ['phone', 390, 844]] as const) {
@@ -321,7 +321,7 @@ export class Browser {
           for (let i = 0; i < pieces; i++) {
             // Scrolled into place and two frames drawn before the capture: a hidden window does not
             // repaint on its own, and the picture would show where the page was before.
-            await within(wc.executeJavaScript(`scrollTo(0, ${i * height}); new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`, true), 5000, 'Scrolling the page').catch(() => {})
+            await within(wc.executeJavaScript(`scrollTo({ top: ${i * height}, behavior: 'instant' }); new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`, true), 5000, 'Scrolling the page').catch(() => {})
             wc.invalidate()
             // Entrance animations and lazy images get a moment, as a person's eye would.
             await new Promise((r) => setTimeout(r, i ? 350 : 700))
@@ -336,7 +336,7 @@ export class Browser {
       } finally {
         win.destroy()
       }
-      return `Saved ${saved.length > 2 ? `${saved.length} images, top to bottom: ` : ''}${saved.join(saved.length > 2 ? ', ' : ' and ')}. Open them now and judge them as the person will see them: hierarchy, spacing, alignment, contrast, overflow and anything cut off or overlapping at phone width.`
+      return `Saved ${saved.length > 2 ? `${saved.length} images, top to bottom: ` : ''}${saved.join(saved.length > 2 ? ', ' : ' and ')}.${full ? ' The last image of each width ends at the bottom of the page, so it can repeat part of the one before it.' : ''} Open them now and judge them as the person will see them: hierarchy, spacing, alignment, contrast, overflow and anything cut off or overlapping at phone width.`
     })
   }
 

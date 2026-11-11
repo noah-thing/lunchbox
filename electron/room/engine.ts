@@ -706,7 +706,8 @@ export class Engine {
     // Crewmates who are out right now are named in the request, not the protocol, so the cached
     // protocol stays the same when someone hits a limit and comes back.
     const out = meta.crew.filter((id) => id !== who && this.why(id)).map(this.name)
-    const asked = meta.studio ? events.findLast((e) => e.kind === 'you') : undefined
+    // The checklist goes with the person's message once: not again on a continue or a retry of it.
+    const asked = meta.studio && task.kind !== 'continue' && task.kind !== 'retry' ? events.findLast((e) => e.kind === 'you') : undefined
     const checks = asked?.kind === 'you' ? studioChecks(task.kind === 'answer' || task.kind === 'job' ? `${asked.text}\n${task.kind === 'answer' ? task.ask : task.job}` : asked.text) : ''
     const ask = this.task(task) + (out.length ? `\n(Out right now, so do not ask them: ${out.join(', ')}.)` : '') + (checks ? `\n\n${checks}` : '')
     // Only the agent following the conversation reads it. Anyone joining for a task, a question

@@ -150,9 +150,9 @@ export function report(target: string, views: Measured[], axe: Axe[] | null, err
       `${d.families.length} font famil${d.families.length === 1 ? 'y' : 'ies'} (${d.families.slice(0, 5).join(', ')})${d.families.length > 3 ? ', more than three' : ''}`,
       `${d.sizes.length} font sizes (${d.sizes.join(', ')}px)${d.sizes.length > 9 ? ', too many for a clear type scale' : ''}`,
       `${d.colours} distinct text and background colours${d.colours > 16 ? ', a sign the palette has drifted' : ''}`,
-      d.spacings ? `${d.offGrid}% of spacing values off a 4px grid${d.offGrid > 25 ? ', so the spacing has no common unit' : ''}` : '',
+      d.spacings ? `${d.offGrid}% of spacing values off a 4px grid${d.offGrid > 25 ? ', so check the spacing against its unit' : ''}` : '',
     ].filter(Boolean)
-    lines.push('', `Design system on the desktop view: ${notes.join('; ')}.`)
+    lines.push('', `Design system in use on the desktop view, as observations to compare with the project's own system (not problems on their own): ${notes.join('; ')}.`)
   }
   lines.push('', errors.length ? `Console errors (${errors.length}): ${errors.slice(0, 4).join(' | ')}` : 'Console errors: none')
   lines.push('', n ? 'Fix the most serious problems first, then run expert_audit again to confirm.' : 'Nothing to fix from the measurements. Still look at the screenshots for what numbers cannot judge.')
