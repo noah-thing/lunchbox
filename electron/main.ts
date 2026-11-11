@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, nativeTheme, Notification, safeStorage, shell } from 'electron'
 import type { Access, Connector, Flow, Report, Settings, Skill } from '../shared/types'
 import { installed, modelsFor, testConnector, useConnectors } from './agents'
 import { markdown, replay } from './export'
@@ -48,7 +48,7 @@ const packs = () => loadPacks(store.packFiles())
 const name = (id: string) => engine.agents.find((a) => a.id === id)?.short ?? id
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'room'
 
-async function saveAs(title: string, file: string, ext: string, contents: string) {
+async function saveAs(title: string, file: string, ext: string, contents: string | Buffer) {
   if (!win) return null
   const r = await dialog.showSaveDialog(win, { title, defaultPath: join(app.getPath('downloads'), file), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] })
   if (r.canceled || !r.filePath) return null
@@ -171,7 +171,7 @@ function wire() {
     const events = store.events(id)
     return kind === 'md'
       ? saveAs('Export as Markdown', `${slug(meta.name)}.md`, 'md', markdown(meta, events, name))
-      : saveAs('Export a replay', `${slug(meta.name)}.html`, 'html', replay(meta, events, name))
+      : saveAs('Share as a replay', `${slug(meta.name)}.html`, 'html', replay(meta, events, name)).then((file) => { if (file) shell.showItemInFolder(file); return file })
   })
   h('save:png', (dataUrl: string, file: string) => {
     const m = dataUrl.match(/^data:image\/png;base64,(.+)$/)
@@ -227,6 +227,19 @@ function wire() {
   })
   h('remote:unpair', () => { remote.unpair(); return remote.status() })
   h('room:stop', (id: string) => engine.stop(id))
+  // Share cards: a PNG made in the window, copied as an image or saved where the person chooses.
+  const png = (data: string) => {
+    if (typeof data !== 'string' || !data.startsWith('data:image/png;base64,')) throw new Error('Not a PNG')
+    return nativeImage.createFromDataURL(data)
+  }
+  // A key the person just copied from a provider's page, offered to the free models page. Only text
+  // shaped like a key comes back; anything else stays on the clipboard unread by the page.
+  h('clipboard:key', async () => {
+    const t = (await clipboard.readText().catch(() => '')).trim()
+    return /^[A-Za-z0-9_\-.:]{20,300}$/.test(t) ? t : ''
+  })
+  h('image:copy', async (data: string) => { await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png(data).toPNG())], { type: 'image/png' }) })]); return true })
+  h('image:save', (data: string, name: string) => saveAs('Save the image', `${String(name || 'lunchbox').replace(/[^\w.-]+/g, '-')}.png`, 'png', png(data).toPNG()))
   h('room:studio', (id: string, on: boolean) => engine.setStudio(id, on))
   h('room:takeback', (id: string, queued: string) => engine.takeBack(id, queued))
   h('room:decide', (id: string, ref: string, index: number, access: Access) => { engine.decide(id, ref, index, access) })

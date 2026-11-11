@@ -19,6 +19,8 @@ const TOOL_LINES: Record<string, string> = {
   browser_open: 'browser_open, browser_click and browser_type drive the Lunchbox browser the person is watching; use it to check what you build on localhost and take browser_screenshot to show it.',
   expert_look: 'expert_look captures a page or local HTML file at desktop and phone width, or a whole page top to bottom, and saves the images in the folder for you to read.',
   expert_audit: 'expert_audit measures a page at desktop and phone width and lists layout, accessibility and design system problems with the elements they are on.',
+  expert_view: 'expert_view shows an image or logo at the sizes it will be used on light and dark, or a 3D model from three sides with its numbers.',
+  expert_states: 'expert_states checks hover, keyboard focus and long labels on a page and saves a contact sheet.',
   propose_flow: 'propose_flow offers the person a scheduled flow as a card they can accept.',
 }
 

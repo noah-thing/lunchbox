@@ -158,3 +158,39 @@ export function report(target: string, views: Measured[], axe: Axe[] | null, err
   lines.push('', n ? 'Fix the most serious problems first, then run expert_audit again to confirm.' : 'Nothing to fix from the measurements. Still look at the screenshots for what numbers cannot judge.')
   return lines.join('\n')
 }
+
+// The controls a person meets on the first screen, where states matter most: up to eight, in
+// reading order, with their place on the page in CSS pixels.
+export const CONTROLS = `(() => {
+  const els = [...document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea, [role=button], [tabindex]:not([tabindex="-1"])')]
+  return els.map((e) => {
+    const r = e.getBoundingClientRect()
+    const cs = getComputedStyle(e)
+    const label = (e.getAttribute('aria-label') || e.textContent || e.getAttribute('placeholder') || e.tagName).trim().replace(/\\s+/g, ' ').slice(0, 40)
+    return { x: r.left, y: r.top, w: r.width, h: r.height, label, ok: r.width > 4 && r.height > 4 && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth && cs.visibility !== 'hidden' && Number(cs.opacity) > 0.05 }
+  }).filter((c) => c.ok).slice(0, 8)
+})()`
+
+// Where keyboard focus is now, in CSS pixels, or null when it is on the page itself.
+export const FOCUSED = `(() => {
+  const e = document.activeElement
+  if (!e || e === document.body || e === document.documentElement) return null
+  const r = e.getBoundingClientRect()
+  const label = (e.getAttribute('aria-label') || e.textContent || e.getAttribute('placeholder') || e.tagName).trim().replace(/\\s+/g, ' ').slice(0, 40)
+  return { x: r.left, y: r.top, w: r.width, h: r.height, label, inView: r.top >= 0 && r.bottom <= innerHeight && scrollY === 0 }
+})()`
+
+// Every short label made three times longer, the way real names, prices and translations grow.
+export const STRETCH = `(() => {
+  let n = 0
+  for (const e of document.querySelectorAll('a, button, h1, h2, h3, h4, h5, label, th, td, li, dt, dd, figcaption, [role=button], [class*=badge], [class*=tag], [class*=chip], [class*=title], [class*=name]')) {
+    for (const t of e.childNodes) {
+      if (t.nodeType !== 3) continue
+      const s = t.textContent.trim()
+      if (s.length < 2 || s.length > 40) continue
+      t.textContent = t.textContent.replace(s, [s, s, s].join(' '))
+      n++
+    }
+  }
+  return n
+})()`

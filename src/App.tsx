@@ -18,6 +18,7 @@ import { rove } from './ui/Access'
 import { Guard } from './ui/Guard'
 import { openReport, type ReportOpen } from './lib/report'
 import { Savings } from './views/Savings'
+import { FreeModels } from './views/Free'
 import { Library } from './views/Library'
 import { Browser, useBrowser } from './views/Browser'
 import { Palette, type Command } from './views/Palette'
@@ -26,7 +27,7 @@ import { ago, boot, desk, mod, reload, unavailable, useApp, type Access } from '
 export type View =
   | { name: 'room'; id: string; focus?: string }
   | { name: 'new'; skill?: Skill; pack?: string; text?: string }
-  | { name: 'agents' } | { name: 'settings' } | { name: 'pool' } | { name: 'savings' } | { name: 'library' } | { name: 'browser' } | { name: 'waiting' }
+  | { name: 'agents' } | { name: 'free' } | { name: 'settings' } | { name: 'pool' } | { name: 'savings' } | { name: 'library' } | { name: 'browser' } | { name: 'waiting' }
   | { name: 'flows'; edit?: string; template?: string }
 export type Look = 'lunchbox' | 'neyra'
 
@@ -273,6 +274,7 @@ export function App() {
         {view.name === 'room' && <RoomView key={view.id} id={view.id} focus={view.focus} access={access} setAccess={setAccess} open={(id) => go({ name: 'room', id })} say={say} />}
         {view.name === 'new' && <NewRoom key={view.skill?.id ?? view.pack ?? 'new'} skill={view.skill} pack={view.pack} text={view.text} onCreated={(id) => go({ name: 'room', id })} go={go} say={say} access={access} setAccess={setAccess} workspace={workspace} setWorkspace={setWorkspace} />}
         {view.name === 'agents' && <Agents say={say} />}
+        {view.name === 'free' && <FreeModels go={go} say={say} />}
         {view.name === 'flows' && <Flows key={view.edit ?? view.template ?? 'list'} edit={view.edit} template={view.template} go={go} say={say} workspace={workspace || env.cwd} />}
         {view.name === 'pool' && <Pool go={go} say={say} />}
         {view.name === 'waiting' && <WaitingPage go={go} access={access} />}

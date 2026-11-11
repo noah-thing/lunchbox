@@ -30,6 +30,7 @@ export function Agents({ say }: { say: (t: string) => void }) {
           <h1>Agents</h1>
           <p>When one runs out or fails, the room hands its work to the next one in the crew with the same memory.</p>
         </div>
+        <button className="btn small quiet" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'free' } }))}>Free models</button>
         <button className="btn small quiet" onClick={refresh} disabled={busy}>{busy ? <Loader size={10} /> : 'Check again'}</button>
         <button className="btn small" onClick={() => setSheet('new')}>Add a connector</button>
       </header>
@@ -258,7 +259,7 @@ export function LocalSetupBox({ a, say }: { a: AgentInfo; say: (t: string) => vo
         <label className="field">
           <span>Add a model</span>
           <div className="row">
-            <input placeholder="Any name from ollama.com/library, like gemma3 or qwen3:14b" value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { get(custom); setCustom('') } }} />
+            <input placeholder="Any name from ollama.com/library, like gemma4 or qwen3.5:9b" value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { get(custom); setCustom('') } }} />
             <button className="btn small" disabled={!custom.trim()} onClick={() => { get(custom); setCustom('') }}>Download</button>
           </div>
         </label>

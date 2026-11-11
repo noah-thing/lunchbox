@@ -156,7 +156,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
         }} />
       <div className="cbar">
-        <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span><span className="crewname">{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</span></>}>
+        <Menu label="Agents in this room" button={<><span className="stack">{crew.map((w) => <span key={w}><Mark seed={agentOf(w, agents).mark} size={12} /></span>)}</span><span className="crewpill">{crew.length === 1 ? agentOf(crew[0], agents).short : `${crew.length} agents`}</span></>}>
           {() => (
             <CrewMenu listed={listed} crew={crew} toggle={toggle} promote={(id) => setCrew([id, ...crew.filter((w) => w !== id)])} footer={
               <>
@@ -175,6 +175,9 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
                     <span className="grow"><b>Add OpenCode</b><span>Free models, no key needed</span></span>
                   </button>
                 )}
+                <button className="item" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'free' } }))}>
+                  <span className="grow"><b>Free models</b><span>No key, or a free key in a minute</span></span>
+                </button>
                 {/* Everything else, free providers and custom agents, lives on the Agents page. */}
                 <button className="item" onClick={() => dispatchEvent(new CustomEvent('lb:go', { detail: { name: 'agents', add: true } }))}>
                   <span className="grow"><b>See all agents</b><span>Free models, Qoder, Aider, any API or command line tool</span></span>

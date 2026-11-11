@@ -388,7 +388,7 @@ test('pulling a local model reports the model layer, then ready', async () => {
     assert.equal(last.finished, true)
     assert.equal(last.total, 5000, 'a small layer never replaces the model layer')
     assert.equal(last.done, 5000)
-    assert.match(suggest().model, /^qwen3:/)
+    assert.match(suggest().model, /^qwen3/)
   } finally {
     PROVIDERS.ollama.base = base
     server.close()

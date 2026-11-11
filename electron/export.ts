@@ -95,12 +95,12 @@ pre{background:var(--g);border:1px solid var(--l);border-radius:10px;padding:12p
 .box{display:inline-block;width:11px;height:11px;border:1px solid var(--f);border-radius:3px;margin-right:6px;vertical-align:-1px}.box.on{background:var(--i);border-color:var(--i)}
 nav{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:6px;background:var(--w);border:1px solid var(--l);border-radius:999px;padding:5px}
 nav button{background:none;border:0;color:var(--i);font:inherit;font-size:13px;padding:7px 14px;border-radius:999px;cursor:pointer}nav button:hover{background:var(--l)}
-footer{margin-top:56px;color:var(--f);font:11px ui-monospace,Menlo,monospace;text-align:center}
+footer{margin-top:56px;color:var(--f);font:11px ui-monospace,Menlo,monospace;text-align:center}footer a{color:inherit;text-underline-offset:3px}
 @media (prefers-color-scheme:light){:root{--g:#f4f3ef;--s:#fff;--w:#ebe9e3;--i:#0d0d0c;--d:rgba(13,13,12,.62);--f:rgba(13,13,12,.4);--l:rgba(13,13,12,.1)}}
 </style></head><body>
 <main><header><h1>${esc(meta.name)}</h1><p>${esc(time(meta.created))} · ${esc(meta.crew.map(name).join(' + '))} · ${cards.length} moments</p></header>
 ${body}
-<footer>Made in Lunchbox</footer></main>
+<footer>Made in <a href="https://mylunchbox.dev">Lunchbox</a>, where AI agents work together</footer></main>
 <nav><button id="play">Play</button><button id="all">Show all</button></nav>
 <script>
 const s=[...document.querySelectorAll('section')];let t=null

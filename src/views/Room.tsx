@@ -250,8 +250,8 @@ function RoomMenu({ id, meta, events, canReplay, replay, open, say }: { id: stri
             <span className="grow"><b>Open folder</b><span>{short(meta.workspace)}</span></span>
           </button>
           <div className="sep" />
-          <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'html')) say('Replay saved. Open it in any browser and press Play.') }}>
-            <span className="grow"><b>Export replay</b><span>One HTML file that plays the room back</span></span>
+          <button className="item" onClick={async () => { close(); if (await desk.call('room:export', id, 'html')) say('Replay saved. It holds the whole room, so read it before you share it.') }}>
+            <span className="grow"><b>Share as a replay</b><span>One file anyone can open and play back</span></span>
           </button>
           <button className="item" onClick={() => { close(); roomCard(meta, events, agents, say) }}>
             <span className="grow"><b>Share as image</b><span>One card for X: the crew, the handoffs, what was proved</span></span>

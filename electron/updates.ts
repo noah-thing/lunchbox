@@ -53,7 +53,7 @@ export function visible(list: Notice[], version: string, platform: string, dismi
     (!n.from || !newer(n.from, version)) && (!n.to || !newer(version, n.to)) &&
     (!n.platforms || n.platforms.includes(platform as never)) &&
     (!n.after || Date.parse(n.after) <= now) && (!n.until || Date.parse(n.until) > now) &&
-    (!n.image || n.image.startsWith('https://')) && (!n.action || /^https:\/\//.test(n.action.url)),
+    (!n.image || n.image.startsWith('https://')) && (!n.action || /^https:\/\//.test(n.action.url) || n.action.url === 'lunchbox:update'),
   )
 }
 
