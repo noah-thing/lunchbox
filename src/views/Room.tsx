@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
+import { wallWhy } from '../../shared/wall'
 import { plan, plansBefore, type Step } from '../../shared/plan'
 import { searchOf, stepOf, type Search } from '../../shared/steps'
 import { Loader, Mark, Meter, Sure, Thumb } from '../ui/bits'
@@ -417,7 +418,7 @@ function Ev({ mark, grouped = false, className = '', id, children }: { mark: Rea
 
 function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
   const from = agentOf(e.from, agents).short
-  const why = /^(is |hit )/.test(e.reason) ? `${from} ${e.reason}` : `${from} could not start: ${e.reason}`
+  const why = wallWhy(from, e.reason)
   const next = e.to ? `${agentOf(e.to, agents).short} took over with the same memory.` : e.arena ? 'The others answered without it.' : 'Nobody else in the crew could take over.'
   return `${why}. ${next}${e.until && e.until > Date.now() ? ` Back at ${clock(e.until)}.` : ''}`
 }

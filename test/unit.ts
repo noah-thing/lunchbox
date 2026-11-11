@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { claudeLike, codex, gemini, limitOf, plain, reason } from '../electron/agents/parse'
+import { wallWhy } from '../shared/wall'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
 import { chat, PROVIDERS } from '../electron/agents/http'
@@ -800,4 +801,15 @@ test('savings: worked back from a reported cost, and Codex priced in credits', (
   const turn = codex('gpt-6.1-terra')
   turn.line({ type: 'turn.completed', usage: { input_tokens: 2_000_000, cached_input_tokens: 1_000_000, output_tokens: 10 } })
   assert.ok(Math.abs(turn.turn.usage.gross! - 0.95) < 1e-9)
+})
+
+test('takeover lines say what went wrong, without terminal colours', () => {
+  // Two real reports from Windows users.
+  assert.equal(reason('\x1b[91m\x1b[1mError: \x1b[0mUnexpected error'), 'Unexpected error')
+  assert.equal(plain('[91m[1mError: [0mUnexpected error'), 'Error: Unexpected error')
+  assert.equal(wallWhy('DeepSeek', '401 Authentication Fails (governor)'), 'DeepSeek refused its API key (401). Check the key in Agents')
+  assert.equal(wallWhy('OpenCode', 'Unexpected error'), 'OpenCode stopped with an error: Unexpected error')
+  assert.match(wallWhy('OpenCode', 'Server process exited with code 1'), /another copy of it is running/)
+  assert.equal(wallWhy('OpenCode', 'OpenCode is not installed on this computer'), 'OpenCode is not installed on this computer')
+  assert.equal(wallWhy('Codex', 'hit its limit'), 'Codex hit its limit')
 })

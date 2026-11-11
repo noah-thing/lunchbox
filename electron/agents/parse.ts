@@ -337,15 +337,19 @@ export function limitOf(text: string): { until: number } | null {
   return { until: Date.now() + 3600e3 }
 }
 
+// Terminal colours, with or without the escape character that some consoles drop.
+const uncolor = (text: string) => text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\[\d{1,3}(;\d{1,3})*m/g, '')
+
 // Turn a wall of stderr into the one line a person needs.
 export function reason(stderr: string) {
-  const lines = stderr.split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/^at\s|node:internal|^\s*\^/.test(l))
+  const lines = uncolor(stderr).split('\n').map((l) => l.trim()).filter(Boolean).filter((l) => !/^at\s|node:internal|^\s*\^/.test(l))
   const hit = lines.find((l) => /not supported|no longer supported|migrate|sign ?in|log ?in|auth|api key|quota|limit|not found|permission|denied|error/i.test(l))
   return plain((hit ?? lines.pop() ?? '').replace(/^(error|fatal):\s*/i, '')).slice(0, 300)
 }
 
 // CLIs often pass the provider's JSON error straight through. Keep the sentence a person needs.
 export function plain(text: string) {
+  text = uncolor(text)
   const start = text.indexOf('{')
   let message = text
   if (start >= 0) {
