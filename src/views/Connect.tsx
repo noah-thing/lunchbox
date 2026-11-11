@@ -42,6 +42,15 @@ const PRESETS: Record<Kind, Preset[]> = {
   ],
 }
 
+// OpenCode runs its free models without a key, so it is one click away instead of behind the form.
+export const OPENCODE: Connector = { id: 'my-opencode', name: 'OpenCode', kind: 'cli', command: 'opencode', args: 'run {prompt}', output: 'text' }
+export const OPENCODE_INSTALL = 'npm install -g opencode-ai'
+export const hasOpenCode = (list: Connector[]) => list.some((c) => c.kind === 'cli' && /^opencode(\.cmd|\.exe)?$/i.test((c.command ?? '').trim()))
+export async function addOpenCode(list: Connector[]) {
+  if (!hasOpenCode(list)) await reload.settings({ connectors: [...list.filter((c) => c.id !== OPENCODE.id), OPENCODE] })
+}
+export const openCodeFound = () => desk.call('connector:installed', ['opencode']).then((r: Record<string, boolean>) => !!r.opencode).catch(() => false)
+
 const KINDS: { id: Kind; name: string; line: string }[] = [
   { id: 'openai', name: 'API, OpenAI format', line: 'Most providers and local servers speak this.' },
   { id: 'anthropic', name: 'API, Anthropic format', line: 'Gateways and proxies in front of Claude.' },

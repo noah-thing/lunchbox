@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore, type CSSProperties } from 'r
 import type { AgentInfo, Pull } from '../../shared/types'
 import { Loader, Mark, Meter } from '../ui/bits'
 import { clock, desk, money, reason, reload, tokens, unavailable, useApp } from '../lib/desk'
-import { ConnectorSheet, removeConnector } from './Connect'
+import { addOpenCode, ConnectorSheet, hasOpenCode, OPENCODE_INSTALL, openCodeFound, removeConnector } from './Connect'
 import type { Connector } from '../../shared/types'
 
 const GROUPS: { via: AgentInfo['via'][]; title: string; line: string }[] = [
@@ -55,6 +55,7 @@ export function Agents({ say }: { say: (t: string) => void }) {
                 <button className="btn small quiet" onClick={async () => { await removeConnector(a.id, connectors); say(`${a.name} removed`) }}>Remove</button>
               </div>} />
           ))}
+          {!hasOpenCode(connectors) && <OpenCodeCard connectors={connectors} say={say} />}
           <button className="addconn" onClick={() => setSheet('new')}>
             <b>Add a connector</b>
             <span>DeepSeek, Groq, Mistral, a server you run, or a command line agent like Aider, OpenCode or Goose.</span>
@@ -262,6 +263,38 @@ export function LocalSetupBox({ a, say }: { a: AgentInfo; say: (t: string) => vo
           </div>
         </label>
       )}
+    </div>
+  )
+}
+
+// OpenCode in one click when it is installed, and the command to install it when it is not.
+function OpenCodeCard({ connectors, say }: { connectors: Connector[]; say: (t: string) => void }) {
+  const [found, setFound] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { openCodeFound().then(setFound) }, [])
+  const add = async () => {
+    setBusy(true)
+    try { await addOpenCode(connectors); say('OpenCode added to your agents') } catch (e) { say(reason(e)) } finally { setBusy(false) }
+  }
+  const look = async () => {
+    setBusy(true)
+    const ok = await openCodeFound()
+    setFound(ok)
+    setBusy(false)
+    if (!ok) say('OpenCode is not installed yet')
+  }
+  const copy = () => { navigator.clipboard.writeText(OPENCODE_INSTALL); setCopied(true); setTimeout(() => setCopied(false), 1400) }
+  return (
+    <div className="addconn quick">
+      <div className="row">
+        <Mark seed="opencode" size={16} />
+        <div className="grow"><b>OpenCode</b><span>Free models with no key, as a full member of the crew.</span></div>
+        {found === false
+          ? <button className="btn small quiet" onClick={look} disabled={busy}>{busy ? <Loader size={10} /> : 'Check again'}</button>
+          : <button className="btn small" onClick={add} disabled={busy || found === null}>{busy ? <Loader size={10} /> : 'Add OpenCode'}</button>}
+      </div>
+      {found === false && <button className="cmd" onClick={copy} title="Copy">{copied ? 'copied' : `$ ${OPENCODE_INSTALL}`}</button>}
     </div>
   )
 }
