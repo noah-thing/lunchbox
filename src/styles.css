@@ -124,7 +124,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .sblabel{padding:20px 8px 6px;font:11px var(--mono);color:var(--faint)}
 .sbrooms{flex:1;overflow:auto;display:flex;flex-direction:column;gap:1px}
 .sbfoot{display:flex;flex-direction:column;gap:1px;padding-top:8px}
-.sheet>*{animation:pagein 320ms var(--out) both}
+/* backwards, not both: a transform left on the page after it lands would trap every dialog's
+   fixed backdrop inside the page instead of the window. */
+.sheet>*{animation:pagein 320ms var(--out) backwards}
 @keyframes pagein{from{opacity:0;transform:translateY(6px)}}
 .sheet{margin:8px 8px 8px 0;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line);overflow:hidden;min-width:0;position:relative;view-transition-name:sheet}
 .app.arriving .sidebar{animation:rise 700ms var(--out) both}
@@ -413,7 +415,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .anote{font-size:12.5px;line-height:1.5;color:var(--warn)}
 .field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .field>span{font-size:12px;font-weight:500}
-.field input{height:32px;padding:0 10px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line2);font:12px var(--mono);transition:box-shadow 140ms var(--out);flex:1}
+.field input{height:32px;min-height:32px;padding:0 10px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line2);font:12px var(--mono);transition:box-shadow 140ms var(--out);flex:1}
 .field input:focus{box-shadow:inset 0 0 0 1px var(--ink)}
 .field input::placeholder{color:var(--faint)}
 .field small{font-size:11.5px;color:var(--faint)}
@@ -462,8 +464,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 @media (hover:hover){.obback:hover{color:var(--ink)}}
 
 /* Palette and toast */
-.scrim{position:fixed;inset:0;z-index:40;-webkit-app-region:no-drag;background:rgba(0,0,0,.32);display:flex;justify-content:center;padding-top:15vh;animation:fadein 220ms var(--out) both}
+.scrim{position:fixed;inset:0;width:auto;max-width:none;z-index:40;-webkit-app-region:no-drag;background:rgba(0,0,0,.32);display:flex;justify-content:center;padding-top:15vh;animation:fadein 220ms var(--out) both}
 [data-theme=light] .scrim{background:rgba(20,20,18,.14)}
+/* The window still moves by its top edge while a dialog is open. */
+.scrim::before{content:"";position:absolute;top:0;left:0;right:0;height:36px;-webkit-app-region:drag}
 .palette{position:relative;width:600px;align-self:flex-start}
 .pglow{position:absolute;inset:0;border-radius:14px;box-shadow:0 32px 80px -12px rgba(0,0,0,.6);pointer-events:none}
 .pbody{position:relative;max-height:460px;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;background:var(--sheet);box-shadow:inset 0 0 0 1px var(--line2);will-change:transform,clip-path}

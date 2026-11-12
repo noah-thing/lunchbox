@@ -182,6 +182,8 @@ input[type=number].select{width:64px}
 .scrim.center{display:grid;place-items:center;padding:24px;background:rgba(0,0,0,.45);-webkit-app-region:no-drag}
 [data-theme=light] .scrim.center{background:rgba(14,14,13,.2)}
 .sheetcard{width:min(560px,calc(100vw - 48px));max-height:calc(100vh - 96px);overflow:auto;display:flex;flex-direction:column;gap:14px;padding:22px 24px;border-radius:14px;background:var(--sheet);box-shadow:inset 0 0 0 1px var(--line2),0 24px 64px -16px rgba(0,0,0,.6);animation:menu 260ms var(--out) both}
+/* Taller than the window, the card scrolls; its parts keep their size instead of squashing. */
+.sheetcard>*{flex-shrink:0}
 .sheetcard h2{font-size:17px;font-weight:500;letter-spacing:-.01em}
 .askfield{display:flex;flex-direction:column;gap:6px}
 .askfield span{font-size:12px;font-weight:500}
@@ -411,6 +413,8 @@ input[type=number].select{width:64px}
 @media (hover:hover){.connect .presets button:hover{color:var(--ink);background:var(--hover)}}
 .connect .presets button i{display:inline-block;width:6px;height:6px;margin-left:0;border-radius:3px;background:var(--ink);vertical-align:1px}
 .connect .field{max-width:none}
+/* The actions stay in reach when a short window makes the card scroll. */
+.connect>.row:last-child{position:sticky;bottom:-22px;margin:0 -24px -22px;padding:12px 24px 16px;background:var(--sheet);box-shadow:0 -1px 0 var(--line)}
 .connect select{height:32px;padding:0 8px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line2);font:12px var(--mono);background:var(--sheet);color:var(--ink)}
 .checknote{font-size:12px;color:var(--dim)}
 .checknote.bad{color:var(--bad)}
