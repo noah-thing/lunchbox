@@ -271,6 +271,8 @@ export function claudeLike(base?: Meter, resumed = false) {
         }
         const written = sum(mine.rows, 3)
         turn.usage = { input: sum(mine.rows, 0) + written, output: sum(mine.rows, 1), cached: sum(mine.rows, 2), cost: mine.cost, written, ...claudeSaved(mine.rows), v: 2 }
+        // Claude Code says how long it asked for what it cached this turn to be kept.
+        if (own[3] > 0 && u.cache_creation) turn.usage.ttl = own[3] > own[4] ? 300 : 3600
         if (typeof o.result === 'string') turn.final = o.result
         if (o.session_id) turn.session = o.session_id
         if (o.is_error) turn.error = typeof o.result === 'string' && o.result ? o.result : o.subtype || 'The agent stopped with an error'

@@ -1207,31 +1207,34 @@ function PlanNow({ t }: { t: LiveTurn }) {
 }
 
 // What this room cost, who spent it, and what the shared memory saved.
-// How long each agent's prompt cache stays warm. Providers keep a cached prompt for about five
-// minutes after it was last used; a message after that pays for the whole room again.
+// How long each agent's prompt cache stays warm. Claude says how long it asked for its cache to be
+// kept, five minutes or an hour, and each use starts that time again. Where an agent does not
+// say, the clock counts five minutes.
 const CACHE_MS = 5 * 60e3
 function CacheClock({ events, agents }: { events: Event[]; agents: AgentInfo[] }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
-  const last = new Map<string, number>()
+  const last = new Map<string, { at: number; life: number }>()
   for (const e of events) {
     if (e.kind !== 'say' && e.kind !== 'hands') continue
     const u = e.usage
     if (!u || !(u.cached > 0 || (u.written ?? 0) > 0)) continue
-    last.set(e.kind === 'say' ? e.who : e.to, e.at)
+    const who = e.kind === 'say' ? e.who : e.to
+    // A turn that only read keeps the time of the entries it read.
+    last.set(who, { at: e.at, life: u.ttl ? u.ttl * 1000 : last.get(who)?.life ?? CACHE_MS })
   }
-  const warm = [...last.entries()].map(([who, at]) => ({ who, left: at + CACHE_MS - now })).filter((x) => x.left > -60e3)
+  const warm = [...last.entries()].map(([who, { at, life }]) => ({ who, life, left: at + life - now })).filter((x) => x.left > -60e3)
   if (!warm.length) return null
   const fmt = (ms: number) => `${Math.floor(ms / 60e3)}:${String(Math.floor((ms % 60e3) / 1000)).padStart(2, '0')}`
   return (
-    <div className="cacheclock" title="A message while the cache is warm only pays for what is new. After it cools, the next message reads the whole room again.">
-      {warm.map(({ who, left }) => {
+    <div className="cacheclock" title="A message while the cache is warm only pays for what is new. After it cools, the next message reads the whole room again. The time is the one the agent reported; where it reports none, five minutes.">
+      {warm.map(({ who, life, left }) => {
         const a = agentOf(who, agents)
         return (
           <div key={who} className={`cclock${left <= 0 ? ' cold' : left < 60e3 ? ' soon' : ''}`}>
             <Mark seed={a.mark} size={12} />
             <span className="grow">{a.short} cache</span>
-            <i style={{ '--k': Math.max(0, Math.min(1, left / CACHE_MS)) } as CSSProperties} />
+            <i style={{ '--k': Math.max(0, Math.min(1, left / life)) } as CSSProperties} />
             <span className="mono">{left > 0 ? `warm ${fmt(left)}` : 'cooled'}</span>
           </div>
         )
