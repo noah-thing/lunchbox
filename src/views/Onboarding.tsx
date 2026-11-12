@@ -203,7 +203,7 @@ function Missing({ a }: { a: AgentInfo }) {
   return (
     <div className="obmiss">
       <Mark seed={a.mark} size={14} />
-      <span className="name">{a.name}</span>
+      <span className="name" title={a.note}>{a.name}{a.note && a.via === 'cli' && <span className="quiet"> is here, but does not start</span>}</span>
       {how.cmd ? <button className="cmd" onClick={copy} title="Copy">{copied ? 'copied' : `$ ${how.cmd}`}</button> : <a className="cmd" href={how.url} target="_blank" rel="noreferrer">{how.url.replace('https://', '')}</a>}
     </div>
   )

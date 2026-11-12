@@ -1,9 +1,9 @@
 import { createInterface } from 'node:readline'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import type { Access, AgentInfo, Act, Connector, Meter, Usage } from '../../shared/types'
-import { capture, env, launch, stop, version, which } from '../system'
+import { capture, env, launch, probe, runnable, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
 import { chat, listModels, parseHeaders, PROVIDERS } from './http'
 import type { Bench } from './bench'
@@ -238,9 +238,9 @@ export const def = (id: string) => all().find((d) => d.id === id)
 
 async function locate(bin: string) {
   const path = bin.replace(/^~(?=[\\/]|$)/, homedir())
-  if (isAbsolute(path)) return existsSync(path) ? path : ''
+  if (isAbsolute(path)) return runnable(path) ? path : ''
   // The app's own working folder means nothing to the person, so ./tools/agent starts from home.
-  if (/[\\/]/.test(path)) return existsSync(resolve(homedir(), path)) ? resolve(homedir(), path) : ''
+  if (/[\\/]/.test(path)) return runnable(resolve(homedir(), path)) ? resolve(homedir(), path) : ''
   return /^[\w.@+-]+$/.test(path) ? which(path) : ''
 }
 
@@ -253,8 +253,16 @@ export async function detect(keys: Record<string, string>, models: Record<string
       if (d.via === 'cli') {
         // One broken install shows as not found rather than hiding every other agent with it.
         const path = await locate(d.bin!).catch(() => '')
-        if (path) paths.set(d.id, path)
-        return { ...base, found: !!path, ready: !!path, version: path ? await version(path).catch(() => '') : undefined }
+        if (!path) { paths.delete(d.id); return { ...base, found: false, ready: false } }
+        // The agents Lunchbox knows have to start, not just be there. A connector is the person's
+        // own command, which may not know --version, so being runnable is enough for it.
+        const started = d.maker === 'Your connector' ? { ok: true, version: await version(path).catch(() => '') } : await probe(path)
+        if (!started.ok) {
+          paths.delete(d.id)
+          return { ...base, found: false, ready: false, note: `There is a ${d.bin} at ${path}, but it does not start. Install ${d.name} again, then check again.` }
+        }
+        paths.set(d.id, path)
+        return { ...base, found: true, ready: true, version: started.version || undefined }
       }
       if (d.via === 'local') {
         const [list, setup] = await Promise.all([listModels(providerOf(d), '').catch(() => null), localSetup(d.id, d.bin!)])

@@ -78,7 +78,7 @@ function AgentRow({ a, i, open, toggle, say, extra }: { a: AgentInfo; i: number;
   const budget = settings.budgets[a.id] ?? 0
   const spent = ledger?.spent[a.id]
   const s = a.setup
-  const state = !a.found ? (a.via === 'api' ? 'No key' : 'Not installed') : s && !s.running ? 'Not running' : s && !a.ready ? 'No chat model' : why ? 'Unavailable' : 'Ready'
+  const state = !a.found ? (a.via === 'api' ? 'No key' : a.note ? 'Does not start' : 'Not installed') : s && !s.running ? 'Not running' : s && !a.ready ? 'No chat model' : why ? 'Unavailable' : 'Ready'
   return (
     <div className={`agent${open ? ' open' : ''}${a.found ? '' : ' missing'}`} style={{ '--i': i } as CSSProperties}>
       <button className="agenthead" onClick={toggle} aria-expanded={open}>

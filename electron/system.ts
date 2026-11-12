@@ -1,5 +1,5 @@
 import { execFile, spawn, type SpawnOptions } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 
 export const isWin = process.platform === 'win32'
@@ -28,6 +28,8 @@ export function loginPath() { return (cached ??= findPath()) }
 
 async function findPath() {
   const first = process.env.LUNCHBOX_PATH?.split(delimiter) ?? []
+  // Tests look in their own folders and nowhere else, so what is installed here cannot leak in.
+  if (process.env.LUNCHBOX_PATH_ONLY) return unique(first)
   const home = process.env.HOME || process.env.USERPROFILE || ''
   if (isWin) {
     // Installers write the user's PATH to the registry, which this process never rereads, so the
@@ -88,6 +90,34 @@ function searchWin(bin: string, path: string) {
 export async function version(path: string) {
   const out = await capture(path, ['--version'], 6000, await env())
   return out.match(/\d+\.\d+(\.\d+)?/)?.[0] ?? ''
+}
+
+// Whether a tool really starts. A file on the PATH is not proof: it can be a shim left behind by
+// an uninstall, a link to something that moved, a build for another kind of computer. Only one
+// that answers --version without failing, in time, counts as installed.
+export async function probe(path: string, timeout = 10000): Promise<{ ok: boolean; version: string }> {
+  const [cmd, argv] = isBatch(path) ? [comspec(), ['/d', '/s', '/c', `"${cmdLine(path, ['--version'])}"`]] : [path, ['--version']]
+  const e = await env()
+  return new Promise((done) => {
+    try {
+      execFile(cmd, argv, { timeout, maxBuffer: 1 << 20, env: e, windowsHide: true, windowsVerbatimArguments: cmd !== path }, (err, out, errOut) => {
+        done({ ok: !err, version: String(out || errOut || '').match(/\d+\.\d+(\.\d+)?/)?.[0] ?? '' })
+      })
+    } catch {
+      done({ ok: false, version: '' })
+    }
+  })
+}
+
+// A file the person pointed at by its path: there, a file, and allowed to run.
+export function runnable(path: string) {
+  try {
+    if (!statSync(path).isFile()) return false
+    if (!isWin) accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
 }
 
 // The user's own shell for `!` commands, so aliases and profiles behave as they do in a terminal.

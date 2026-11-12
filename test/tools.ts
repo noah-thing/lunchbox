@@ -337,3 +337,57 @@ test('local models: the address of a built in server can be changed and set back
     assert.equal(at(''), 'http://127.0.0.1:11434/api')
   } finally { delete PROVIDERS['base-test'] }
 })
+
+// An agent counts as installed only when it starts: a file on the PATH is not proof.
+test('detection: a broken link, a file that cannot run, a tool that fails and one that hangs are not found', { skip: process.platform === 'win32' }, async () => {
+  const { chmodSync } = await import('node:fs')
+  const { probe, resetPath, runnable, which } = await import('../electron/system')
+  const { detect } = await import('../electron/agents')
+  const bin = mkdtempSync(join(tmpdir(), 'lunchbox-path-'))
+  const script = (name: string, body: string, mode = 0o755) => { writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`); chmodSync(join(bin, name), mode) }
+  symlinkSync(join(bin, 'gone-away'), join(bin, 'claude'))
+  script('codex', 'echo "codex 9.9.9"', 0o644)
+  script('grok', 'echo "grok: cannot find its runtime" >&2; exit 127')
+  script('gemini', 'echo "gemini 3.1.0"')
+  script('slow', '/bin/sleep 5; echo "slow 1.0.0"')
+  const before = process.env.LUNCHBOX_PATH
+  process.env.LUNCHBOX_PATH = bin
+  process.env.LUNCHBOX_PATH_ONLY = '1'
+  resetPath()
+  try {
+    assert.equal(await which('claude'), '', 'a link to nothing is not on the PATH')
+    assert.equal(await which('codex'), '', 'nor is a file that may not run')
+    assert.equal(runnable(join(bin, 'codex')), false)
+    assert.equal(runnable(join(bin, 'claude')), false)
+    assert.equal(await which('grok'), join(bin, 'grok'))
+    assert.deepEqual(await probe(join(bin, 'grok')), { ok: false, version: '' })
+    assert.deepEqual(await probe(join(bin, 'gemini')), { ok: true, version: '3.1.0' })
+    assert.equal((await probe(join(bin, 'slow'), 300)).ok, false, 'one that does not answer in time counts as not starting')
+
+    const agents = await detect({}, {}, {})
+    const of = (id: string) => agents.find((a) => a.id === id)!
+    assert.deepEqual([of('claude').found, of('codex').found, of('grok').found, of('gemini').found], [false, false, false, true])
+    assert.equal(of('gemini').ready, true)
+    assert.equal(of('gemini').version, '3.1.0')
+    assert.match(of('grok').note ?? '', /does not start/)
+    assert.equal(of('claude').note, undefined, 'nothing is said about a tool that is simply not there')
+    assert.equal(agents.filter((a) => a.via === 'cli' && a.found).length, 1, 'the count is only what is real')
+  } finally {
+    if (before === undefined) delete process.env.LUNCHBOX_PATH
+    else process.env.LUNCHBOX_PATH = before
+    delete process.env.LUNCHBOX_PATH_ONLY
+    resetPath()
+  }
+})
+
+// Something else listening on a local server's port is not that server.
+test('detection: a local server counts as running only when it answers like one', async () => {
+  const { listModels } = await import('../electron/agents/http')
+  const f = await fake(() => (res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"status":"ok"}') })
+  PROVIDERS['not-ollama'] = { base: `${f.base}/api`, style: 'ollama', prefer: /./ }
+  PROVIDERS['not-openai'] = { base: f.base, style: 'openai', prefer: /./ }
+  try {
+    await assert.rejects(listModels('not-ollama', ''), /not like a model server/)
+    await assert.rejects(listModels('not-openai', ''), /not like a model server/)
+  } finally { delete PROVIDERS['not-ollama']; delete PROVIDERS['not-openai']; f.close() }
+})
