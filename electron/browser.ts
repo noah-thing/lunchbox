@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
@@ -6,10 +6,12 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { BrowserWindow, WebContentsView, type NativeImage, type Rectangle } from 'electron'
 import type { Tool } from './hands'
+import { evict, MAX_AGENT_TABS, YOU } from '../shared/tabs'
 import { AXE_RUN, CONTROLS, FOCUSED, MEASURE, STRETCH, report, type Axe, type Measured } from './audit'
 import { describeModel, imagePage, modelPage, type View } from './viewer'
 
-export type BrowserState = { url: string; title: string; loading: boolean; back: boolean; forward: boolean; driver?: string; action?: string; device: Device; shown: boolean }
+export type TabState = { id: string; who: string; room?: string; url: string; title: string; loading: boolean; back: boolean; forward: boolean; device: Device; action?: string; busy: boolean }
+export type BrowserState = { tabs: TabState[]; active: string | null; shown: boolean }
 export type Device = 'desktop' | 'tablet' | 'phone'
 
 const DEVICES: Record<Device, { ua?: string }> = {
@@ -19,6 +21,8 @@ const DEVICES: Record<Device, { ua?: string }> = {
 }
 
 const HOME = 'about:blank'
+// A page that has not opened anything yet.
+const blank = (wc: Electron.WebContents) => !wc.getURL() || wc.getURL() === HOME
 const READ_LIMIT = 24000
 
 // Runs in the page. Numbers every element a person could use, and returns the page as an outline
@@ -88,21 +92,27 @@ const web = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(169\.254\.|
 let axeSource: string | null = null
 const axe = () => (axeSource ??= readFileSync(createRequire(__filename).resolve('axe-core/axe.min.js'), 'utf8'))
 
+// One page in the browser. The person has one, and every agent gets its own per room, so two
+// agents never click, type or navigate on the same page.
+type Tab = { id: string; who: string; room?: string; view: WebContentsView; device: Device; action?: string; busy: boolean; working: boolean; used: number; queue: Promise<unknown>; ready: Promise<unknown>; sized?: boolean }
+
 export class Browser {
-  private view: WebContentsView | null = null
+  private tabs = new Map<string, Tab>()
+  private active: string | null = null
   private bounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 }
   private shown = false
-  private device: Device = 'desktop'
-  private driver?: string
-  private action?: string
-  private queue: Promise<unknown> = Promise.resolve()
+  private host: BrowserWindow | null = null
 
   constructor(private win: () => BrowserWindow | null, private emit: (channel: string, payload: unknown) => void) {}
 
-  private ensure() {
+  private alive(t: Tab | undefined): t is Tab {
+    return !!t && !t.view.webContents.isDestroyed()
+  }
+
+  private create(id: string, who: string, room?: string) {
     const win = this.win()
     if (!win) throw new Error('The window is closed')
-    if (this.view && !this.view.webContents.isDestroyed()) return this.view
+    // The pages share one signed in session, so a login the person makes once works for the crew.
     const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'persist:browser', backgroundThrottling: false } })
     view.setBackgroundColor('#00000000')
     const wc = view.webContents
@@ -115,24 +125,61 @@ export class Browser {
     wc.session.setPermissionRequestHandler((_w, _p, done) => done(false))
     wc.session.setPermissionCheckHandler(() => false)
     for (const e of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'] as const) wc.on(e as 'did-start-loading', () => this.changed())
+    const tab: Tab = { id, who, room, view, device: 'desktop', busy: false, working: false, used: Date.now(), queue: Promise.resolve(), ready: Promise.resolve() }
+    this.tabs.set(id, tab)
+    this.host = win
     win.contentView.addChildView(view)
-    this.view = view
     this.layout()
-    wc.loadURL(HOME)
-    return view
+    // A page starts blank, and nothing is asked of it before that has landed: a second load
+    // started on top of the first leaves the page swapping under whoever reads it.
+    tab.ready = wc.loadURL(HOME).catch(() => {})
+    return tab
+  }
+
+  // The person's own page, made the first time it is needed.
+  private mine() {
+    const t = this.tabs.get(YOU)
+    return this.alive(t) ? t : this.create(YOU, YOU)
+  }
+
+  // The page the address bar and the buttons act on: the one being shown.
+  private current() {
+    const t = this.active ? this.tabs.get(this.active) : undefined
+    if (this.alive(t)) return t
+    this.active = YOU
+    return this.mine()
+  }
+
+  // An agent's own page in a room. Making one more than the limit closes the page unused longest.
+  private agent(room: string, who: string) {
+    const id = `${room}:${who}`
+    const have = this.tabs.get(id)
+    // A page whose process crashed is dropped, and the agent starts on a fresh one.
+    if (this.alive(have) && have.view.webContents.isCrashed()) this.close(id)
+    else if (this.alive(have)) return have
+    const out = evict([...this.tabs.values()])
+    if (out === null) throw new Error(`${MAX_AGENT_TABS} browser pages are open and all of them are busy. Try again when one has finished.`)
+    if (out) this.close(out)
+    const tab = this.create(id, who, room)
+    // It comes to the front only when the person is not already looking at a page.
+    const front = this.active ? this.tabs.get(this.active) : undefined
+    if (!front || (front.who === YOU && !front.busy && blank(front.view.webContents))) this.active = id
+    this.layout()
+    return tab
   }
 
   state(): BrowserState {
-    const wc = this.view?.webContents
-    const alive = wc && !wc.isDestroyed()
-    return {
-      url: alive && wc.getURL() !== HOME ? wc.getURL() : '',
-      title: alive ? wc.getTitle() : '',
-      loading: alive ? wc.isLoading() : false,
-      back: alive ? wc.navigationHistory.canGoBack() : false,
-      forward: alive ? wc.navigationHistory.canGoForward() : false,
-      driver: this.driver, action: this.action, device: this.device, shown: this.shown,
-    }
+    const tabs = [...this.tabs.values()].filter((t) => this.alive(t)).map((t) => {
+      const wc = t.view.webContents
+      const empty = blank(wc)
+      return {
+        id: t.id, who: t.who, room: t.room,
+        url: empty ? '' : wc.getURL(), title: empty ? '' : wc.getTitle(), loading: wc.isLoading(),
+        back: wc.navigationHistory.canGoBack(), forward: wc.navigationHistory.canGoForward(),
+        device: t.device, action: t.action, busy: t.busy,
+      }
+    })
+    return { tabs, active: this.active, shown: this.shown }
   }
 
   private changed() {
@@ -143,18 +190,67 @@ export class Browser {
   place(bounds: Rectangle | null) {
     this.shown = !!bounds
     if (bounds) this.bounds = bounds
-    if (bounds && !this.view) this.ensure()
     this.layout()
     this.changed()
   }
 
   private layout() {
-    if (!this.view) return
+    const win = this.win()
+    // A window opened again after the last one closed takes the pages over.
+    if (win && this.host !== win) {
+      this.host = win
+      for (const t of this.tabs.values()) if (this.alive(t)) win.contentView.addChildView(t.view)
+    }
     const b = this.bounds
-    // Hidden, the page keeps a real size so agents can still read it and take screenshots.
     const size = b.width > 0 ? b : { x: 0, y: 0, width: 1280, height: 800 }
-    this.view.setBounds({ x: Math.round(size.x), y: Math.round(size.y), width: Math.round(size.width), height: Math.round(size.height) })
-    this.view.setVisible(this.shown)
+    for (const t of this.tabs.values()) {
+      if (!this.alive(t)) continue
+      const front = this.shown && t.id === this.active
+      t.view.setBounds({ x: Math.round(size.x), y: Math.round(size.y), width: Math.round(size.width), height: Math.round(size.height) })
+      // Out of sight unless it is the page being shown: a transparent view left visible draws as
+      // a black box on Linux.
+      t.view.setVisible(front)
+      // A hidden view gives its page no size at all: text collapses to nothing, an agent reads an
+      // empty page and a screenshot never comes back. So a hidden page is told how large it is.
+      this.size(t, !front)
+    }
+  }
+
+  private size(t: Tab, hidden: boolean) {
+    if (t.sized === hidden) return
+    t.sized = hidden
+    const d = t.view.webContents.debugger
+    try {
+      if (!d.isAttached()) d.attach('1.3')
+      const job = hidden ? d.sendCommand('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 0, mobile: false }) : d.sendCommand('Emulation.clearDeviceMetricsOverride')
+      job.catch(() => {})
+    } catch {}
+  }
+
+  select(id: string) {
+    if (id !== YOU && !this.tabs.has(id)) return
+    this.active = id
+    this.layout()
+    this.changed()
+  }
+
+  close(id: string) {
+    const t = this.tabs.get(id)
+    if (!t) return
+    this.tabs.delete(id)
+    const wc = t.view.webContents
+    if (!wc.isDestroyed()) {
+      try { this.host?.contentView.removeChildView(t.view) } catch {}
+      wc.close()
+    }
+    if (this.active === id) this.active = this.tabs.has(YOU) ? YOU : [...this.tabs.keys()].pop() ?? null
+    this.layout()
+    this.changed()
+  }
+
+  // A room that is deleted or archived takes its agents' pages with it.
+  closeRoom(room: string) {
+    for (const t of [...this.tabs.values()]) if (t.room === room) this.close(t.id)
   }
 
   // Dev servers already running on this computer, for the start page.
@@ -171,16 +267,21 @@ export class Browser {
   }
 
   setDevice(d: Device) {
-    this.device = d
-    const wc = this.ensure().webContents
+    const t = this.current()
+    t.device = d
+    const wc = t.view.webContents
     wc.setUserAgent(DEVICES[d].ua ?? wc.session.getUserAgent())
-    this.layout()
-    if (wc.getURL() !== HOME) wc.reload()
+    if (!blank(wc)) wc.reload()
     this.changed()
   }
 
-  async open(url: string) {
-    const wc = this.ensure().webContents
+  // What the person typed into the address bar, opened in the page being shown.
+  open(url: string) {
+    return this.load(this.current(), url)
+  }
+
+  private async load(tab: Tab, url: string) {
+    const wc = tab.view.webContents
     const u = url.trim()
     // localhost:3000 looks like a scheme to a naive test, so a host and port is checked first.
     const target = /^(localhost|127\.\d+\.\d+\.\d+|\d+\.\d+\.\d+\.\d+)(:\d+)?(\/|$)/i.test(u) ? `http://${u}`
@@ -188,15 +289,18 @@ export class Browser {
       : /^[a-z][\w+.-]*:/i.test(u) && !/^[\w.-]+:\d+/.test(u) ? null
       : /\s/.test(u) || !u.includes('.') ? `https://duckduckgo.com/?q=${encodeURIComponent(u)}` : `https://${u}`
     // Only web pages: file:, javascript: and app schemes never load here.
-    if (!target) return wc.getURL()
+    if (!target || !web(target)) return wc.getURL()
+    tab.used = Date.now()
+    await tab.ready
     await wc.loadURL(target).catch(() => {})
     this.changed()
     return wc.getURL()
   }
 
   nav(kind: 'back' | 'forward' | 'reload' | 'stop') {
-    const wc = this.view?.webContents
-    if (!wc || wc.isDestroyed()) return
+    const t = this.active ? this.tabs.get(this.active) : undefined
+    if (!this.alive(t)) return
+    const wc = t.view.webContents
     if (kind === 'back') wc.navigationHistory.goBack()
     if (kind === 'forward') wc.navigationHistory.goForward()
     if (kind === 'reload') wc.reload()
@@ -204,11 +308,16 @@ export class Browser {
   }
 
   devtools() {
-    this.view?.webContents.openDevTools({ mode: 'detach' })
+    const t = this.active ? this.tabs.get(this.active) : undefined
+    if (this.alive(t)) t.view.webContents.openDevTools({ mode: 'detach' })
   }
 
-  async screenshot(file: string) {
-    const wc = this.ensure().webContents
+  // The page being shown, saved for the person.
+  screenshot(file: string) {
+    return this.capture(this.current().view.webContents, file)
+  }
+
+  private async capture(wc: Electron.WebContents, file: string) {
     let png: Buffer
     try {
       if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
@@ -222,19 +331,25 @@ export class Browser {
     return file
   }
 
-  // Agents take turns with the browser: one action at a time, each shown in the frame.
-  private drive<T>(who: string, action: string, job: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(async () => {
-      this.driver = who
-      this.action = action
+  // An agent works on its own page, one action at a time, each shown on its tab.
+  private drive<T>(room: string, who: string, action: string, job: (tab: Tab) => Promise<T>): Promise<T> {
+    const tab = this.agent(room, who)
+    const next = tab.queue.then(async () => {
+      // The page can have been closed while this waited its turn.
+      const now = this.agent(room, who)
+      now.busy = now.working = true
+      now.action = action
+      now.used = Date.now()
       this.changed()
-      try { return await job() } finally {
-        this.action = undefined
+      try { await now.ready; return await job(now) } finally {
+        now.working = false
+        now.action = undefined
+        now.used = Date.now()
         this.changed()
-        setTimeout(() => { if (!this.action) { this.driver = undefined; this.changed() } }, 2500)
+        setTimeout(() => { if (!now.action) { now.busy = false; this.changed() } }, 2500)
       }
     })
-    this.queue = next.catch(() => {})
+    tab.queue = next.catch(() => {})
     return next
   }
 
@@ -246,7 +361,9 @@ export class Browser {
 
   private async read(wc: Electron.WebContents) {
     await this.settle(wc)
-    const o = await wc.executeJavaScript(OUTLINE, true) as { title: string; url: string; text: string; refs: number; truncated: boolean }
+    type Outline = { title: string; url: string; text: string; refs: number; truncated: boolean }
+    // A page that moves on while it is being read, a redirect say, is read again once it lands.
+    const o = await (wc.executeJavaScript(OUTLINE, true) as Promise<Outline>).catch(async () => { await new Promise((r) => setTimeout(r, 400)); await this.settle(wc); return wc.executeJavaScript(OUTLINE, true) as Promise<Outline> })
     return `${o.title}\n${o.url}\n\n${o.text}${o.truncated ? '\n\n(The page goes on; scroll or search with browser_find.)' : ''}`
   }
 
@@ -255,9 +372,42 @@ export class Browser {
     if (!at) throw new Error(`There is no [${ref}] on the page now. Read the page again to get fresh numbers.`)
     await wc.executeJavaScript(pulse(at.x, at.y), true).catch(() => {})
     await new Promise((r) => setTimeout(r, 160))
-    wc.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y })
-    wc.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 1 })
-    wc.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'left', clickCount: 1 })
+    await wc.executeJavaScript(`window.__lbHit = false; addEventListener('click', () => { window.__lbHit = true }, { capture: true, once: true }); true`, true).catch(() => {})
+    await this.press(wc, at.x, at.y)
+    await new Promise((r) => setTimeout(r, 120))
+    // A page whose view is not on screen can miss the pointer altogether. The element is then
+    // clicked directly, so an agent gets the same result whether or not anyone is watching.
+    // A page that already navigated away has no flag left, which counts as clicked.
+    const hit = await wc.executeJavaScript('window.__lbHit !== false', true).catch(() => true)
+    if (!hit) await wc.executeJavaScript(`(() => { const e = document.querySelector('[data-lb-ref="${ref}"]'); if (e) { if (e.focus) e.focus(); e.click() } })()`, true).catch(() => {})
+  }
+
+  // Clicks and keys go through the debugger protocol, which reaches a page whether or not its
+  // view is on screen. Input sent to the view itself is dropped while the view is hidden.
+  private async press(wc: Electron.WebContents, x: number, y: number) {
+    try {
+      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
+    } catch {
+      wc.sendInputEvent({ type: 'mouseMove', x, y })
+      wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+      wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    }
+  }
+
+  private async enter(wc: Electron.WebContents) {
+    const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
+    try {
+      if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', ...key, text: '\r' })
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...key })
+    } catch {
+      wc.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' })
+      wc.sendInputEvent({ type: 'char', keyCode: '\r' })
+      wc.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' })
+    }
   }
 
   // Studio looks at pages in a window nobody sees, so it never takes over the browser the person
@@ -535,43 +685,57 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
   }
 
   // The tools every agent in a room gets. Screenshots are saved inside the room's folder.
-  tools(who: string, workspace: string): Tool[] {
-    const wc = () => this.ensure().webContents
+  tools(who: string, workspace: string, room: string): Tool[] {
+    const drive = <T,>(action: string, job: (wc: Electron.WebContents, tab: Tab) => Promise<T>) => this.drive(room, who, action, (tab) => job(tab.view.webContents, tab))
     const inside = (p: string) => {
-      const abs = resolve(workspace, p)
-      if (!abs.startsWith(resolve(workspace) + sep)) throw new Error('Screenshots are saved inside the room\'s folder')
+      const root = resolve(workspace)
+      const abs = resolve(root, p)
+      // A link inside the folder must not carry the picture out of it, so the real place is checked too.
+      let at = dirname(abs)
+      while (!existsSync(at) && dirname(at) !== at) at = dirname(at)
+      const real = realpathSync(at), realRoot = realpathSync(root)
+      const linked = existsSync(abs) && lstatSync(abs).isSymbolicLink()
+      if (!abs.startsWith(root + sep) || linked || (real !== realRoot && !real.startsWith(realRoot + sep))) throw new Error('Screenshots are saved inside the room\'s folder')
       return abs
     }
     return [
       {
         name: 'browser_open',
-        description: 'Open a URL in the Lunchbox browser, which the person can watch. Localhost works, so use it to check a site you are building. Returns the page as text with a number before every link, button and field.',
+        description: 'Open a URL in your own page of the Lunchbox browser, which the person can watch. Localhost works, so use it to check a site you are building. Returns the page as text with a number before every link, button and field.',
         input: { url: { type: 'string', description: 'A URL, a localhost address or words to search for' } },
-        run: (a) => this.drive(who, `Opening ${String(a.url).slice(0, 60)}`, async () => { await this.open(String(a.url)); return this.read(wc()) }),
+        run: (a) => drive(`Opening ${String(a.url).slice(0, 60)}`, async (wc, tab) => { await this.load(tab, String(a.url)); return this.read(wc) }),
       },
       {
         name: 'browser_read',
         description: 'Read the page that is open now, as text with numbered links, buttons and fields.',
         input: {},
-        run: () => this.drive(who, 'Reading the page', () => this.read(wc())),
+        run: () => drive('Reading the page', (wc) => this.read(wc)),
       },
       {
         name: 'browser_click',
         description: 'Click a link, button or field by the number browser_read gave it. Returns the page afterwards.',
         input: { ref: { type: 'number', description: 'The number in square brackets' } },
-        run: (a) => this.drive(who, `Clicking [${a.ref}]`, async () => { await this.click(wc(), Number(a.ref)); await new Promise((r) => setTimeout(r, 400)); return this.read(wc()) }),
+        run: (a) => drive(`Clicking [${a.ref}]`, async (wc) => { await this.click(wc, Number(a.ref)); await new Promise((r) => setTimeout(r, 400)); return this.read(wc) }),
       },
       {
         name: 'browser_type',
         description: 'Type into a field by its number. Set submit to press Enter afterwards.',
         input: { ref: { type: 'number', description: 'The field\'s number' }, text: { type: 'string', description: 'What to type' }, submit: { type: 'boolean', description: 'Press Enter after typing' } },
         required: ['ref', 'text'],
-        run: (a) => this.drive(who, `Typing into [${a.ref}]`, async () => {
-          const w = wc()
+        run: (a) => drive(`Typing into [${a.ref}]`, async (w) => {
           await this.click(w, Number(a.ref))
           await w.executeJavaScript(`(() => { const e = document.querySelector('[data-lb-ref="${Number(a.ref)}"]'); if (e && 'value' in e) { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })) } })()`, true)
-          w.insertText(String(a.text))
-          if (a.submit) { w.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); w.sendInputEvent({ type: 'char', keyCode: '\r' }); w.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' }) }
+          await w.insertText(String(a.text))
+          // Typed text can miss a page that is not on screen, like a click can. The field is then
+          // filled the way frameworks expect: through the native setter, with an input event.
+          await w.executeJavaScript(`(() => {
+            const e = document.querySelector('[data-lb-ref="${Number(a.ref)}"]'); const text = ${JSON.stringify(String(a.text))}
+            if (!e || !('value' in e) || e.value || !text) return
+            const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(e), 'value')?.set
+            if (set) set.call(e, text); else e.value = text
+            e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }))
+          })()`, true).catch(() => {})
+          if (a.submit) await this.enter(w)
           await new Promise((r) => setTimeout(r, 500))
           return this.read(w)
         }),
@@ -580,14 +744,13 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
         name: 'browser_find',
         description: 'Find text on the open page and scroll to it. Returns the lines around each match.',
         input: { text: { type: 'string', description: 'Words to look for' } },
-        run: (a) => this.drive(who, `Looking for “${String(a.text).slice(0, 40)}”`, async () => {
-          const w = wc()
+        run: (a) => drive(`Looking for “${String(a.text).slice(0, 40)}”`, async (w) => {
           w.findInPage(String(a.text))
           const page = await this.read(w)
           const needle = String(a.text).toLowerCase()
           const lines = page.split('\n')
           const hits = lines.flatMap((l, i) => (l.toLowerCase().includes(needle) ? [lines.slice(Math.max(0, i - 1), i + 2).join('\n')] : []))
-          setTimeout(() => w.stopFindInPage('keepSelection'), 1500)
+          setTimeout(() => { if (!w.isDestroyed()) w.stopFindInPage('keepSelection') }, 1500)
           return hits.length ? hits.slice(0, 12).join('\n---\n') : 'Not on this page.'
         }),
       },
@@ -596,10 +759,10 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
         description: 'Save a screenshot of the open page as a PNG inside the folder, to check a layout or show the person. Returns the path.',
         input: { file: { type: 'string', description: 'Path inside the folder, for example shots/home.png' } },
         required: [],
-        run: (a) => this.drive(who, 'Taking a screenshot', async () => {
+        run: (a) => drive('Taking a screenshot', async (wc) => {
           const file = inside(typeof a.file === 'string' && a.file ? a.file : `screenshots/${new Date().toISOString().replace(/[:.]/g, '-')}.png`)
-          await this.settle(wc())
-          await this.screenshot(file)
+          await this.settle(wc)
+          await this.capture(wc, file)
           return `Saved ${relative(workspace, file)}`
         }),
       },
@@ -645,8 +808,8 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
         name: 'browser_console',
         description: 'Run a JavaScript expression in the open page and return the result as JSON, for checking state or errors.',
         input: { expression: { type: 'string', description: 'For example document.querySelectorAll("img:not([alt])").length' } },
-        run: (a) => this.drive(who, 'Running a check in the page', async () => {
-          const r = await wc().executeJavaScript(`(async () => { try { const v = await (${String(a.expression)}); return JSON.stringify(v, null, 2) } catch (e) { return 'Error: ' + e.message } })()`, true)
+        run: (a) => drive('Running a check in the page', async (wc) => {
+          const r = await wc.executeJavaScript(`(async () => { try { const v = await (${String(a.expression)}); return JSON.stringify(v, null, 2) } catch (e) { return 'Error: ' + e.message } })()`, true)
           return String(r ?? 'undefined').slice(0, 8000)
         }),
       },
@@ -654,8 +817,7 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
   }
 
   destroy() {
-    this.view?.webContents.close()
-    this.view = null
+    for (const id of [...this.tabs.keys()]) this.close(id)
   }
 }
 

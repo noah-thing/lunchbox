@@ -25,7 +25,7 @@ type Hooks = {
   notify(title: string, body: string, room: string): void
   packs(): Pack[]
   // Tools from outside the room: the built-in browser and any MCP servers the person connected.
-  tools?(who: string, workspace: string, access: Access): Tool[]
+  tools?(who: string, workspace: string, access: Access, room: string): Tool[]
   // Creates a flow the person accepted from a card in a room. Set once the app's flows exist.
   flow?(f: Pick<Flow, 'name' | 'steps' | 'crew' | 'workspace' | 'access' | 'every' | 'at' | 'day' | 'pack'>): Flow | undefined
 }
@@ -736,7 +736,7 @@ export class Engine {
     // Help this turn calls for is shown inside it, where it was asked for, not above it.
     const inner: Ctx = !ctx.host && !ctx.arena && lt.kind === 'say' ? { ...ctx, host: { turn: lt.id, mark: () => lt.text.length } } : ctx
     const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
-      ? [...kit(this.host(room, me, crew, access, inner)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
+      ? [...kit(this.host(room, me, crew, access, inner)), ...(this.hooks.tools?.(who, meta.workspace, access, room) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
       : []
     const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'

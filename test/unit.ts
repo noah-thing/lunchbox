@@ -23,6 +23,7 @@ import { cut, weave } from '../shared/weave'
 import { testConnector } from '../electron/agents'
 import type { Event, RoomMeta } from '../shared/types'
 import { shift, side } from '../src/lib/fit'
+import { evict } from '../shared/tabs'
 
 const fixture = (name: string) =>
   readFileSync(join(process.cwd(), 'test', 'fixtures', `${name}.jsonl`), 'utf8').split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l))
@@ -1212,4 +1213,12 @@ test('a floating surface slides sideways only as far as the window edge', () => 
   assert.equal(shift(-40, 300, 8, 900), 48)
   assert.equal(shift(700, 300, 8, 900), -100)
   assert.equal(shift(10, 1000, 8, 900), -2)
+})
+
+test('agent browser pages are capped: the one unused longest goes, never one at work or the person\'s', () => {
+  const tab = (id: string, used: number, working = false) => ({ id, who: id === 'you' ? 'you' : 'claude', working, used })
+  assert.equal(evict([tab('you', 0), tab('a', 5), tab('b', 3)], 3), undefined)
+  assert.equal(evict([tab('you', 0), tab('a', 5), tab('b', 3), tab('c', 9)], 3), 'b')
+  assert.equal(evict([tab('a', 5), tab('b', 3, true), tab('c', 9)], 3), 'a')
+  assert.equal(evict([tab('a', 5, true), tab('b', 3, true), tab('c', 9, true)], 3), null)
 })

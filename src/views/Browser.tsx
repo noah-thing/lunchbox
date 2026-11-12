@@ -1,13 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
-import { Loader, Mark, Strip } from '../ui/bits'
-import { IconBack, IconCamera, IconCode, IconForward, IconReload, IconStop } from '../ui/icons'
+import { Loader, Mark } from '../ui/bits'
+import { IconBack, IconBrowser, IconCamera, IconClose, IconCode, IconForward, IconReload, IconStop } from '../ui/icons'
 import { agentOf, desk, reason, useApp } from '../lib/desk'
+import { YOU } from '../../shared/tabs'
 
 type Device = 'desktop' | 'tablet' | 'phone'
-type State = { url: string; title: string; loading: boolean; back: boolean; forward: boolean; driver?: string; action?: string; device: Device; shown: boolean }
+type Tab = { id: string; who: string; room?: string; url: string; title: string; loading: boolean; back: boolean; forward: boolean; device: Device; action?: string; busy: boolean }
+type State = { tabs: Tab[]; active: string | null; shown: boolean }
 
 const WIDTH: Record<Device, number> = { desktop: 0, tablet: 820, phone: 390 }
-const EMPTY: State = { url: '', title: '', loading: false, back: false, forward: false, device: 'desktop', shown: false }
+const BLANK: Tab = { id: YOU, who: YOU, url: '', title: '', loading: false, back: false, forward: false, device: 'desktop', busy: false }
+const EMPTY: State = { tabs: [], active: null, shown: false }
 
 export function useBrowser() {
   const [s, setS] = useState<State>(EMPTY)
@@ -35,16 +38,21 @@ function useOverlaid() {
 // The page is a native view drawn into the hole this frame leaves. The frame tells the main
 // process where the hole is whenever it moves, and takes the page away when it unmounts.
 export function Browser({ say, covered }: { say: (t: string) => void; covered: boolean }) {
-  const s = useBrowser()
+  const web = useBrowser()
+  // The person's page is always there to go back to, even before it has opened anything.
+  const tabs = web.tabs.some((t) => t.id === YOU) ? web.tabs : [BLANK, ...web.tabs]
+  const s = tabs.find((t) => t.id === web.active) ?? tabs[0]
   const hole = useRef<HTMLDivElement>(null)
   const [typed, setTyped] = useState<string | null>(null)
   const [local, setLocal] = useState<{ port: number; title: string }[] | null>(null)
   const agents = useApp((x) => x.agents)
+  const rooms = useApp((x) => x.rooms)
   const open = !!s.url
-  const driver = s.driver ? agentOf(s.driver, agents) : null
   const hidden = useOverlaid() || covered
 
-  useEffect(() => { if (!open) desk.call('browser:local').then(setLocal) }, [open])
+  useEffect(() => { if (!open) desk.call('browser:local').then(setLocal, () => setLocal([])) }, [open])
+  // What was being typed belongs to the page it was typed on.
+  useEffect(() => setTyped(null), [s.id])
 
   useLayoutEffect(() => {
     const el = hole.current
@@ -75,7 +83,7 @@ export function Browser({ say, covered }: { say: (t: string) => void; covered: b
   const width = WIDTH[s.device]
 
   return (
-    <div className={`browser${driver ? ' driven' : ''}`}>
+    <div className={`browser${s.busy ? ' driven' : ''}`}>
       <div className="bbar">
         <span className="bnav">
           <button className="iconbtn" disabled={!s.back} onClick={() => desk.call('browser:nav', 'back')} aria-label="Back"><IconBack /></button>
@@ -100,6 +108,27 @@ export function Browser({ say, covered }: { say: (t: string) => void; covered: b
         <button className="iconbtn" disabled={!open} onClick={() => desk.call('browser:devtools')} aria-label="Developer tools" title="Developer tools"><IconCode /></button>
       </div>
 
+      {tabs.length > 1 && (
+        <div className="btabs" role="tablist" aria-label="Browser pages">
+          {tabs.map((t) => {
+            const agent = t.who === YOU ? null : agentOf(t.who, agents)
+            const name = agent ? agent.short : 'You'
+            const room = t.room ? rooms.find((r) => r.id === t.room)?.name : undefined
+            const doing = t.action ?? (t.title || hostOf(t.url) || (agent ? 'Waiting' : 'New page'))
+            return (
+              <div key={t.id} className={`btab${t.id === s.id ? ' on' : ''}${t.busy ? ' busy' : ''}`}>
+                <button role="tab" aria-selected={t.id === s.id} title={room ? `${name} in ${room}` : name} onClick={() => desk.call('browser:select', t.id)}>
+                  {agent ? <Mark seed={agent.mark} size={13} active={t.busy} /> : <IconBrowser />}
+                  <b>{name}</b>
+                  <span>{doing}</span>
+                </button>
+                {(agent || t.url) && <button className="btabx" onClick={() => desk.call('browser:close', t.id)} aria-label={agent ? `Close ${name}'s page` : 'Close your page'} title="Close"><IconClose /></button>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       <div className="bstage">
         {open ? (
           <div className={`bdevice ${s.device}`} style={width ? ({ '--w': `${width}px` } as CSSProperties) : undefined}>
@@ -122,18 +151,12 @@ export function Browser({ say, covered }: { say: (t: string) => void; covered: b
             </div>
           </div>
         )}
-        {driver && (
-          <div className="bdriver" key={s.action}>
-            <Mark seed={driver.mark} size={14} active />
-            <b>{driver.short}</b>
-            <span>{s.action ?? 'is using the browser'}</span>
-            <Strip alphabet={driver.alphabet} length={10} />
-          </div>
-        )}
       </div>
     </div>
   )
 }
+
+const hostOf = (url: string) => { try { return new URL(url).host } catch { return '' } }
 
 const ART = String.raw`
  .-----------------------------------.

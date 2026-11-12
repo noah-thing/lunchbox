@@ -83,6 +83,31 @@ if (process.env.FAKE_SCRIPT === 'subagents' && name === 'claude') {
   process.exit(0)
 }
 
+// The room's tools: Claude Code gets the address in a config file, Codex as a setting with the token in the environment.
+const codexUrl = args.find((a) => a.startsWith('mcp_servers.lunchbox.url='))
+const mcp = args.includes('--mcp-config') ? JSON.parse(((v) => (v.trim().startsWith('{') ? v : readFileSync(v, 'utf8')))(args[args.indexOf('--mcp-config') + 1])).mcpServers.lunchbox.url
+  : codexUrl && process.env.LUNCHBOX_HANDS_TOKEN ? `${JSON.parse(codexUrl.split('=').slice(1).join('='))}/${process.env.LUNCHBOX_HANDS_TOKEN}` : null
+
+// The agent opens a page in its own browser tab, stays on it for a moment and says what it read.
+if (mcp && input.includes('Browse:')) {
+  let id = 0
+  const call = async (tool, args) => (await (await fetch(mcp, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name: tool, arguments: args } }) })).json()).result.content[0].text
+  const url = `${input.match(/Browse:\s*(https?:\/\/[\d.]+:\d+)/)[1]}/${name}`
+  await call('browser_open', { url })
+  sleep(Number(process.env.FAKE_BROWSE ?? 0))
+  const text = `${name} read: ${(await call('browser_read', {})).split('\n')[0]}`
+  if (name === 'codex') {
+    say({ type: 'thread.started', thread_id: 'thread-1' })
+    say({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text } })
+    say({ type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 20 } })
+  } else {
+    say({ type: 'system', subtype: 'init', session_id: `${name}-session`, model: 'fake' })
+    say({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+    say({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: `${name}-session`, total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } })
+  }
+  process.exit(0)
+}
+
 if (name === 'codex') {
   say({ type: 'thread.started', thread_id: 'thread-1' })
   // FAKE_SCRIPT=cut: Codex runs a command and, unless told to stay quiet, writes half a reply before the limit.
@@ -94,7 +119,6 @@ if (name === 'codex') {
   process.exit(1)
 }
 
-const mcp = args.includes('--mcp-config') ? JSON.parse(((v) => (v.trim().startsWith('{') ? v : readFileSync(v, 'utf8')))(args[args.indexOf('--mcp-config') + 1])).mcpServers.lunchbox.url : null
 // Brought in by the main agent for one task: report back. Checked first, because the briefing
 // quotes the person's message, which may hold the words the main agent reacts to.
 if (input.includes('brought you in for this:')) {

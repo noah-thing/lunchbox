@@ -238,7 +238,7 @@ export function App() {
         <button className={`sbitem${on('pool') ? ' on' : ''}`} onClick={() => go({ name: 'pool' })}>{on('pool') && sel}<IconPool />Pool</button>
         <button className={`sbitem${on('savings') ? ' on' : ''}`} onClick={() => go({ name: 'savings' })}>{on('savings') && sel}<IconSave />Savings</button>
         <button className={`sbitem${on('library') ? ' on' : ''}`} onClick={() => go({ name: 'library' })}>{on('library') && sel}<IconLibrary />Library</button>
-        <button className={`sbitem${on('browser') ? ' on' : ''}`} onClick={() => go({ name: 'browser' })}>{on('browser') && sel}<IconBrowser />Browser{web.driver && <i className="livedot" title="An agent is using the browser" />}</button>
+        <button className={`sbitem${on('browser') ? ' on' : ''}`} onClick={() => go({ name: 'browser' })}>{on('browser') && sel}<IconBrowser />Browser{web.tabs.some((t) => t.busy) && <i className="livedot" title="An agent is using the browser" />}</button>
         {needs > 0 && <button className={`sbitem needsyou${on('waiting') ? ' on' : ''}`} onClick={() => go({ name: 'waiting' })}>{on('waiting') && sel}<IconInbox />Needs you<small>{needs}</small></button>}
         <div className="sblabel">Rooms</div>
         <div className="sbrooms">

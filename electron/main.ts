@@ -102,7 +102,8 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => { if (!process.env.VITE_URL) e.preventDefault() })
   if (process.env.VITE_URL) win.loadURL(process.env.VITE_URL)
   else win.loadFile(join(__dirname, 'renderer/index.html'))
-  win.on('closed', () => { win = null })
+  // The agent browser's pages live in this window, so they go with it.
+  win.on('closed', () => { win = null; browser?.destroy() })
 }
 
 function notify(title: string, body: string, room: string) {
@@ -148,9 +149,9 @@ function wire() {
     return engine.create({ ...opts, workspace: folder })
   })
   h('room:rename', (id: string, name: string) => engine.rename(id, name))
-  h('room:mark', (id: string, patch: { pinned?: boolean; archived?: boolean }) => engine.mark(id, patch))
+  h('room:mark', (id: string, patch: { pinned?: boolean; archived?: boolean }) => { if (patch.archived) browser.closeRoom(id); return engine.mark(id, patch) })
   h('inbox', () => engine.inbox())
-  h('room:remove', (id: string) => engine.remove(id))
+  h('room:remove', (id: string) => { browser.closeRoom(id); return engine.remove(id) })
   h('room:fork', (id: string, at: string) => engine.fork(id, at))
   h('room:crew', (id: string, crew: string[]) => engine.setCrew(id, crew))
   h('room:workspace', (id: string, path: string) => engine.setWorkspace(id, path))
@@ -205,7 +206,9 @@ function wire() {
   h('flows:run', (id: string) => flows.run(id).room)
   h('browser', () => browser.state())
   h('browser:place', (b: { x: number; y: number; width: number; height: number } | null) => browser.place(b))
-  h('browser:open', (url: string) => browser.open(url))
+  h('browser:open', (url: string) => browser.open(String(url)))
+  h('browser:select', (id: string) => browser.select(String(id)))
+  h('browser:close', (id: string) => browser.close(String(id)))
   h('browser:nav', (kind: 'back' | 'forward' | 'reload' | 'stop') => browser.nav(kind))
   h('browser:device', (d: Device) => browser.setDevice(d))
   h('browser:devtools', () => browser.devtools())
@@ -372,10 +375,10 @@ app.whenReady().then(async () => {
   await hands.start().catch(() => {})
   browser = new Browser(() => win, emit)
   toolbox = new Toolbox(store, emit)
-  const tools = (who: string, folder: string, access: Access) => [
+  const tools = (who: string, folder: string, access: Access, room: string) => [
     // The browser reaches the internet and signed in pages, so it waits for Auto or Full; Plan
     // only reads, and a connected tool can write anywhere.
-    ...(store.settings.browser !== false && (access === 'workspace' || access === 'full') ? browser.tools(who, folder) : []),
+    ...(store.settings.browser !== false && (access === 'workspace' || access === 'full') ? browser.tools(who, folder, room) : []),
     ...(access === 'plan' ? [] : toolbox.tools()),
   ]
   limits = new Limits(store, (l) => { emit('limits', l); emit('ledger', engine.ledger()) }, () => engine.agents.filter((a) => a.found && a.via === 'cli').map((a) => a.id))
