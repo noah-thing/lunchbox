@@ -1041,7 +1041,7 @@ function Arena({ id, done, going, picked, agents, pick }: { id: string; done: Sa
   )
 }
 
-type RunView = { id?: string; command: string; cwd: string; state: LiveRun['state'] | 'done' | 'denied'; verdict?: Verdict; out: string; code?: number | null; ms?: number; how?: string }
+type RunView = { id?: string; command: string; cwd: string; state: LiveRun['state'] | 'done' | 'denied'; verdict?: Verdict; out: string; code?: number | null; ms?: number; how?: string; edit?: boolean }
 
 // A command in the room: what it is, what the mode made of it, and its output.
 function RunBlock({ run, answer, kill, keys = true }: { run: RunView; answer?: Actions['answer']; kill?: Actions['kill']; keys?: boolean }) {
@@ -1068,7 +1068,7 @@ function RunBlock({ run, answer, kill, keys = true }: { run: RunView; answer?: A
   return (
     <div className={`term ${run.state}${failed ? ' failed' : ''}`}>
       <div className="termhead">
-        <code className="cmd"><span>$</span>{run.command}</code>
+        <code className="cmd">{!run.edit && <span>$</span>}{run.command}</code>
         <span className="spacer" />
         <span className={`status${failed || run.state === 'denied' ? ' bad' : ''}`}>
           {v && v.kind !== 'blocked' && run.state !== 'checking' && <span className="kind">{KIND_LABEL[v.kind]} ·</span>}
@@ -1078,11 +1078,11 @@ function RunBlock({ run, answer, kill, keys = true }: { run: RunView; answer?: A
       </div>
       {asking && answer && run.id && (
         <div className="ask">
-          <span>This {v?.reason}. Run it in <code>{short(run.cwd)}</code>?</span>
+          {run.edit ? <span>Ask mode checks each change with you first. Allow this one in <code>{short(run.cwd)}</code>?</span> : <span>This {v?.reason}. Run it in <code>{short(run.cwd)}</code>?</span>}
           <div className="row">
-            <button className="btn small" onClick={() => answer(run.id!, 'once')}>Run <kbd>{mod}↵</kbd></button>
-            {v?.kind !== 'danger' && <button className="btn small quiet" onClick={() => answer(run.id!, 'always')}>Always in this folder</button>}
-            <button className="btn small quiet" onClick={() => answer(run.id!, 'deny')}>Don’t run</button>
+            <button className="btn small" onClick={() => answer(run.id!, 'once')}>{run.edit ? 'Allow' : 'Run'} <kbd>{mod}↵</kbd></button>
+            {v?.kind !== 'danger' && <button className="btn small quiet" onClick={() => answer(run.id!, 'always')}>{run.edit ? 'Allow every change in this folder' : 'Always in this folder'}</button>}
+            <button className="btn small quiet" onClick={() => answer(run.id!, 'deny')}>{run.edit ? 'Don’t allow' : 'Don’t run'}</button>
           </div>
         </div>
       )}

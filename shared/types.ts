@@ -149,6 +149,8 @@ export type LiveRun = {
   command: string
   cwd: string
   state: 'checking' | 'asking' | 'running'
+  // A change to a file waiting for a yes, where command holds what the change is.
+  edit?: boolean
   verdict?: Verdict
   out: string
   started: number
@@ -219,6 +221,8 @@ export type Settings = {
   remote?: { on: boolean; chat?: number; name?: string; access?: Access }
   planLimits?: boolean
   connectors?: Connector[]
+  // Where a built in local server answers when it is not the usual address on this computer.
+  endpoints?: Record<string, string>
   habits?: string[]
   dismissed?: string[]
   autoUpdate?: boolean

@@ -42,6 +42,9 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
     `You are ${me.short}, one of several AI agents working with one person in a shared room in Lunchbox.`,
     `Room: ${meta.name}. Folder: ${meta.workspace}. Access: ${ACCESS[access]}`,
     me.tools ? '' : 'You cannot read files or run commands yourself. When that is needed, ask a crewmate who can.',
+    // A model behind an API works through the room's own file tools, and is told to use them:
+    // left alone, many ask the person to paste a file they could have opened.
+    me.tools && me.via !== 'cli' ? `You work in the folder yourself, through your tools: ${access === 'plan' ? 'list_directory, read_file, search_file_content and run_command for commands that only read' : 'list_directory, read_file, search_file_content, write_file, edit_file and run_command'}. Look things up in the folder before asking the person for them, and check your work by running it.` : '',
     mates.length ? `Your crew:\n${mates.join('\n')}` : 'You are working alone in this room.',
     borrowed.length ? `The lunchbox tools lend you your crewmates' abilities mid-turn. ${borrowed.join(' ')} Prefer them to an @handle line when you need the answer to keep working.` : '',
     [

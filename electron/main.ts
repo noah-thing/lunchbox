@@ -6,6 +6,7 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeIm
 import type { Access, Connector, Flow, Report, Settings, Skill } from '../shared/types'
 import { Count } from './count'
 import { installed, modelsFor, testConnector, useConnectors } from './agents'
+import { setBase } from './agents/http'
 import { markdown, replay } from './export'
 import { Flows } from './flows'
 import { fetchPack, importPack, loadPacks, packJson, removePack } from './packs'
@@ -73,6 +74,13 @@ function roomFolder(about: string) {
   let dir = join(workspace(), slug)
   for (let n = 2; existsSync(dir); n++) dir = join(workspace(), `${slug}-${n}`)
   return dir
+}
+
+// Local servers answer at their usual address unless the person, or Ollama's own OLLAMA_HOST,
+// says otherwise.
+function useEndpoints() {
+  const typed = store.settings.endpoints ?? {}
+  for (const id of ['ollama', 'lmstudio', 'llamacpp']) setBase(id, typed[id] || (id === 'ollama' ? process.env.OLLAMA_HOST : '') || '')
 }
 
 function createWindow() {
@@ -264,8 +272,9 @@ function wire() {
     // Turning the count back on sends today's count straight away.
     if (patch.count === true) void count?.send()
     if (patch.connectors) useConnectors(store.settings.connectors)
+    if (patch.endpoints) useEndpoints()
     if (patch.autoUpdate !== undefined) updates?.setAuto(patch.autoUpdate)
-    if (patch.models || patch.disabled || patch.connectors) await engine.refresh()
+    if (patch.models || patch.disabled || patch.connectors || patch.endpoints) await engine.refresh()
     if (patch.budgets) emit('ledger', engine.ledger())
     return store.settings
   })
@@ -391,6 +400,7 @@ app.whenReady().then(async () => {
   const icon = join(__dirname, '../build/icon-1024.png')
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
   useConnectors(store.settings.connectors)
+  useEndpoints()
   createWindow()
   updates = new Updates(store, emit)
   updates.start()

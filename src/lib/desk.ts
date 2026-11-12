@@ -85,7 +85,14 @@ export function boot() {
 
 export const reload = {
   packs: async () => set({ packs: await desk.call('packs') }),
-  settings: async (patch: Partial<Settings>) => set({ settings: await desk.call('settings:set', patch) }),
+  // The change shows at once and the next one builds on it. Saving also looks for agents again,
+  // which takes a moment; a second change made in that moment used to be built on the old
+  // settings and undo the first.
+  settings: async (patch: Partial<Settings>) => {
+    set({ settings: { ...state.settings, ...patch } })
+    const saved = await desk.call('settings:set', patch)
+    if (saved) set({ settings: saved })
+  },
   agents: async () => set({ agents: await desk.call('agents:refresh') }),
 }
 

@@ -13,7 +13,9 @@ import type { Hands, Tool } from '../hands'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
 import { clearMemory, writeMemory } from './project'
-import { execute, kill, type Ran } from '../shell'
+import { ask, execute, kill, type Ran } from '../shell'
+import { decide } from '../policy'
+import type { Bench } from '../agents/bench'
 import type { Snapshots } from '../snap'
 import type { Store } from '../store'
 import { briefing, line, prompt, protocol } from './context'
@@ -53,6 +55,8 @@ const MAX_HOPS = 24
 const FLOW_ASK = 15 * 60e3
 // Grok Build only loads MCP servers from config files, which the room does not touch.
 const BORROWS = new Set(['claude', 'codex', 'gemini'])
+// What "always" remembers for edits in Ask mode, in the place command prefixes are kept.
+const EDITS = '\u0000edits'
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
 type Draft<E = Event> = E extends Event ? Omit<E, 'id' | 'at'> : never
 
@@ -371,6 +375,7 @@ export class Engine {
     // Commands too: a running one is killed and one waiting for approval is refused, so the
     // room's queue never hangs on a question nobody will answer.
     for (const r of live.runs) kill(r.id)
+    for (const id of this.quiet.get(room) ?? []) kill(id)
     for (const lt of live.turns) {
       this.flushed.add(lt.id)
       if (lt.text.trim()) this.add(room, { kind: 'say', who: lt.who, text: lt.text.trim(), acts: lt.acts, error: 'Stopped' })
@@ -740,6 +745,8 @@ export class Engine {
       : []
     const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
+    // A model behind an API has no file tools of its own, so the room gives it some.
+    const bench = http ? this.bench(room, who, access) : undefined
     const fails = new Map<string, number>()
     let looped = ''
     const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits, ctx.main ?? this.main(meta), meta.studio ? meta.design ?? [] : null)
@@ -748,7 +755,7 @@ export class Engine {
     const sent = createHash('sha1').update(system).digest('hex').slice(0, 16)
     const running = run(who, {
       prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || meta.protos?.[who] !== sent, cwd: meta.workspace, access,
-      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url,
+      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url, bench,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
       if (u.acts) {
@@ -931,6 +938,48 @@ export class Engine {
     if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
     if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
     return null
+  }
+
+  // The room's folder for an agent that talks over HTTP, held to the room's mode: a command the
+  // mode allows runs straight away and shows as a step of the turn, one that needs a yes is put
+  // to the person in the room like any other, and an edit in Ask mode waits for the same yes.
+  private quiet = new Map<string, Set<string>>()
+  private bench(room: string, who: string, access: Access): Bench {
+    const meta = this.store.room(room)!
+    const root = meta.workspace
+    const memory = this.allowed.get(root) ?? new Set<string>()
+    this.allowed.set(root, memory)
+    return {
+      root, access,
+      run: async (command) => {
+        if (decide(access, command, root, root, memory).decision === 'ask') {
+          const ran = await this.shell(room, who, command, access)
+          return { code: ran.code, out: ran.out, how: ran.how, reason: ran.verdict.reason }
+        }
+        const id = uid()
+        const ids = this.quiet.get(room) ?? new Set<string>()
+        this.quiet.set(room, ids)
+        ids.add(id)
+        try {
+          const ran = await execute({ id, command, cwd: root, root, access, memory }, { verdict() {}, start() {}, out() {} })
+          return { code: ran.code, out: ran.out, how: ran.how, reason: ran.verdict.reason }
+        } finally { ids.delete(id) }
+      },
+      confirm: async (what) => {
+        if (memory.has(EDITS)) return true
+        const live = this.live(room)
+        const lr: LiveRun = { id: uid(), who, command: what, cwd: root, state: 'asking', edit: true, out: '', started: Date.now(), verdict: { kind: 'write', decision: 'ask', reason: 'changes a file in the folder' } }
+        live.runs.push(lr)
+        this.hooks.notify(meta.name, `Allow ${this.name(who)} to ${what[0].toLowerCase()}${what.slice(1)}?`, room)
+        if (meta.flow) setTimeout(() => { if (live.runs.includes(lr)) kill(lr.id) }, FLOW_ASK).unref()
+        this.changed(room)
+        const a = await ask(lr.id)
+        live.runs = live.runs.filter((x) => x !== lr)
+        this.changed(room)
+        if (a === 'always') memory.add(EDITS)
+        return a !== 'deny'
+      },
+    }
   }
 
   shell(room: string, who: string, command: string, access: Access): Promise<Ran> {

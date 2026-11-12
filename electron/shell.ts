@@ -15,6 +15,10 @@ export function answer(id: string, a: Answer) {
   waiting.delete(id)
 }
 
+// A question for the person that is not a command: an edit in Ask mode. It is answered the same
+// way, by the id of the block that shows it.
+export const ask = (id: string) => new Promise<Answer>((done) => waiting.set(id, done))
+
 export function kill(id: string) {
   const child = running.get(id)
   if (child) stop(child)
@@ -29,7 +33,7 @@ export async function execute(req: { id: string; command: string; cwd: string; r
   if (verdict.decision === 'deny') return { code: null, ms: 0, how: 'blocked', verdict, out: '' }
   let how = 'auto'
   if (verdict.decision === 'ask') {
-    const a = await new Promise<Answer>((done) => waiting.set(req.id, done))
+    const a = await ask(req.id)
     if (a === 'deny') return { code: null, ms: 0, how: 'declined', verdict, out: '' }
     if (a === 'always') req.memory.add(prefix(req.command))
     how = a === 'always' ? 'allowed always' : 'allowed once'

@@ -548,3 +548,81 @@ test('room: resumed turns are counted once each, across a restart', { skip: proc
     delete process.env.FAKE_RUNNING
   }
 })
+
+// A local model works in the room's folder with tools: it reads, edits and runs, the room shows
+// each step on its turn, and the room's mode holds: Ask puts the edit to the person, Plan refuses it.
+test('room: an Ollama agent reads, edits and runs in the folder, under the room\'s mode', { skip: process.platform === 'win32' }, async () => {
+  const { createServer } = await import('node:http')
+  const { PROVIDERS } = await import('../electron/agents/http')
+  const { answer } = await import('../electron/shell')
+  const { mkdirSync, writeFileSync } = await import('node:fs')
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-ollama-tools-'))
+  const work = join(root, 'work')
+  mkdirSync(work)
+  writeFileSync(join(work, 'sum.js'), 'console.log(1 + 1)\n')
+
+  const call = (name: string, args: unknown) => ({ message: { content: '', tool_calls: [{ function: { name, arguments: args } }] } })
+  let script: unknown[] = []
+  const bodies: any[] = []
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (b) => (body += b))
+    req.on('end', () => {
+      if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'coder:27b' }] }))
+      if (req.url === '/api/show') return res.end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'llama.context_length': 32768 } }))
+      bodies.push(JSON.parse(body))
+      res.write(JSON.stringify(script.shift() ?? { message: { content: 'Nothing more to do.' } }) + '\n')
+      res.end(JSON.stringify({ done: true, prompt_eval_count: 10, eval_count: 5 }) + '\n')
+    })
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+  const base = PROVIDERS.ollama.base
+  PROVIDERS.ollama.base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api`
+  try {
+    const { Store } = await import('../electron/store')
+    const { Engine } = await import('../electron/room/engine')
+    const store = new Store(join(root, 'data'), { seal: (t: string) => t, open: (t: string) => t })
+    const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+    await engine.refresh()
+    store.saveSettings({ route: 'order' })
+
+    const room = engine.create({ crew: ['ollama'], workspace: work })
+    script = [call('read_file', { path: 'sum.js' }), call('edit_file', { path: 'sum.js', find: '1 + 1', replace: '2 + 2' }), call('run_command', { command: 'node sum.js' }), { message: { content: 'It prints 4 now. I ran it.' } }]
+    engine.send(room.id, 'Make sum.js print 4', 'workspace')
+    await engine.idle(room.id)
+    const said = store.events(room.id).find((e) => e.kind === 'say')
+    assert.ok(said && said.kind === 'say')
+    assert.equal(said.text, 'It prints 4 now. I ran it.')
+    assert.deepEqual(said.acts.map((a) => (a.t === 'cmd' ? `${a.command} -> ${a.exit}` : a.t === 'edit' ? `edit ${a.path}` : a.t === 'tool' ? `${a.name} ${a.detail}` : a.t)), ['read_file sum.js', 'edit sum.js', 'node sum.js -> 0'])
+    assert.equal(readFileSync(join(work, 'sum.js'), 'utf8'), 'console.log(2 + 2)\n')
+    assert.ok(!bodies[0].messages[0].content.includes('cannot read files'), 'the model is no longer told it has no hands')
+    assert.match(bodies[0].messages[0].content, /through your tools: list_directory, read_file/)
+
+    // Ask: the edit waits in the room until the person says yes.
+    const asking = engine.create({ crew: ['ollama'], workspace: work })
+    script = [call('write_file', { path: 'note.md', content: 'hello' }), { message: { content: 'Wrote the note.' } }]
+    engine.send(asking.id, 'Write a note', 'ask')
+    let waited: { id: string; command: string } | undefined
+    for (let i = 0; i < 100 && !waited; i++) { await new Promise((r) => setTimeout(r, 30)); waited = engine.live(asking.id).runs.find((r) => r.state === 'asking') }
+    assert.equal(waited?.command, 'Create note.md')
+    assert.ok(!existsSync(join(work, 'note.md')), 'nothing is written before the yes')
+    assert.equal(engine.summaries().find((r) => r.id === asking.id)?.waiting, true)
+    answer(waited!.id, 'once')
+    await engine.idle(asking.id)
+    assert.equal(readFileSync(join(work, 'note.md'), 'utf8'), 'hello')
+
+    // Plan: the change is refused, and the model is told why so it can say so.
+    const planning = engine.create({ crew: ['ollama'], workspace: work })
+    script = [call('write_file', { path: 'plan.md', content: 'x' }), call('run_command', { command: 'rm sum.js' }), { message: { content: 'This room only reads, so I have described the change instead.' } }]
+    engine.send(planning.id, 'Write a plan file', 'plan')
+    await engine.idle(planning.id)
+    assert.ok(!existsSync(join(work, 'plan.md')) && existsSync(join(work, 'sum.js')))
+    const sent = bodies.at(-1).messages.filter((m: any) => m.role === 'tool').map((m: any) => m.content)
+    assert.match(sent[0], /Plan mode, which only reads/)
+    assert.match(sent[1], /was not run/)
+    assert.deepEqual(bodies.at(-1).tools.map((t: any) => t.function.name), ['list_directory', 'read_file', 'search_file_content', 'run_command'])
+  } finally {
+    PROVIDERS.ollama.base = base
+    server.close()
+  }
+})

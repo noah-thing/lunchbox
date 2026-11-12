@@ -6,6 +6,7 @@ import type { Access, AgentInfo, Act, Connector, Meter, Usage } from '../../shar
 import { capture, env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
 import { chat, listModels, parseHeaders, PROVIDERS } from './http'
+import type { Bench } from './bench'
 import { logoOf } from '../../shared/logos'
 import { localSetup } from '../local'
 
@@ -24,6 +25,8 @@ export type Input = {
   allow?: string[]
   hands?: string
   fresh?: boolean
+  // For HTTP agents: the room's folder and its rules, which the model works in through tools.
+  bench?: Bench
 }
 
 export type Result = {
@@ -160,14 +163,14 @@ export const CATALOG: Def[] = [
       parser: gemini(),
     }),
   },
-  { id: 'ollama', name: 'Ollama', short: 'Ollama', maker: 'On this computer', via: 'local', bin: 'ollama', provider: 'ollama', tools: false, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
-  { id: 'lmstudio', name: 'LM Studio', short: 'LM Studio', maker: 'On this computer', via: 'local', bin: 'lms', provider: 'lmstudio', tools: false, mark: 'lmstudio', good: 'Any model you load in LM Studio, served locally', alphabet: '.-=≡#' },
-  { id: 'llamacpp', name: 'llama.cpp', short: 'llama.cpp', maker: 'On this computer', via: 'local', bin: 'llama-server', provider: 'llamacpp', tools: false, mark: 'llamacpp', good: 'A llama-server on port 8080, or any server that speaks the OpenAI API there', alphabet: '.,:;+*' },
-  { id: 'claude-api', name: 'Claude API', short: 'Claude API', maker: 'Anthropic', via: 'api', key: 'anthropic', tools: false, mark: 'claude', good: 'Pay per token, with prompt caching', alphabet: '.:-=+*#%@' },
-  { id: 'openai-api', name: 'OpenAI API', short: 'GPT', maker: 'OpenAI', via: 'api', key: 'openai', tools: false, mark: 'openai', good: 'Pay per token', alphabet: '.-01' },
-  { id: 'grok-api', name: 'xAI API', short: 'Grok API', maker: 'xAI', via: 'api', key: 'xai', tools: false, mark: 'grok', good: 'Pay per token', alphabet: '.:/\\|X#' },
-  { id: 'gemini-api', name: 'Gemini API', short: 'Gemini API', maker: 'Google', via: 'api', key: 'google', tools: false, mark: 'gemini', good: 'Pay per token, generous free tier', alphabet: '.,oO0@' },
-  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: false, mark: 'openrouter', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
+  { id: 'ollama', name: 'Ollama', short: 'Ollama', maker: 'On this computer', via: 'local', bin: 'ollama', provider: 'ollama', tools: true, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
+  { id: 'lmstudio', name: 'LM Studio', short: 'LM Studio', maker: 'On this computer', via: 'local', bin: 'lms', provider: 'lmstudio', tools: true, mark: 'lmstudio', good: 'Any model you load in LM Studio, served locally', alphabet: '.-=≡#' },
+  { id: 'llamacpp', name: 'llama.cpp', short: 'llama.cpp', maker: 'On this computer', via: 'local', bin: 'llama-server', provider: 'llamacpp', tools: true, mark: 'llamacpp', good: 'A llama-server on port 8080, or any server that speaks the OpenAI API there', alphabet: '.,:;+*' },
+  { id: 'claude-api', name: 'Claude API', short: 'Claude API', maker: 'Anthropic', via: 'api', key: 'anthropic', tools: true, mark: 'claude', good: 'Pay per token, with prompt caching', alphabet: '.:-=+*#%@' },
+  { id: 'openai-api', name: 'OpenAI API', short: 'GPT', maker: 'OpenAI', via: 'api', key: 'openai', tools: true, mark: 'openai', good: 'Pay per token', alphabet: '.-01' },
+  { id: 'grok-api', name: 'xAI API', short: 'Grok API', maker: 'xAI', via: 'api', key: 'xai', tools: true, mark: 'grok', good: 'Pay per token', alphabet: '.:/\\|X#' },
+  { id: 'gemini-api', name: 'Gemini API', short: 'Gemini API', maker: 'Google', via: 'api', key: 'google', tools: true, mark: 'gemini', good: 'Pay per token, generous free tier', alphabet: '.,oO0@' },
+  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: true, mark: 'openrouter', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
 ]
 
 // Connectors the person added, rebuilt whenever settings change.
@@ -182,7 +185,7 @@ export function words(s: string) {
 }
 
 function fromConnector(c: Connector): Def {
-  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: c.kind === 'cli', mark: logoOf(c), good: c.good || 'Added by you', alphabet: '.:+*#' }
+  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: true, mark: logoOf(c), good: c.good || 'Added by you', alphabet: '.:+*#' }
   if (c.kind !== 'cli') {
     PROVIDERS[`conn:${c.id}`] = { base: (c.base ?? '').replace(/\/+$/, ''), style: c.kind, prefer: c.model ? new RegExp(`^${c.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) : /./ }
     return { ...base, via: 'api', key: `conn:${c.id}`, provider: `conn:${c.id}` }
@@ -220,8 +223,12 @@ function wear(d: Def, keys: Record<string, string>) {
   PROVIDERS[d.key].extra = parseHeaders(keys[`${d.key}:headers`])
 }
 
+const connModels = new Map<string, string>()
+
 export function useConnectors(list: Connector[] = []) {
   for (const k of Object.keys(PROVIDERS)) if (k.startsWith('conn:')) delete PROVIDERS[k]
+  connModels.clear()
+  for (const c of list) if (c.kind !== 'cli' && c.model?.trim()) connModels.set(c.id, c.model.trim())
   custom = list.filter((c) => c.id && c.name).map(fromConnector)
 }
 
@@ -258,7 +265,8 @@ export async function detect(keys: Record<string, string>, models: Record<string
       // A connector may point at a server that needs no key, such as vLLM on this computer.
       const key = keys[d.key!]
       const mine = d.key!.startsWith('conn:')
-      return { ...base, found: mine || !!key, ready: mine || !!key }
+      // The model typed into the connector is the one used, unless another was picked since.
+      return { ...base, model: base.model || connModels.get(d.id) || undefined, found: mine || !!key, ready: mine || !!key }
     }),
   )
 }
@@ -309,11 +317,13 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     const ctl = new AbortController()
     const t0 = Date.now()
     wear(d, keys)
-    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey)
-      .then((r) => ({ text: r.text, acts: [], usage: r.usage, denied: [], ms: Date.now() - t0 }))
-      .catch((e: Error) => {
+    const hands = input.bench ? { bench: input.bench, onStep: (s: { working?: string; acts?: Act[] }) => onUpdate(s) } : undefined
+    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey, hands)
+      .then((r) => ({ text: r.text, acts: r.acts, usage: r.usage, denied: [], ms: Date.now() - t0 }))
+      .catch((e: Error & { text?: string; acts?: Act[]; usage?: Usage }) => {
         const error = ctl.signal.aborted ? 'Stopped' : e.message
-        return { ...failed(error), limit: limitOf(error) ?? undefined, ms: Date.now() - t0 }
+        // Whatever it wrote and did before failing is kept, as it is for a command line agent.
+        return { ...failed(error), text: e.text ?? '', acts: e.acts ?? [], usage: e.usage ?? failed('').usage, limit: limitOf(error) ?? undefined, ms: Date.now() - t0 }
       })
     return { done, stop: () => ctl.abort() }
   }

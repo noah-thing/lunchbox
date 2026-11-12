@@ -97,6 +97,7 @@ function AgentRow({ a, i, open, toggle, say, extra }: { a: AgentInfo; i: number;
           {a.via === 'api' && PROVIDER[a.id] && <KeyField a={a} say={say} />}
           {extra}
           {a.found && (!a.setup || a.ready) && <ModelField a={a} />}
+          {a.via === 'local' && <AddressField a={a} />}
           {a.found && a.via !== 'local' && (
             <label className="field">
               <span>Daily budget</span>
@@ -163,6 +164,22 @@ function KeyField({ a, say }: { a: AgentInfo; say: (t: string) => void }) {
   )
 }
 
+// A local server on another port, another computer on the network or in a container.
+const USUAL: Record<string, string> = { ollama: 'http://127.0.0.1:11434', lmstudio: 'http://127.0.0.1:1234', llamacpp: 'http://127.0.0.1:8080' }
+function AddressField({ a }: { a: AgentInfo }) {
+  const endpoints = useApp((s) => s.settings.endpoints) ?? {}
+  const value = endpoints[a.id] ?? ''
+  return (
+    <label className="field">
+      <span>Address</span>
+      <input key={value} placeholder={USUAL[a.id]} defaultValue={value} spellCheck={false}
+        onBlur={(e) => { if (e.target.value.trim() !== value) reload.settings({ endpoints: { ...endpoints, [a.id]: e.target.value.trim() } }) }}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+      <small>Leave empty when {a.short} runs on this computer at its usual port.</small>
+    </label>
+  )
+}
+
 function ModelField({ a }: { a: AgentInfo }) {
   const settings = useApp((s) => s.settings)
   const [models, setModels] = useState<string[]>(a.models ?? [])
@@ -174,7 +191,7 @@ function ModelField({ a }: { a: AgentInfo }) {
   return (
     <label className="field">
       <span>Model</span>
-      <input list={`models-${a.id}`} placeholder={a.via === 'cli' ? 'The default from its own config' : a.model ?? 'Picked for you'} defaultValue={value}
+      <input key={value} list={`models-${a.id}`} placeholder={a.via === 'cli' ? 'The default from its own config' : a.model ?? 'Picked for you'} defaultValue={value}
         onBlur={(e) => { if (e.target.value.trim() !== value) reload.settings({ models: { ...settings.models, [a.id]: e.target.value.trim() } }) }} />
       <datalist id={`models-${a.id}`}>{models.slice(0, 200).map((m) => <option key={m} value={m} />)}</datalist>
       <small>{error || (a.via === 'cli' ? `Leave empty to use what you set up in the tool itself.${models.length ? ` ${models.length} suggested.` : ''}` : `${models.length} available`)}</small>
