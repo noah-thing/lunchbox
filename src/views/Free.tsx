@@ -3,7 +3,7 @@ import type { Connector } from '../../shared/types'
 import { logoOf } from '../../shared/logos'
 import { Loader, Mark } from '../ui/bits'
 import { IconCheck } from '../ui/icons'
-import { desk, reload, useApp } from '../lib/desk'
+import { desk, now, reload, useApp } from '../lib/desk'
 import { addOpenCode, hasOpenCode, OPENCODE_INSTALL, openCodeFound } from './Connect'
 import type { View } from '../App'
 
@@ -72,12 +72,14 @@ function FreeCard({ f, i, added, connectors, go, say }: { f: Free; i: number; ad
   // Back from the key page with a key copied: it goes into the field by itself.
   useEffect(() => {
     if (state !== 'key' || !f.keyLooks) return
-    const look = () => desk.call('clipboard:key').then((t: string) => { if (t && f.keyLooks!.test(t)) setKey((k) => k || t) }).catch(() => {})
+    const look = () => desk.call('clipboard:key', f.id).then((t: string) => { if (t) setKey((k) => k || t) }).catch(() => {})
     addEventListener('focus', look)
     return () => removeEventListener('focus', look)
   }, [state, f.keyLooks])
 
+  // Read at the moment of saving, so two cards connecting at once both land.
   const save = async (c: Connector, k = '') => {
+    const connectors = now().settings.connectors ?? []
     const taken = new Set(connectors.map((x) => x.id))
     let id = `free-${f.id}`
     for (let n = 2; taken.has(id); n++) id = `free-${f.id}-${n}`
@@ -98,6 +100,7 @@ function FreeCard({ f, i, added, connectors, go, say }: { f: Free; i: number; ad
         if (!check.ok) throw new Error(check.note || 'It did not answer')
         const list = check.models ?? []
         const model = f.model && (!list.length || list.includes(f.model)) ? f.model : (f.prefer ?? []).map((re) => list.find((m) => re.test(m))).find(Boolean) ?? list[0]
+        if (!model) throw new Error('It answered but listed no models to use')
         await save({ ...c, model }, key.trim())
       }
       say(`${f.name} added to your agents`)

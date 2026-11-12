@@ -234,9 +234,12 @@ function wire() {
   }
   // A key the person just copied from a provider's page, offered to the free models page. Only text
   // shaped like a key comes back; anything else stays on the clipboard unread by the page.
-  h('clipboard:key', async () => {
+  const KEYS: Record<string, RegExp> = { openrouter: /^sk-or-[\w-]{20,200}$/, gemini: /^AIza[\w-]{30,60}$/, groq: /^gsk_\w{20,200}$/, nvidia: /^nvapi-[\w-]{20,200}$/ }
+  h('clipboard:key', async (provider: string) => {
+    const shape = KEYS[provider]
+    if (!shape) return ''
     const t = (await clipboard.readText().catch(() => '')).trim()
-    return /^[A-Za-z0-9_\-.:]{20,300}$/.test(t) ? t : ''
+    return shape.test(t) ? t : ''
   })
   h('image:copy', async (data: string) => { await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png(data).toPNG())], { type: 'image/png' }) })]); return true })
   h('image:save', (data: string, name: string) => saveAs('Save the image', `${String(name || 'lunchbox').replace(/[^\w.-]+/g, '-')}.png`, 'png', png(data).toPNG()))

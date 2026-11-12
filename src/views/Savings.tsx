@@ -1,4 +1,4 @@
-import { useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Day, Usage } from '../../shared/types'
 import { Mark } from '../ui/bits'
 import { desk, money, tokens, useApp } from '../lib/desk'
@@ -53,7 +53,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
           </div>
           <div className="sv-actions">
           <span className="sv-range">Last 7 days</span>
-          {read(week) > 0 && <button className="btn small quiet" onClick={async () => {
+          {(gross(week) > 0 || reused(week) > 0) && <button className="btn small quiet" onClick={async () => {
             const money = gross(week) > 0
             setCard(await drawSavingsCard({
               headline: money ? cash(gross(week)) : tokens(reused(week)),
@@ -235,21 +235,25 @@ function nice(n: number) {
 // so it is one paste away in the composer X opens.
 function ShareCard({ image, close }: { image: string; close: () => void }) {
   const [said, setSaid] = useState('')
-  const copy = async () => { await desk.call('image:copy', image); setSaid('Copied') }
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    addEventListener('keydown', esc)
+    return () => removeEventListener('keydown', esc)
+  }, [close])
+  const copy = async () => { try { await desk.call('image:copy', image); setSaid('Copied') } catch { setSaid('Could not copy. Save it instead') } }
   const post = async () => {
-    await desk.call('image:copy', image)
-    setSaid('Copied. Paste it into your post')
+    try { await desk.call('image:copy', image); setSaid('Copied. Paste it into your post') } catch { setSaid('Save the image, then attach it to your post') }
     window.open(`https://x.com/intent/post?text=${encodeURIComponent('My AI agents saved this much this week, working together in one app.\n\nhttps://mylunchbox.dev')}`, '_blank')
   }
   return (
     <div className="scrim center" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="ncard sharecard" role="dialog" aria-label="Share your savings">
         <img src={image} alt="Your Lunchbox savings for the last 7 days" width={1200} height={675} />
-        <button className="iconbtn nclose" onClick={close} aria-label="Close"><IconClose /></button>
         <div className="nbody">
           <div className="row">
+            <button className="iconbtn" onClick={close} aria-label="Close"><IconClose /></button>
             <span className="grow sharesaid">{said}</span>
-            <button className="btn small quiet" onClick={async () => { if (await desk.call('image:save', image, 'lunchbox-savings')) setSaid('Saved') }}>Save</button>
+            <button className="btn small quiet" onClick={async () => { try { if (await desk.call('image:save', image, 'lunchbox-savings')) setSaid('Saved') } catch { setSaid('Could not save') } }}>Save</button>
             <button className="btn small quiet" onClick={copy}>Copy image</button>
             <button className="btn small" onClick={post}>Post on X</button>
           </div>

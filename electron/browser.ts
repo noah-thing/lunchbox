@@ -339,7 +339,7 @@ export class Browser {
           const at = `${Math.round(f.x)},${Math.round(f.y)},${f.label}`
           if (reached.has(at)) break
           reached.add(at)
-          if (!f.inView) continue
+          if (!f.inView || f.w < 1 || f.h < 1) continue
           const now = await within(wc.capturePage(), 15000, 'Capturing focus')
           const before = cut(base, f), after = cut(now, f)
           if (!differs(before, after)) unfocused.push(f.label || 'unnamed control')
@@ -372,9 +372,12 @@ export class Browser {
 .h{display:grid;grid-template-columns:90px 220px 1fr 1fr;gap:16px;color:#77756f;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding-bottom:8px}</style>
 <div class="h"><span>State</span><span>Control</span><span>At rest</span><span>Pointed at or focused</span></div>
 ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><img src="${c.normal}"><img src="${c.changed}"></div>`).join('')}
-<script>window.__h = document.documentElement.scrollHeight</script>`)
-        const { win: sw, wc: sc } = await this.hidden(pathToFileURL(page).href, 'the contact sheet', 1200, 900)
+<script>window.__h = document.documentElement.scrollHeight</script>`, { mode: 0o600 })
+        let sw: BrowserWindow | null = null
         try {
+          const opened = await this.hidden(pathToFileURL(page).href, 'the contact sheet', 1200, 900)
+          sw = opened.win
+          const sc = opened.wc
           const h = Number(await within(sc.executeJavaScript('document.documentElement.scrollHeight', true), 5000, 'Measuring the sheet').catch(() => 900)) || 900
           sw.setContentSize(1200, Math.min(h, 6000))
           await new Promise((r) => setTimeout(r, 300))
@@ -383,7 +386,7 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
           writeFileSync(file, (img.getSize().width > 1200 ? img.resize({ width: 1200, quality: 'best' }) : img).toPNG())
           sheet = relative(root, file)
         } finally {
-          sw.destroy()
+          sw?.destroy()
           rmSync(page, { force: true })
         }
       }
@@ -407,12 +410,14 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
       const bytes = statSync(file).size
       if (model && bytes > 80 * 1048576) return `${target} is ${(bytes / 1048576).toFixed(0)} MB, too large to open here. For the web, aim well under 10 MB.`
       const page = join(tmpdir(), `lunchbox-view-${randomUUID()}.html`)
-      writeFileSync(page, model ? modelPage(file) : imagePage(file))
+      writeFileSync(page, model ? modelPage(file) : imagePage(file), { mode: 0o600 })
       const root = realpathSync(resolve(workspace))
       const stem = (name || target.split(/[\\/]/).pop()!.replace(/\.\w+$/, '')).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'view'
       const [w, h] = model ? [1440, 480] : [1080, 1240]
-      const { win, wc } = await this.hidden(pathToFileURL(page).href, target, w, h)
+      let opened: Awaited<ReturnType<typeof this.hidden>> | null = null
       try {
+        opened = await this.hidden(pathToFileURL(page).href, target, w, h)
+        const { wc } = opened
         let v: View | null = null
         for (const t0 = Date.now(); !v && Date.now() - t0 < 25000;) {
           v = await within(wc.executeJavaScript('window.__view || null', true), 5000, 'Reading the view').catch(() => null) as View | null
@@ -430,7 +435,7 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
           ? `Saved ${at}: front, three quarters and top, lit with a key, a fill and a rim light. ${describeModel(v, bytes)} Open the image and check the silhouette, proportions, shading seams and whether it sits on the ground.`
           : `Saved ${at}: the image at 16, 32, 64, 128 and 512px, on white and on near black. It is ${v.width} × ${v.height}. Open it and check it still reads at 16px, holds up on both backgrounds and has no stray edges.`
       } finally {
-        win.destroy()
+        opened?.win.destroy()
         rmSync(page, { force: true })
       }
     })

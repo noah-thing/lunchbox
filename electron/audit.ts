@@ -177,7 +177,7 @@ export const FOCUSED = `(() => {
   if (!e || e === document.body || e === document.documentElement) return null
   const r = e.getBoundingClientRect()
   const label = (e.getAttribute('aria-label') || e.textContent || e.getAttribute('placeholder') || e.tagName).trim().replace(/\\s+/g, ' ').slice(0, 40)
-  return { x: r.left, y: r.top, w: r.width, h: r.height, label, inView: r.top >= 0 && r.bottom <= innerHeight && scrollY === 0 }
+  return { x: r.left, y: r.top, w: r.width, h: r.height, label, inView: r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth && scrollY === 0 }
 })()`
 
 // Every short label made three times longer, the way real names, prices and translations grow.
