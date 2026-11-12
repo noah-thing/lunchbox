@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type CSSProperties, type ReactNode } from '
 import type { Day, Usage } from '../../shared/types'
 import { Mark } from '../ui/bits'
 import { desk, money, tokens, useApp } from '../lib/desk'
+import { place } from '../lib/fit'
 import { drawSavingsCard } from '../ui/shareCard'
 import { IconClose } from '../ui/icons'
 import type { View } from '../App'
@@ -125,8 +126,14 @@ export function Savings({ go }: { go: (v: View) => void }) {
   )
 }
 
+// A tooltip near the top or side of the page turns to where there is room before it shows.
+const fitTip = (e: { currentTarget: HTMLElement }) => {
+  const tip = e.currentTarget.querySelector<HTMLElement>('.sv-tip')
+  if (tip) place(tip, e.currentTarget, { centered: true })
+}
+
 function Info({ text }: { text: string }) {
-  return <span className="sv-info" tabIndex={0} aria-label={text}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 7.25v3.75" strokeLinecap="round" /><circle cx="8" cy="5.1" r=".2" strokeWidth="1.4" /></svg><span className="sv-tip" role="tooltip">{text}</span></span>
+  return <span className="sv-info" tabIndex={0} aria-label={text} onPointerEnter={fitTip} onFocus={fitTip}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 7.25v3.75" strokeLinecap="round" /><circle cx="8" cy="5.1" r=".2" strokeWidth="1.4" /></svg><span className="sv-tip" role="tooltip">{text}</span></span>
 }
 
 function Card({ title, info, right, children, className = '', style }: { title: string; info: string; right?: ReactNode; children: ReactNode; className?: string; style?: CSSProperties }) {
@@ -206,7 +213,7 @@ function Chart({ days }: { days: Day[] }) {
           const h = (n: number) => `${(n / top) * 100}%`
           return (
             <div key={d.day} className="sv-bar" style={{ '--i': i } as CSSProperties}>
-              <div className="sv-stack" tabIndex={0}>
+              <div className="sv-stack" tabIndex={0} onPointerEnter={fitTip} onFocus={fitTip}>
                 <i className="sv-fresh" style={{ height: h(d.input) }} />
                 <i className="sv-reuse" style={{ height: h(reused(d)) }} />
                 <span className="sv-tip" role="tooltip">

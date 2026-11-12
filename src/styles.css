@@ -35,6 +35,7 @@ textarea,input{font:inherit;color:inherit;background:none;border:0;outline:0;res
 :focus-visible{outline:1px solid var(--ink);outline-offset:2px;border-radius:4px}
 textarea:focus-visible,input:focus-visible{outline:0}
 ::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-corner{background:transparent}
 ::-webkit-scrollbar-thumb{background:transparent;border-radius:4px;border:2px solid transparent;background-clip:padding-box}
 :hover::-webkit-scrollbar-thumb{background-color:var(--cell)}
 .grow{flex:1;min-width:0}
@@ -298,7 +299,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .btn.danger.sure{background:color-mix(in srgb,var(--bad) 10%,transparent)}
 .iconbtn.sure{width:auto;padding:0 8px;font-size:12px;white-space:nowrap;color:var(--bad);background:color-mix(in srgb,var(--bad) 10%,transparent)}
 /* The sidebar's right click menu, placed at the pointer. */
-.menu.ctx{position:fixed;bottom:auto;width:240px;transform-origin:top left;-webkit-app-region:no-drag}
+.menu.ctx{position:fixed;bottom:auto;width:240px;max-height:calc(100vh - 16px);overflow-y:auto;transform-origin:top left;-webkit-app-region:no-drag}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 /* Models live in the crew menu: a quiet label beside each agent in the room. It opens that
    agent's list in place; the menu eases to its new height and the views slide, never jump. */
@@ -336,13 +337,12 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .modelfind{display:block;width:calc(100% - 8px);height:30px;margin:2px 4px 4px;padding:0 10px;border-radius:7px;font-size:12.5px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
 @media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*{animation:none}}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
-/* Dropped below its button when there is no room above. */
-.menu.down{top:calc(100% + 6px);bottom:auto;transform-origin:top left;animation-name:menudown}
-.menuwrap.up .menu.down{transform-origin:top right}
+/* lib/fit.ts drops a menu below its button when there is no room above, and caps its height. */
+.menu,.suggest{overscroll-behavior:contain}
 @keyframes menudown{from{opacity:0;transform:scale(.97) translateY(-4px)}}
 .item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px;border-radius:8px;transition:background-color 120ms var(--out)}
 .item>.modeicon,.item>.mark{margin-top:2px}
-.item .grow{display:flex;flex-direction:column}
+.item .grow{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}
 .item b{font-weight:500}
 .item .grow span{font-size:12px;color:var(--dim)}
 .item.on{background:var(--hover)}

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ACCESS, type Access } from '../lib/desk'
 import { IconDown } from './icons'
+import { follow } from '../lib/fit'
 
 const P = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.25, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const
 
@@ -25,17 +26,8 @@ export function rove(e: { key: string; target: EventTarget | null; preventDefaul
   items[next].focus()
 }
 
-// The nearest box that would cut a menu off, or the window.
-function bounds(el: HTMLElement) {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    if (getComputedStyle(p).overflowY !== 'visible') { const r = p.getBoundingClientRect(); return { top: Math.max(0, r.top), bottom: Math.min(innerHeight, r.bottom) } }
-  }
-  return { top: 0, bottom: innerHeight }
-}
-
 export function Menu({ label, button, children, className = '', bare = false }: { label: string; button: ReactNode; children: (close: () => void) => ReactNode; className?: string; bare?: boolean }) {
   const [open, setOpen] = useState(false)
-  const [down, setDown] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   // Closing from inside the menu hands focus back to the button, so the keyboard stays in place.
@@ -54,22 +46,17 @@ export function Menu({ label, button, children, className = '', bare = false }: 
     addEventListener('keydown', esc, true)
     return () => { removeEventListener('pointerdown', away); removeEventListener('keydown', esc, true) }
   }, [open])
-  // A menu that opens upward drops down instead when the box it sits in would cut its top off.
+  // The menu stays inside the window: it flips to the side with room, and scrolls when neither has enough.
   useLayoutEffect(() => {
-    if (!open) return setDown(false)
-    const menu = box.current?.querySelector<HTMLElement>('.menu')
-    const b = trigger.current?.getBoundingClientRect()
-    if (!menu || !b) return
-    const r = menu.getBoundingClientRect()
-    const edge = bounds(box.current!)
-    if (r.bottom <= b.top && r.top < edge.top && edge.bottom - b.bottom > b.top - edge.top) setDown(true)
+    const menu = open && box.current?.querySelector<HTMLElement>('.menu')
+    if (menu && trigger.current) return follow(menu, trigger.current)
   }, [open])
   return (
     <div className={`menuwrap ${className}`} ref={box}
       onKeyDown={(e) => { if (open) rove(e, box.current?.querySelector<HTMLElement>('.menu')) }}
       onBlur={(e) => { if (open && e.relatedTarget && !box.current?.contains(e.relatedTarget as Node)) setOpen(false) }}>
       <button ref={trigger} className={`${bare ? 'iconbtn' : 'pill'}${open ? (bare ? ' on' : ' open') : ''}`} onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu" aria-label={label}>{button}{!bare && <IconDown />}</button>
-      {open && <div className={`menu${down ? ' down' : ''}`} role="menu">{children(close)}</div>}
+      {open && <div className="menu" role="menu">{children(close)}</div>}
     </div>
   )
 }

@@ -22,6 +22,7 @@ import { sentence, stepOf } from '../shared/steps'
 import { cut, weave } from '../shared/weave'
 import { testConnector } from '../electron/agents'
 import type { Event, RoomMeta } from '../shared/types'
+import { shift, side } from '../src/lib/fit'
 
 const fixture = (name: string) =>
   readFileSync(join(process.cwd(), 'test', 'fixtures', `${name}.jsonl`), 'utf8').split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l))
@@ -1194,4 +1195,21 @@ test('cache: the lifetime a turn reports is the shortest entry it wrote', () => 
   const grok = claudeLike()
   grok.line({ type: 'result', result: 'ok', usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0 } })
   assert.equal(grok.turn.usage.ttl, undefined)
+})
+
+test('a floating surface keeps its side while it fits, flips when only the other fits, and is capped when neither does', () => {
+  assert.deepEqual(side(300, 400, 100, 'up'), { side: 'up', max: 400 })
+  assert.deepEqual(side(300, 100, 400, 'up'), { side: 'down', max: 400 })
+  assert.deepEqual(side(300, 400, 100, 'down'), { side: 'up', max: 400 })
+  assert.deepEqual(side(600, 250, 200, 'down'), { side: 'up', max: 250 })
+  assert.deepEqual(side(600, 200, 200, 'down'), { side: 'down', max: 200 })
+  // A sliver of room still leaves a list tall enough to use.
+  assert.equal(side(600, 20, 40, 'up').max, 96)
+})
+
+test('a floating surface slides sideways only as far as the window edge', () => {
+  assert.equal(shift(100, 300, 8, 900), 0)
+  assert.equal(shift(-40, 300, 8, 900), 48)
+  assert.equal(shift(700, 300, 8, 900), -100)
+  assert.equal(shift(10, 1000, 8, 900), -2)
 })

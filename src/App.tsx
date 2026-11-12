@@ -22,6 +22,7 @@ import { FreeModels } from './views/Free'
 import { Library } from './views/Library'
 import { Browser, useBrowser } from './views/Browser'
 import { Palette, type Command } from './views/Palette'
+import { shift } from './lib/fit'
 import { ago, boot, desk, mod, reload, unavailable, useApp, type Access } from './lib/desk'
 
 export type View =
@@ -307,8 +308,8 @@ function RoomContext({ room, x, y, from, close, say }: { room: RoomSummary; x: n
   useLayoutEffect(() => {
     const el = box.current!
     const r = el.getBoundingClientRect()
-    el.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`
-    el.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`
+    el.style.left = `${x + shift(x, r.width, 8, innerWidth - 8)}px`
+    el.style.top = `${y + shift(y, r.height, 8, innerHeight - 8)}px`
     el.querySelector('button')?.focus()
   }, [])
   useEffect(() => {
