@@ -138,7 +138,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     const to = columnLeft()
     if (from === null || to === null || Math.abs(from - to) < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return
     for (const el of document.querySelectorAll('.convo .column, .convo .dock')) {
-      el.animate([{ transform: `translateX(${from - to}px)` }, { transform: 'none' }], { duration: 520, easing: 'cubic-bezier(.65,0,.35,1)' })
+      el.animate([{ transform: `translateX(${from - to}px)` }, { transform: 'none' }], { duration: 760, easing: 'cubic-bezier(.65,0,.35,1)' })
     }
   }, [panel])
   // Defined before the loading return: the shortcut can fire while the room is still loading.

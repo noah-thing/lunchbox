@@ -7,8 +7,8 @@ import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode }
 // Everything that moves is transform, opacity or a stroke, so a long room stays smooth.
 
 type Item = { text: string; check?: boolean }
-const PACE = 340
-const HOLD = 1200
+const PACE = 560
+const HOLD = 2000
 
 // The panel draws a new plan as the chat hands it over, not before.
 let handing = false
@@ -40,7 +40,7 @@ export function PlanCard({ items, live, plan, render }: { items: Item[]; live: b
   // panel opens and draws it while the rows here close up.
   useEffect(() => {
     if (!live || stage !== 'here') return
-    const due = start.current + (count - 1) * PACE + 900 + HOLD - performance.now()
+    const due = start.current + (count - 1) * PACE + 1300 + HOLD - performance.now()
     const t = setTimeout(() => {
       if (latest.current.count !== count || !latest.current.plan) return
       handing = true
@@ -80,7 +80,7 @@ export const PlanRow = memo(function PlanRow({ i, start, done, on, live, text, r
   const [ticked, setTicked] = useState(done && !live)
   const first = useRef(true)
   useEffect(() => {
-    const wait = first.current && live ? delay + 520 : 0
+    const wait = first.current && live ? delay + 1300 : 0
     first.current = false
     if (!done) { setTicked(false); return }
     const t = setTimeout(() => setTicked(true), wait)
