@@ -6,7 +6,7 @@ import { claudeLike, codex, gemini, limitOf, plain, reason } from '../electron/a
 import { wallWhy } from '../shared/wall'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
-import { chat, PROVIDERS } from '../electron/agents/http'
+import { chat, listModels, parseHeaders, PROVIDERS } from '../electron/agents/http'
 import { cacheSaving, claudeCost, codexSaving, costSaving } from '../shared/prices'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
@@ -20,6 +20,7 @@ import { markdown, replay } from '../electron/export'
 import { cmdLine, firstPath } from '../electron/system'
 import { sentence, stepOf } from '../shared/steps'
 import { cut, weave } from '../shared/weave'
+import { testConnector } from '../electron/agents'
 import type { Event, RoomMeta } from '../shared/types'
 
 const fixture = (name: string) =>
@@ -81,6 +82,34 @@ test('help asked for mid-turn reads inside the turn that asked, in exports too',
   assert.equal((woven[1] as { text: string }).text, head)
   assert.equal((woven[3] as { acts: unknown[] }).acts.length, 1, 'acts stay with the end of the turn')
   assert.equal(woven[3].id, 's')
+})
+
+test('connectors: extra headers reach the server, and one named like the default replaces it', async () => {
+  assert.deepEqual(parseHeaders('x-plan: go\n# note\n\nbad line\nAuthorization:  Token abc '), { 'x-plan': 'go', Authorization: 'Token abc' })
+  const seen: Record<string, string | undefined>[] = []
+  const server = createServer((req, res) => {
+    seen.push({ plan: req.headers['x-plan'] as string, auth: req.headers.authorization })
+    if (req.headers['x-plan'] !== 'go') { res.writeHead(401, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'missing plan header' } })); return }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'go-model' }] }))
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`
+  try {
+    const c = { id: 'x', name: 'Go', kind: 'openai' as const, base }
+    const without = await testConnector(c, 'sk-1')
+    assert.equal(without.ok, false)
+    assert.match(without.note, /missing plan header/)
+    const withIt = await testConnector(c, 'sk-1', 'x-plan: go')
+    assert.equal(withIt.ok, true)
+    assert.deepEqual(withIt.models, ['go-model'])
+    assert.equal(seen[1].auth, 'Bearer sk-1', 'the key still goes as Bearer')
+    PROVIDERS['conn:hdr'] = { base, style: 'openai', prefer: /./, extra: parseHeaders('x-plan: go\nauthorization: Token raw') }
+    await listModels('conn:hdr', 'sk-1')
+    assert.equal(seen[2].auth, 'Token raw', 'a header named like the default replaces it')
+  } finally {
+    delete PROVIDERS['conn:hdr']
+    server.close()
+  }
 })
 
 test('grok: same shape as claude without partial deltas', () => {

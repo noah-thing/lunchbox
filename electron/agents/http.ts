@@ -1,7 +1,8 @@
 import type { Usage } from '../../shared/types'
 import { cacheSaving, claudeCost, readSaving } from '../../shared/prices'
 
-type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp }
+// extra: headers a connector's server wants on every request, such as a plan or project id.
+type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp; extra?: Record<string, string> }
 
 export const PROVIDERS: Record<string, Provider> = {
   anthropic: { base: 'https://api.anthropic.com/v1', style: 'anthropic', prefer: /sonnet/ },
@@ -14,10 +15,30 @@ export const PROVIDERS: Record<string, Provider> = {
   llamacpp: { base: 'http://127.0.0.1:8080/v1', style: 'openai', prefer: /./ },
 }
 
-function headers(style: Provider['style'], key: string): Record<string, string> {
-  if (style === 'anthropic') return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
-  if (style === 'openai' && key) return { authorization: `Bearer ${key}`, 'content-type': 'application/json' }
-  return { 'content-type': 'application/json' }
+function headers(p: Provider, key: string): Record<string, string> {
+  const base: Record<string, string> = p.style === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+    : p.style === 'openai' && key ? { authorization: `Bearer ${key}`, 'content-type': 'application/json' }
+    : { 'content-type': 'application/json' }
+  // A header the person set wins over the default of the same name, so a server that wants its
+  // key under another name, or no Bearer prefix, can have it that way.
+  const out = { ...base }
+  for (const [k, v] of Object.entries(p.extra ?? {})) {
+    for (const d of Object.keys(out)) if (d.toLowerCase() === k.toLowerCase()) delete out[d]
+    out[k] = v
+  }
+  return out
+}
+
+// "Name: value", one a line. Blank lines and lines starting with # are skipped, and a line that
+// is not a valid header is ignored rather than breaking every request.
+export function parseHeaders(text = ''): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\s*([!#$%&'*+.^_`|~0-9A-Za-z-]+)\s*:\s*(.*?)\s*$/)
+    if (!m || line.trim().startsWith('#') || /[\r\n]/.test(m[2])) continue
+    out[m[1]] = m[2]
+  }
+  return out
 }
 
 async function failure(res: Response) {
@@ -45,7 +66,7 @@ export async function listModels(name: string, key: string): Promise<string[]> {
       .filter((m: { supportedGenerationMethods?: string[] }) => m.supportedGenerationMethods?.includes('generateContent'))
       .map((m: { name: string }) => m.name.replace(/^models\//, ''))
   }
-  const res = await fetch(`${p.base}/models`, { headers: headers(p.style, key), signal })
+  const res = await fetch(`${p.base}/models`, { headers: headers(p, key), signal })
   if (!res.ok) throw await failure(res)
   // Only models that chat: embedding, speech, image and moderation models fail on chat requests.
   return ((await res.json()).data ?? []).map((m: { id: string }) => m.id).filter((id: string) => !/embed|whisper|tts|dall|image|moderation|audio|realtime|transcribe|search-preview/i.test(id)).sort().reverse()
@@ -130,7 +151,7 @@ export async function chat(name: string, key: string, model: string, system: str
     const marks = new Set([blocks.length - 1, 20 * Math.floor((blocks.length - 1) / 20) - 1].filter((i) => i >= 0))
     for (const i of marks) blocks[i].cache_control = { type: 'ephemeral' }
     res = await fetch(`${p.base}/messages`, {
-      method: 'POST', signal, headers: headers(p.style, key),
+      method: 'POST', signal, headers: headers(p, key),
       body: JSON.stringify({
         // Fable and Mythos think on every request and the thinking counts toward max_tokens, so
         // the 5 family gets room for both; older models keep the smaller cap they accept.
@@ -163,7 +184,7 @@ export async function chat(name: string, key: string, model: string, system: str
     usage.gross = readSaving(id, usage.cached, usage.input + usage.cached) ?? undefined
   } else if (p.style === 'openai') {
     const ask = (usageToo: boolean) => fetch(`${p.base}/chat/completions`, {
-      method: 'POST', signal, headers: headers(p.style, key),
+      method: 'POST', signal, headers: headers(p, key),
       body: JSON.stringify({
         model: id, stream: true, ...(usageToo ? { stream_options: { include_usage: true } } : {}),
         messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }],
@@ -194,7 +215,7 @@ export async function chat(name: string, key: string, model: string, system: str
     }
   } else if (p.style === 'google') {
     res = await fetch(`${p.base}/models/${id}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`, {
-      method: 'POST', signal, headers: headers(p.style, key),
+      method: 'POST', signal, headers: headers(p, key),
       body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [...history.map((text) => ({ text })), { text: prompt }] }] }),
     })
     if (!res.ok) throw await failure(res)
@@ -207,7 +228,7 @@ export async function chat(name: string, key: string, model: string, system: str
     }
   } else {
     res = await fetch(`${p.base}/chat`, {
-      method: 'POST', signal, headers: headers(p.style, key),
+      method: 'POST', signal, headers: headers(p, key),
       body: JSON.stringify({
         model: id, stream: true, keep_alive: '30m', options: { num_ctx: await ollamaWindow(p.base, id, signal) },
         messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }],

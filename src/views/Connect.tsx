@@ -76,6 +76,11 @@ export function ConnectorSheet({ edit, close, say }: { edit?: Connector; close: 
   const settings = useApp((s) => s.settings)
   const [c, setC] = useState<Connector>(edit ?? { id: '', name: '', kind: 'openai', base: '', model: '', command: '', args: '{prompt}', output: 'text' })
   const [key, setKey] = useState('')
+  // Extra headers: kept in the keychain, so an edit shows that some are saved without showing them.
+  const [hdrs, setHdrs] = useState('')
+  const [hdrsTouched, setHdrsTouched] = useState(false)
+  const [hdrsSaved, setHdrsSaved] = useState(false)
+  const [hdrsOpen, setHdrsOpen] = useState(false)
   const [keyUrl, setKeyUrl] = useState<string>()
   const [check, setCheck] = useState<{ ok: boolean; note: string; models?: string[] } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -86,17 +91,19 @@ export function ConnectorSheet({ edit, close, say }: { edit?: Connector; close: 
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
     addEventListener('keydown', esc)
     desk.call('connector:installed', PRESETS.cli.map((p) => p.command).filter(Boolean)).then(setFound).catch(() => {})
+    if (edit) desk.call('keys').then((k: Record<string, string>) => { if (k[`conn:${edit.id}:headers`]) { setHdrsSaved(true); setHdrsOpen(true) } }).catch(() => {})
     return () => removeEventListener('keydown', esc)
   }, [])
 
   const ready = c.name.trim() && (c.kind === 'cli' ? (c.command ?? '').trim() : /^https?:\/\/.+/.test(c.base ?? ''))
-  const test = async () => { setBusy(true); setCheck(await desk.call('connector:test', c, key).catch((e: Error) => ({ ok: false, note: e.message }))); setBusy(false) }
+  const test = async () => { setBusy(true); setCheck(await desk.call('connector:test', c, key, hdrs).catch((e: Error) => ({ ok: false, note: e.message }))); setBusy(false) }
   const save = async () => {
     const taken = new Set((settings.connectors ?? []).map((x) => x.id))
     let id = c.id || `my-${slug(c.name)}`
     for (let n = 2; !c.id && taken.has(id); n++) id = `my-${slug(c.name)}-${n}`
     const next = { ...c, id, name: c.name.trim() }
     if (key.trim()) await desk.call('keys:set', `conn:${id}`, key.trim())
+    if (hdrsTouched && c.kind !== 'cli') await desk.call('keys:set', `conn:${id}:headers`, hdrs.trim())
     await reload.settings({ connectors: [...(settings.connectors ?? []).filter((x) => x.id !== id), next] })
     say(edit ? `${next.name} updated` : `${next.name} added to your agents`)
     close()
@@ -151,6 +158,15 @@ export function ConnectorSheet({ edit, close, say }: { edit?: Connector; close: 
               <input type="password" value={key} placeholder={edit ? 'Saved in the keychain, type to replace' : 'Leave empty if the server needs none'} onChange={(e) => { setKey(e.target.value); setCheck(null) }} />
               <small>{keyUrl ? <>Get one at <a href={keyUrl} target="_blank" rel="noreferrer">{keyUrl.replace('https://', '')}</a>. </> : ''}Sealed with the system keychain.</small>
             </label>
+            {hdrsOpen ? (
+              <label className="field">
+                <span>Extra headers</span>
+                <textarea rows={3} value={hdrs} spellCheck={false}
+                  placeholder={hdrsSaved && !hdrsTouched ? 'Saved in the keychain, type to replace' : 'One per line, like\nx-plan: go\nHelicone-Auth: Bearer sk-...'}
+                  onChange={(e) => { setHdrs(e.target.value); setHdrsTouched(true); setCheck(null) }} />
+                <small>Sent with every request, and with Test. A header named like the default one, such as Authorization, replaces it. Sealed with the system keychain.</small>
+              </label>
+            ) : <button className="linkbtn" onClick={() => setHdrsOpen(true)}>Add extra headers</button>}
             <label className="field">
               <span>Model</span>
               {check?.models?.length ? (
@@ -177,5 +193,6 @@ export function ConnectorSheet({ edit, close, say }: { edit?: Connector; close: 
 
 export async function removeConnector(id: string, connectors: Connector[]) {
   await desk.call('keys:set', `conn:${id}`, '')
+  await desk.call('keys:set', `conn:${id}:headers`, '')
   await reload.settings({ connectors: connectors.filter((c) => c.id !== id) })
 }

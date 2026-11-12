@@ -5,7 +5,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
 import { capture, env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
-import { chat, listModels, PROVIDERS } from './http'
+import { chat, listModels, parseHeaders, PROVIDERS } from './http'
 import { logoOf } from '../../shared/logos'
 import { localSetup } from '../local'
 
@@ -211,6 +211,12 @@ function fromConnector(c: Connector): Def {
   }
 }
 
+// A connector's extra headers live in the keychain beside its key, since they often hold one.
+function wear(d: Def, keys: Record<string, string>) {
+  if (!d.key?.startsWith('conn:') || !PROVIDERS[d.key]) return
+  PROVIDERS[d.key].extra = parseHeaders(keys[`${d.key}:headers`])
+}
+
 export function useConnectors(list: Connector[] = []) {
   for (const k of Object.keys(PROVIDERS)) if (k.startsWith('conn:')) delete PROVIDERS[k]
   custom = list.filter((c) => c.id && c.name).map(fromConnector)
@@ -287,6 +293,7 @@ export async function modelsFor(id: string, keys: Record<string, string>) {
   if (d?.id === 'grok') return grokModels()
   if (d?.id === 'gemini') return GEMINI_MODELS
   if (!d || d.via === 'cli') return []
+  wear(d, keys)
   const all = await listModels(providerOf(d), keys[d.key!] ?? '')
   return d.via === 'local' ? all.filter((m) => !/embed/i.test(m)) : all
 }
@@ -298,6 +305,7 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     const provider = providerOf(d)
     const ctl = new AbortController()
     const t0 = Date.now()
+    wear(d, keys)
     const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey)
       .then((r) => ({ text: r.text, acts: [], usage: r.usage, denied: [], ms: Date.now() - t0 }))
       .catch((e: Error) => {
@@ -389,7 +397,7 @@ export { PROVIDERS }
 
 // Checks a connector before it is saved: the command is on this computer, or the API answers
 // with its list of models.
-export async function testConnector(c: Connector, key: string): Promise<{ ok: boolean; note: string; models?: string[] }> {
+export async function testConnector(c: Connector, key: string, extra = ''): Promise<{ ok: boolean; note: string; models?: string[] }> {
   if (c.kind === 'cli') {
     const [bin] = words(c.command ?? '')
     const path = bin ? await locate(bin) : ''
@@ -399,7 +407,7 @@ export async function testConnector(c: Connector, key: string): Promise<{ ok: bo
   }
   if (!/^https?:\/\//.test(c.base ?? '')) return { ok: false, note: 'The address should start with https:// or http://' }
   const id = `test:${Date.now()}`
-  PROVIDERS[id] = { base: c.base!.replace(/\/+$/, ''), style: c.kind, prefer: /./ }
+  PROVIDERS[id] = { base: c.base!.replace(/\/+$/, ''), style: c.kind, prefer: /./, extra: parseHeaders(extra) }
   try {
     const models = await listModels(id, key)
     return { ok: true, note: models.length ? `Connected, ${models.length} model${models.length > 1 ? 's' : ''}` : 'Connected', models }

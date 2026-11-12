@@ -282,7 +282,7 @@ function wire() {
   h('report:diagnostics', () => diagnostics(engine.agents))
   h('report:send', (r: Report) => send(r, store.dir, Object.values(store.keys())))
   h('error:log', (message: string) => logError('window', String(message).slice(0, 4000)))
-  h('connector:test', (c: Connector, key: string) => testConnector(c, key ?? ''))
+  h('connector:test', (c: Connector, key: string, headers?: string) => testConnector(c, key ?? '', typeof headers === 'string' ? headers : ''))
   // An installer may have just added its folder to the shell profile, so the PATH is read again.
   h('connector:installed', (bins: string[]) => { resetPath(); return installed(Array.isArray(bins) ? bins : []) })
   h('packs', () => packs())
