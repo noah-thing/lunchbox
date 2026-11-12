@@ -943,10 +943,11 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .planfold:hover{color:var(--ink)}
 .planrow{display:flex;align-items:flex-start;gap:10px;padding:4px 0;font-size:13.5px;line-height:21px;color:var(--ink)}
 .planbox{flex:none;width:16px;height:16px;margin-top:2.5px;overflow:visible}
-/* The dash is a little longer than the outline, so the traced line always meets itself. */
-.planbox .frame{fill:none;stroke:var(--faint);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1.04 1.04;stroke-dashoffset:0;transition:stroke 500ms var(--out)}
+/* The dash is a fifth longer than the outline: the traced line closes while it is still moving,
+   and the easing's slow tail runs past the join instead of leaving a gap at it. */
+.planbox .frame{fill:none;stroke:var(--faint);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1.2 1.2;stroke-dashoffset:0;transition:stroke 500ms var(--out)}
 .planbox .fill{fill:var(--ink);opacity:0;transform:scale(.5);transform-origin:8px 8px;transition:opacity 360ms var(--out),transform 560ms cubic-bezier(.34,1.36,.64,1)}
-.planbox .tick{fill:none;stroke:var(--ground);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1.04 1.04;stroke-dashoffset:1.04;transition:stroke-dashoffset 460ms 240ms cubic-bezier(.65,0,.35,1)}
+.planbox .tick{fill:none;stroke:var(--ground);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1.2 1.2;stroke-dashoffset:1.2;transition:stroke-dashoffset 460ms 240ms cubic-bezier(.65,0,.35,1)}
 .planbox .pulse{fill:var(--ink);opacity:0;transform:scale(.5);transform-origin:8px 8px}
 .plantext{min-width:0;flex:1}
 .planstep{background:linear-gradient(currentColor,currentColor) 0 58%/0 1px no-repeat;-webkit-box-decoration-break:clone;box-decoration-break:clone;transition:background-size 700ms 420ms cubic-bezier(.65,0,.35,1),color 600ms 300ms var(--out)}
@@ -960,7 +961,7 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 @keyframes planpulse{0%,100%{opacity:.2;transform:scale(.45)}50%{opacity:.85;transform:scale(.9)}}
 .drawing .planrow .frame{animation:plantrace 1500ms both;animation-delay:var(--d)}
 /* The line is traced in ink and settles to the resting grey once it has closed. */
-@keyframes plantrace{from{stroke-dashoffset:1.04;stroke:var(--ink);animation-timing-function:cubic-bezier(.55,0,.3,1)}48%{stroke-dashoffset:0;stroke:var(--ink);animation-timing-function:ease}to{stroke-dashoffset:0}}
+@keyframes plantrace{from{stroke-dashoffset:1.2;stroke:var(--ink);animation-timing-function:cubic-bezier(.55,0,.3,1)}48%{stroke-dashoffset:0;stroke:var(--ink);animation-timing-function:ease}to{stroke-dashoffset:0}}
 .drawing .planrow .plantext{animation:planin 700ms var(--out) both;animation-delay:calc(var(--d) + 520ms)}
 @keyframes planin{from{opacity:0;transform:translateX(-8px)}}
 
