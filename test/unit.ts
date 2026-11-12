@@ -7,7 +7,7 @@ import { wallWhy } from '../shared/wall'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
 import { chat, listModels, parseHeaders, PROVIDERS } from '../electron/agents/http'
-import { cacheSaving, claudeCost, codexSaving, costSaving } from '../shared/prices'
+import { cacheSaving, claudeCost, codexSaving, costSaving, readSaving } from '../shared/prices'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
@@ -110,6 +110,12 @@ test('connectors: extra headers reach the server, and one named like the default
     delete PROVIDERS['conn:hdr']
     server.close()
   }
+})
+
+test('prices: Sonnet 5.5 reads from cache at $0.10, Sonnet 5 at $0.20', () => {
+  // A million cached tokens saved the input price minus the read price.
+  assert.equal(readSaving('claude-sonnet-5-5', 1_000_000), 1.9)
+  assert.equal(readSaving('claude-sonnet-5', 1_000_000), 1.8)
 })
 
 test('grok: same shape as claude without partial deltas', () => {
@@ -500,8 +506,8 @@ test('savings: a result without per model rows is priced at the session model', 
 })
 
 test('savings: hour long cache writes cost double, not a quarter extra', () => {
-  const short = cacheSaving('claude-sonnet-5-5', 100000, { short: 20000 })!
-  const hour = cacheSaving('claude-sonnet-5-5', 100000, { short: 0, hour: 20000 })!
+  const short = cacheSaving('claude-sonnet-5', 100000, { short: 20000 })!
+  const hour = cacheSaving('claude-sonnet-5', 100000, { short: 0, hour: 20000 })!
   assert.ok(Math.abs(short - (100000 * 1.8 - 20000 * 0.5) / 1e6) < 1e-9)
   assert.ok(Math.abs(hour - (100000 * 1.8 - 20000 * 2) / 1e6) < 1e-9)
   assert.equal(cacheSaving('gpt-6', 100000, 0), null, 'unknown prices stay in tokens')

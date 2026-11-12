@@ -8,6 +8,8 @@ const CLAUDE: [RegExp, number, number, number][] = [
   [/(fable|mythos)-5/, 10, 1, 50],
   [/opus-5-5/, 4, 0.2, 20],
   [/opus-(5|4-[5-8])/, 5, 0.5, 25],
+  // Sonnet 5.5 keeps Sonnet 5's prices except a cache read, which is half: $0.10.
+  [/sonnet-5-5/, 2, 0.1, 10],
   [/sonnet-5/, 2, 0.2, 10],
   [/sonnet-4/, 3, 0.3, 15],
   [/haiku-5-5/, 0.1, 0.01, 0.5],

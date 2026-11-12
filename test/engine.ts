@@ -542,8 +542,8 @@ test('room: resumed turns are counted once each, across a restart', { skip: proc
     const week = store.totals().week.claude
     assert.ok(Math.abs(week.cost - 0.03) < 1e-9, `the ledger adds up to the session's cost, got ${week.cost}`)
     assert.equal(week.cached, 42600)
-    // What the reads saved at the Sonnet rates in the price table, once per turn.
-    assert.ok(Math.abs((week.gross ?? 0) - (3 * 14200 * 1.8) / 1e6) < 1e-9, `${week.gross}`)
+    // What the reads saved at Sonnet 5.5's rates, $2 in and $0.10 a cached read, once per turn.
+    assert.ok(Math.abs((week.gross ?? 0) - (3 * 14200 * 1.9) / 1e6) < 1e-9, `${week.gross}`)
   } finally {
     delete process.env.FAKE_RUNNING
   }
