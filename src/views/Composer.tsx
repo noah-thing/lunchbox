@@ -73,7 +73,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   }, [])
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key === '/' && (e.target as HTMLElement)?.tagName !== 'TEXTAREA' && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); area.current?.focus() }
+      if (e.key === '/' && !document.querySelector('.scrim') && !(e.target as HTMLElement)?.isContentEditable && (e.target as HTMLElement)?.tagName !== 'TEXTAREA' && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); area.current?.focus() }
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)

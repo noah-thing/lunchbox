@@ -24,7 +24,7 @@ export function useBrowser() {
 // The native view is drawn above the whole window, so a dialog or sheet opened over the page would
 // sit behind it. The view steps aside while one is up. Toasts and the update banner do not count:
 // they come and go on their own, and the page blinking out for each would be worse than missing one.
-const OVER = '.scrim, [role=dialog]'
+const OVER = '.scrim, [role=dialog], .menu.ctx'
 function useOverlaid() {
   const [over, setOver] = useState(() => !!document.querySelector(OVER))
   useEffect(() => {

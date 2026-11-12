@@ -75,10 +75,12 @@ export function boot() {
     desk.call('limits').then((limits) => limits && set({ limits }))
     desk.on('skills', (skills) => set({ skills }))
     desk.on('flows', (f) => set({ flows: f.flows, running: f.running }))
+    // One part failing to load must not leave the app on its loading screen for good: the rest
+    // opens, and that part starts empty.
     const [env, agents, rooms, settings, ledger, skills, packs, flows] = await Promise.all(
-      ['env', 'agents', 'rooms', 'settings', 'ledger', 'skills', 'packs', 'flows'].map((c) => desk.call(c)),
+      ['env', 'agents', 'rooms', 'settings', 'ledger', 'skills', 'packs', 'flows'].map((c) => desk.call(c).catch((e) => { desk.call('error:log', `boot ${c}: ${reason(e)}`).catch(() => {}); return null })),
     )
-    set({ env, agents, rooms, settings: settings ?? state.settings, ledger, skills, packs, flows: flows?.flows ?? [], running: flows?.running ?? [], loaded: true })
+    set({ env: env ?? state.env, agents: agents ?? [], rooms: rooms ?? [], settings: settings ?? state.settings, ledger, skills: skills ?? [], packs: packs ?? [], flows: flows?.flows ?? [], running: flows?.running ?? [], loaded: true })
   })()
   return booted
 }
@@ -112,6 +114,13 @@ export const KIND_LABEL: Record<Kind, string> = {
 }
 
 export const short = (path: string, home = state.env.home) => (home && path.startsWith(home) ? '~' + path.slice(home.length) : path)
+// A long path by its end, which is the part that says which folder it is.
+export const tail = (path: string, max = 34) => {
+  const s = short(path)
+  if (s.length <= max) return s
+  const parts = s.split(/[\\/]/).filter(Boolean)
+  return `…/${parts.slice(-2).join('/')}`.length <= max + 6 ? `…/${parts.slice(-2).join('/')}` : `…/${parts[parts.length - 1]}`
+}
 
 export const agentOf = (id: string, list = state.agents): AgentInfo =>
   list.find((a) => a.id === id) ?? { id, name: id, short: id, maker: '', via: 'cli', found: false, ready: false, tools: false, good: '', alphabet: '.:+*#', mark: id }

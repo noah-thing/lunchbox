@@ -187,7 +187,11 @@ export class Store {
     const log: Event[] = []
     const own = turnsOnly()
     try {
-      readFileSync(this.file(id), 'utf8').split('\n').forEach((line, i) => {
+      const text = readFileSync(this.file(id), 'utf8')
+      // A crash in the middle of a write leaves a last line without its end. The next event
+      // would be glued onto it and both lost, so the line is closed first.
+      if (text && !text.endsWith('\n')) try { appendFileSync(this.file(id), '\n') } catch {}
+      text.split('\n').forEach((line, i) => {
         if (!line) return
         // A line that does not parse keeps its place, since agents' heard marks count lines.
         try {

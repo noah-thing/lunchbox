@@ -12,7 +12,7 @@ import { Bar, handingOver, onHanded, planDrawing, PlanRow } from '../ui/Plan'
 import { roomCard } from '../ui/roomcard'
 import { openReport } from '../lib/report'
 import { IconBranches, IconChevron, IconClock, IconCopy, IconDiff, IconFolder, IconFork, IconMore, IconPanel, IconPhone, IconPin, IconReview, IconRewind, IconSplit, IconGlobe, IconX } from '../ui/icons'
-import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tokens, unavailable, useApp, type Access } from '../lib/desk'
+import { agentOf, clock, desk, KIND_LABEL, mod, money, reason, short, tail, tokens, unavailable, useApp, type Access } from '../lib/desk'
 import { Changes } from './Changes'
 import { Composer } from './Composer'
 
@@ -195,7 +195,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
           <Title name={meta.name} rename={(n) => desk.call('room:rename', id, n)} />
           {meta.forkedFrom && <button className="tag" onClick={() => open(meta.forkedFrom!.room)}>fork</button>}
           <span className="spacer" />
-          <button className="ghostbtn mono" onClick={pick} title={meta.workspace}><IconFolder />{short(meta.workspace)}</button>
+          <button className="ghostbtn mono" onClick={pick} title={meta.workspace}><IconFolder /><span>{tail(meta.workspace)}</span></button>
           <RoomMenu id={id} meta={meta} events={events} canReplay={events.length > 1} replay={() => setReplay(0)} open={open} say={say} />
           <button className={`iconbtn${panel ? ' on' : ''}`} onClick={togglePanel} aria-label="Room panel" aria-pressed={panel} title="Room panel"><IconPanel /></button>
         </header>
@@ -1050,6 +1050,8 @@ function RunBlock({ run, answer, kill, keys = true }: { run: RunView; answer?: A
     if (!asking || !answer || !run.id || !keys) return
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'TEXTAREA') return
+      // A key that closed a dialog or a menu, or was pressed inside one, was not about this command.
+      if (e.defaultPrevented || document.querySelector('.scrim') || (e.target as HTMLElement)?.closest?.('[role=dialog],[role=menu],[role=listbox],input')) return
       // ⌘Enter runs it, so pressing Enter on some other button never approves a command.
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); answer(run.id!, 'once') }
       if (e.key === 'Escape') { e.preventDefault(); answer(run.id!, 'deny') }
