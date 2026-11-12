@@ -56,9 +56,30 @@ export function readRooms(dir: string): RoomMeta[] {
   return readJson<RoomMeta[]>(`${file}.bak`, [])
 }
 
+// Before 0.1.6 a resumed Claude Code turn was recorded with its session's running cost and
+// savings, and a resumed Codex turn with running totals of everything, so each turn counted the
+// ones before it again. Files stay as written; what is read from them is each turn's own share.
+// A row continues the one before when nothing in it went down, so a new session that happens to
+// look like a continuation is counted low, never high.
+export function turnsOnly() {
+  const last = new Map<string, Usage>()
+  return (agent: string, key: string, u: Usage): Usage => {
+    if (u.v === 2 || (agent !== 'claude' && agent !== 'codex')) return u
+    const prev = last.get(`${key}:${agent}`)
+    last.set(`${key}:${agent}`, u)
+    if (!prev || prev.v === 2 || (u.gross ?? 0) < (prev.gross ?? 0)) return u
+    const less = (a?: number, b?: number) => (a === undefined ? undefined : a - (b ?? 0))
+    const money = { saved: less(u.saved, prev.saved), gross: less(u.gross, prev.gross) }
+    if (agent === 'claude') return u.cost < prev.cost ? u : { ...u, cost: u.cost - prev.cost, ...money }
+    if (u.input < prev.input || u.output < prev.output || u.cached < prev.cached) return u
+    return { ...u, input: u.input - prev.input, output: u.output - prev.output, cached: u.cached - prev.cached, ...money }
+  }
+}
+
 // One bad line, say from a crash halfway through a write, costs that row and nothing after it.
 export function readLedger(file: string, since: number) {
   const rows: { at: number; agent: string; room: string; usage: Usage }[] = []
+  const own = turnsOnly()
   let text = ''
   try { text = readFileSync(file, 'utf8') } catch { return rows }
   const keep = Date.now() - LEDGER_DAYS * 86400e3
@@ -69,6 +90,7 @@ export function readLedger(file: string, since: number) {
     try { row = JSON.parse(line) } catch { continue }
     if (!row || typeof row.at !== 'number' || !row.usage) continue
     if (row.at >= keep) kept.push(line)
+    row.usage = own(row.agent, row.room, row.usage)
     if (row.at >= since) rows.push(row)
   }
   // Old and unreadable rows are dropped from the file too, once per start.
@@ -155,11 +177,17 @@ export class Store {
 
   private load(id: string) {
     const log: Event[] = []
+    const own = turnsOnly()
     try {
       readFileSync(join(this.dir, 'rooms', `${id}.jsonl`), 'utf8').split('\n').forEach((line, i) => {
         if (!line) return
         // A line that does not parse keeps its place, since agents' heard marks count lines.
-        try { log.push(JSON.parse(line)) } catch { log.push({ kind: 'note', id: `unreadable-${i}`, at: 0, text: 'A line of this room could not be read.', tone: 'warn' }) }
+        try {
+          const e: Event = JSON.parse(line)
+          if (e.kind === 'say' && e.usage) e.usage = own(e.who, '', e.usage)
+          if (e.kind === 'hands' && e.usage) e.usage = own(e.to, '', e.usage)
+          log.push(e)
+        } catch { log.push({ kind: 'note', id: `unreadable-${i}`, at: 0, text: 'A line of this room could not be read.', tone: 'warn' }) }
       })
     } catch {}
     return log

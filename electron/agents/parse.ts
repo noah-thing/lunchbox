@@ -1,5 +1,5 @@
-import { cacheSaving, codexSaving, readSaving } from '../../shared/prices'
-import type { Act, Usage } from '../../shared/types'
+import { cacheSaving, claudeCost, codexSaving, readSaving } from '../../shared/prices'
+import type { Act, Meter, Usage } from '../../shared/types'
 
 // Each CLI prints one JSON object per line. A parser folds those lines into a Turn and reports
 // what changed so the room can show text and activity while the agent is still working.
@@ -9,6 +9,8 @@ export type Turn = {
   final: string
   acts: Act[]
   usage: Usage
+  // What the session has reported in total so far, when the CLI counts that way.
+  meter?: Meter
   session?: string
   error?: string
   denied: string[]
@@ -21,28 +23,39 @@ export type Turn = {
 export type Update = { delta?: string; acts?: Act[]; working?: string; agents?: Extract<Act, { t: 'agent' }>[]; tokens?: number }
 
 // Claude Code reports cache reads and writes per model, so the saving is priced per model at API
-// rates. A subscription pays nothing per token; this is what the same work would have cost. When a
-// result has no per model rows, the turn's usage is priced at the model the session started with.
-function claudeSaved(models: Record<string, any> | undefined, usage: any, model?: string) {
-  const rows: [string, any][] = Object.entries(models ?? {})
-  if (!rows.length && model && usage) {
-    const hour = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0
-    rows.push([model, { inputTokens: usage.input_tokens, cacheReadInputTokens: usage.cache_read_input_tokens, cacheCreationInputTokens: usage.cache_creation_input_tokens, cacheCreationEphemeral1hInputTokens: hour }])
-  }
+// rates. A subscription pays nothing per token; this is what the same work would have cost.
+// A row is input, output, cache reads, cache writes, the hour long share of those writes, cost.
+function claudeSaved(rows: Record<string, number[]>) {
   let net: number | undefined
   let gross: number | undefined
-  for (const [m, r] of rows) {
+  for (const [m, [input, output, read, all, hour, cost]] of Object.entries(rows)) {
     // Claude Code reports writes by lifetime; an hour entry costs twice the input price, not 1.25.
-    const all = r.cacheCreationInputTokens ?? 0
-    const hour = r.cacheCreationEphemeral1hInputTokens ?? 0
-    const read = r.cacheReadInputTokens ?? 0
-    const prompt = (r.inputTokens ?? 0) + read + all
-    const n = cacheSaving(m, read, { short: Math.max(0, all - hour), hour }, prompt)
+    const u = { input, output, read, short: Math.max(0, all - hour), hour }
+    // Haiku 5.5 charges more for a prompt past 100K tokens, and a turn's totals do not say how
+    // long each prompt was. The long rate counts only when it explains the reported cost better.
+    const long = cost > 0 && Math.abs(cost - (claudeCost(m, u, Infinity) ?? 0)) < Math.abs(cost - (claudeCost(m, u, 0) ?? 0))
+    const prompt = long ? Infinity : 0
+    const n = cacheSaving(m, read, u, prompt)
     const g = readSaving(m, read, prompt)
     if (n !== null) net = (net ?? 0) + n
     if (g !== null) gross = (gross ?? 0) + g
   }
   return { saved: net, gross }
+}
+
+const sum = (rows: Record<string, number[]>, k: number) => Object.values(rows).reduce((n, r) => n + (r[k] ?? 0), 0)
+
+// Claude Code keeps `total_cost_usd` and `modelUsage` as running totals for a session, across
+// resumes, while `usage` is the turn alone. A resumed turn's share is the total minus what the
+// session had reported before. `own` is the turn's usage, which a true share can never be below;
+// when it is, this CLI counts per turn and the rows already are the turn's.
+function share(total: Meter, base: Meter | undefined, own: number[]): Meter | null {
+  if (!base) return own.every((n, k) => n === sum(total.rows, k)) ? total : null
+  const rows: Record<string, number[]> = {}
+  for (const [m, r] of Object.entries(total.rows)) rows[m] = r.map((n, k) => n - (base.rows[m]?.[k] ?? 0))
+  // Running totals keep every model the session has used, and never go down.
+  const went = Object.keys(base.rows).every((m) => total.rows[m]) && Object.values(rows).every((r) => r.every((n) => n > -1e-9)) && own.every((n, k) => sum(rows, k) >= n)
+  return went ? { cost: Math.max(0, total.cost - base.cost), rows } : total
 }
 
 // A command-line agent with no structured output: everything it prints is the answer.
@@ -123,7 +136,9 @@ function early(json: string) {
   try { return (JSON.parse(`"${m[1]}"`) as string).split('\n')[0].slice(0, 160) } catch { return '' }
 }
 
-export function claudeLike() {
+// base is what the resumed session had reported before this turn; resumed without one means the
+// session is older than the count, and only the turn's own usage can be trusted.
+export function claudeLike(base?: Meter, resumed = false) {
   const turn = newTurn()
   const pending = new Map<string, { name: string; input: Record<string, unknown> }>()
   const subs = new Map<string, Extract<Act, { t: 'agent' }>>()
@@ -240,14 +255,22 @@ export function claudeLike() {
       }
       case 'result': {
         const u = o.usage ?? {}
-        turn.usage = {
-          input: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
-          output: u.output_tokens ?? 0,
-          cached: u.cache_read_input_tokens ?? 0,
-          cost: o.total_cost_usd ?? Object.values(o.modelUsage ?? {}).reduce((n: number, m: any) => n + (m.costUSD ?? 0), 0),
-          written: u.cache_creation_input_tokens ?? 0,
-          ...claudeSaved(o.modelUsage, o.usage, model),
+        const own = [u.input_tokens ?? 0, u.output_tokens ?? 0, u.cache_read_input_tokens ?? 0, u.cache_creation_input_tokens ?? 0, u.cache_creation?.ephemeral_1h_input_tokens ?? 0]
+        const models: [string, any][] = Object.entries(o.modelUsage ?? {})
+        const total: Meter = {
+          cost: o.total_cost_usd ?? models.reduce((n, [, m]) => n + (m.costUSD ?? 0), 0),
+          rows: Object.fromEntries(models.map(([m, r]) => [m, [r.inputTokens ?? 0, r.outputTokens ?? 0, r.cacheReadInputTokens ?? 0, r.cacheCreationInputTokens ?? 0, r.cacheCreationEphemeral1hInputTokens ?? 0, r.costUSD ?? 0]])),
         }
+        if (models.length) turn.meter = total
+        const counted = !models.length ? null : !resumed ? total : share(total, base, own)
+        // Without per model rows, or on a session resumed without a count, the turn's own usage
+        // is priced at the model the session started with.
+        const mine = counted ?? {
+          cost: !resumed && o.total_cost_usd !== undefined ? total.cost : claudeCost(model ?? '', { input: own[0], output: own[1], read: own[2], short: own[3] - own[4], hour: own[4] }) ?? 0,
+          rows: { [model ?? '']: own },
+        }
+        const written = sum(mine.rows, 3)
+        turn.usage = { input: sum(mine.rows, 0) + written, output: sum(mine.rows, 1), cached: sum(mine.rows, 2), cost: mine.cost, written, ...claudeSaved(mine.rows), v: 2 }
         if (typeof o.result === 'string') turn.final = o.result
         if (o.session_id) turn.session = o.session_id
         if (o.is_error) turn.error = typeof o.result === 'string' && o.result ? o.result : o.subtype || 'The agent stopped with an error'
@@ -264,7 +287,8 @@ const unwrap = (cmd: string) => cmd.match(/^\S*(?:zsh|bash|sh)\s+-l?c\s+'([\s\S]
 
 // Codex prints thread and item lifecycle events. Warnings arrive as items of type "error", which
 // do not end the turn; only turn.failed and top level errors do.
-export function codex(model = '') {
+// Codex counts a thread's tokens as running totals, across resumes; base and resumed as above.
+export function codex(model = '', base?: Meter, resumed = false) {
   const turn = newTurn()
   function line(o: any): Update | null {
     switch (o.type) {
@@ -299,9 +323,14 @@ export function codex(model = '') {
       }
       case 'turn.completed': {
         const u = o.usage ?? {}
-        const cached = u.cached_input_tokens ?? 0
+        const total = [u.input_tokens ?? 0, u.cached_input_tokens ?? 0, (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0)]
+        turn.meter = { cost: 0, rows: { [model]: total } }
+        const before = base && Object.values(base.rows)[0]
+        const since = before && total.map((n, k) => n - (before[k] ?? 0))
+        // A resumed thread with no count to take away is left out, never counted whole.
+        const [all, cached, output] = since?.every((n) => n >= 0) ? since : resumed && !before ? [0, 0, 0] : total
         const saved = codexSaving(model, cached)
-        turn.usage = { input: (u.input_tokens ?? 0) - cached, output: (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0), cached, cost: 0, saved, gross: saved }
+        turn.usage = { input: all - cached, output, cached, cost: 0, saved, gross: saved, v: 2 }
         return null
       }
       case 'turn.failed':

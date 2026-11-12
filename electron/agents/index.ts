@@ -2,7 +2,7 @@ import { createInterface } from 'node:readline'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
+import type { Access, AgentInfo, Act, Connector, Meter, Usage } from '../../shared/types'
 import { capture, env, launch, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
 import { chat, listModels, parseHeaders, PROVIDERS } from './http'
@@ -19,6 +19,8 @@ export type Input = {
   access: Access
   model?: string
   session?: string
+  // What that session had reported in total before this turn.
+  meter?: Meter
   allow?: string[]
   hands?: string
   fresh?: boolean
@@ -28,6 +30,7 @@ export type Result = {
   text: string
   acts: Act[]
   usage: Usage
+  meter?: Meter
   session?: string
   error?: string
   limit?: { until: number }
@@ -106,7 +109,7 @@ export const CATALOG: Def[] = [
         ],
         env: i.hands ? { MCP_TOOL_TIMEOUT: String(HANDS_TIMEOUT * 1000) } : undefined,
         stdin: prompt(i),
-        parser: claudeLike(),
+        parser: claudeLike(i.meter, !!i.session),
       }
     },
   },
@@ -125,7 +128,7 @@ export const CATALOG: Def[] = [
           : ['exec', '--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...tail, '-'],
         env: i.hands ? { [HANDS_ENV]: i.hands.split('/').pop()! } : undefined,
         stdin: prompt(i),
-        parser: codex(i.model),
+        parser: codex(i.model, i.meter, !!i.session),
       }
     },
   },
@@ -140,7 +143,7 @@ export const CATALOG: Def[] = [
         ...(i.session ? ['-r', i.session] : []),
       ],
       file: prompt(i),
-      parser: claudeLike(),
+      parser: claudeLike(i.meter, !!i.session),
     }),
   },
   {
@@ -384,7 +387,7 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     // A crash partway through keeps what was written, but it is not a finished answer.
     else if (code !== 0 && !error) error = reason(stderr) || `${name} exited with code ${code}`
     const limit = (error && limitOf(error)) || (code !== 0 && !text ? limitOf(stderr) : null)
-    return { text, acts: turn.acts, usage: turn.usage, session: turn.session, error, limit: limit ?? undefined, denied: turn.denied, ms: Date.now() - t0 }
+    return { text, acts: turn.acts, usage: turn.usage, meter: turn.meter, session: turn.session, error, limit: limit ?? undefined, denied: turn.denied, ms: Date.now() - t0 }
   }
   return { done, stop: () => { stopped = true; if (child) stop(child) } }
 }

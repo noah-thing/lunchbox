@@ -58,8 +58,8 @@ export function costSaving(agent: string, u: { input: number; output: number; ca
 }
 
 // The bill for one call at list price, for API keys that do not report a cost themselves.
-export function claudeCost(model: string, u: { input: number; read: number; output: number } & Writes): number | null {
-  const p = claudePrice(model, u.input + u.read + u.short + (u.hour ?? 0))
+export function claudeCost(model: string, u: { input: number; read: number; output: number } & Writes, prompt = u.input + u.read + u.short + (u.hour ?? 0)): number | null {
+  const p = claudePrice(model, prompt)
   if (!p) return null
   return (u.input * p.input + u.short * p.input * 1.25 + (u.hour ?? 0) * p.input * 2 + u.read * p.read + u.output * p.output) / 1e6
 }

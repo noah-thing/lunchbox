@@ -684,6 +684,13 @@ export class Engine {
     return `Saved ${relative(meta.workspace, path)}`
   }
 
+  private keep(room: string, who: string, r: Result) {
+    this.store.update(room, (m) => {
+      m.sessions[who] = r.session!
+      if (r.meter) (m.meters ??= {})[who] = { ...r.meter, session: r.session! }
+    })
+  }
+
   private async turn(room: string, who: string, task: Task, access: Access, ctx: Ctx): Promise<Said | null> {
     const meta = this.store.room(room)
     if (!meta || (this.gens.get(room) ?? 0) !== ctx.gen) return null
@@ -740,7 +747,7 @@ export class Engine {
     const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits, ctx.main ?? this.main(meta), meta.studio ? meta.design ?? [] : null)
     const running = run(who, {
       prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || this.protos.get(`${room}:${who}`) !== system, cwd: meta.workspace, access,
-      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
+      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
       if (u.acts) {
@@ -792,7 +799,7 @@ export class Engine {
     if (looped) {
       this.store.record(who, room, r.usage)
       this.hooks.emit('ledger', this.ledger())
-      if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
+      if (r.session && me.via === 'cli') this.keep(room, who, r)
       this.flushed.delete(lt.id)
       this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts.length ? r.acts : lt.acts, usage: r.usage, ms: r.ms })
       const other = this.fallback(meta, who)
@@ -825,7 +832,7 @@ export class Engine {
       if (lt.text.trim() && !already) this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts, error: 'Stopped' })
       return null
     }
-    if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
+    if (r.session && me.via === 'cli') this.keep(room, who, r)
 
     // A reply that got partway before the limit is kept, and the limit still counts.
     if (r.text && r.limit) {

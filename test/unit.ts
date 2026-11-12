@@ -972,3 +972,120 @@ test('openai style: free model quirks end in text or a sentence, never an empty 
     server.close()
   }
 })
+
+// The result lines of three turns of one real session, each a separate `claude -p --resume`
+// (Claude Code 2.1.322, Haiku 5.5): `usage` is the turn, the cost and `modelUsage` run on.
+const RESUMED = [
+  { cost: 0.0070341200000000005, usage: [2, 41, 11382, 34498], model: [2, 41, 11382, 34498] },
+  { cost: 0.00751072, usage: [2, 4, 45880, 78], model: [4, 45, 57262, 34576] },
+  { cost: 0.0093729, usage: [2, 82, 45958, 6807], model: [6, 127, 103220, 41383] },
+].map(({ cost, usage: [i, o, r, w], model: [mi, mo, mr, mw] }) => ({
+  type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: '55065b38', total_cost_usd: cost,
+  usage: { input_tokens: i, output_tokens: o, cache_read_input_tokens: r, cache_creation_input_tokens: w, cache_creation: { ephemeral_1h_input_tokens: w, ephemeral_5m_input_tokens: 0 } },
+  modelUsage: { 'claude-haiku-5-5': { inputTokens: mi, outputTokens: mo, cacheReadInputTokens: mr, cacheCreationInputTokens: mw, cacheCreationEphemeral1hInputTokens: mw, costUSD: cost } },
+}))
+
+test('savings: a resumed Claude Code turn counts only itself, not the session before it', () => {
+  let meter
+  const turns = RESUMED.map((line, n) => {
+    const p = claudeLike(meter, n > 0)
+    p.line(line)
+    meter = p.turn.meter
+    return p.turn.usage
+  })
+  assert.deepEqual(turns.map((u) => [u.input, u.output, u.cached, u.written]), [[34500, 41, 11382, 34498], [80, 4, 45880, 78], [6809, 82, 45958, 6807]])
+  assert.ok(Math.abs(turns[1].cost - (0.00751072 - 0.0070341200000000005)) < 1e-12)
+  assert.ok(Math.abs(turns.reduce((n, u) => n + u.cost, 0) - 0.0093729) < 1e-12, 'the turns add up to what the session cost')
+  // Each turn's saving is its own reads and hour long writes at Haiku 5.5 rates.
+  assert.ok(Math.abs(turns[1].gross! - (45880 * 0.09) / 1e6) < 1e-12)
+  assert.ok(Math.abs(turns[1].saved! - (45880 * 0.09 - 78 * 0.1) / 1e6) < 1e-12)
+  assert.ok(Math.abs(turns.reduce((n, u) => n + u.gross!, 0) - (103220 * 0.09) / 1e6) < 1e-12)
+  assert.ok(turns.every((u) => u.v === 2))
+})
+
+test('savings: a session resumed with no count on file falls back to the turn\'s own usage', () => {
+  const p = claudeLike(undefined, true)
+  p.line({ type: 'system', subtype: 'init', session_id: '55065b38', model: 'claude-haiku-5-5' })
+  p.line(RESUMED[2])
+  const u = p.turn.usage
+  assert.deepEqual([u.input, u.output, u.cached], [6809, 82, 45958])
+  assert.ok(Math.abs(u.cost - claudeCost('claude-haiku-5-5', { input: 2, output: 82, read: 45958, short: 0, hour: 6807 })!) < 1e-12)
+  assert.ok(Math.abs(u.gross! - (45958 * 0.09) / 1e6) < 1e-12)
+  assert.deepEqual(p.turn.meter?.rows['claude-haiku-5-5'].slice(0, 4), [6, 127, 103220, 41383], 'and the next turn has a count to work from')
+})
+
+test('savings: a CLI that reports per turn is left alone when resumed', () => {
+  // Grok Build, three turns of one session, the model switched after the first: its totals are the turn's.
+  const lines = [[21079, 860, 10112, 0.052374], [22400, 64, 10112, 0.10048], [704, 34, 32512, 0.035736]].map(([i, o, r, cost], n) => ({
+    type: 'result', subtype: 'success', result: 'ok', session_id: 'g', total_cost_usd: cost,
+    usage: { input_tokens: i, output_tokens: o, cache_read_input_tokens: r, cache_creation_input_tokens: 0 },
+    modelUsage: { [n ? 'grok-4.7-build-fast' : 'grok-4.7-build']: { inputTokens: i, outputTokens: o, cacheReadInputTokens: r, cacheCreationInputTokens: 0, costUSD: cost } },
+  }))
+  let meter
+  const turns = lines.map((line, n) => {
+    const p = claudeLike(meter, n > 0)
+    p.line(line)
+    meter = p.turn.meter
+    return p.turn.usage
+  })
+  assert.deepEqual(turns.map((u) => [u.input, u.cached, u.cost]), [[21079, 10112, 0.052374], [22400, 10112, 0.10048], [704, 32512, 0.035736]])
+  const bare = claudeLike(undefined, true)
+  bare.line(lines[2])
+  assert.equal(bare.turn.usage.cost, 0.035736)
+})
+
+test('savings: a resumed Codex turn counts only itself', () => {
+  // Codex 0.157.1, GPT-6 Luna, three turns of one thread through `exec resume`.
+  const lines = [[23535, 0, 5], [53096, 23296, 11], [82678, 52736, 17]].map(([i, c, o]) => ({ type: 'turn.completed', usage: { input_tokens: i, cached_input_tokens: c, cache_write_input_tokens: 0, output_tokens: o, reasoning_output_tokens: 0 } }))
+  let meter
+  const turns = lines.map((line, n) => {
+    const p = codex('gpt-6-luna', meter, n > 0)
+    p.line(line)
+    meter = p.turn.meter
+    return p.turn.usage
+  })
+  assert.deepEqual(turns.map((u) => [u.input, u.cached, u.output]), [[23535, 0, 5], [6265, 23296, 6], [142, 29440, 6]])
+  assert.ok(Math.abs(turns[2].saved! - codexSaving('gpt-6-luna', 29440)) < 1e-12)
+  const bare = codex('gpt-6-luna', undefined, true)
+  bare.line(lines[2])
+  assert.deepEqual([bare.turn.usage.input, bare.turn.usage.cached, bare.turn.usage.saved], [0, 0, 0], 'a thread with no count on file is left out')
+  assert.ok(bare.turn.meter)
+})
+
+test('savings: old ledger rows holding running totals are read as single turns, the file untouched', async () => {
+  const { mkdtempSync, writeFileSync, readFileSync: read } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { readLedger, turnsOnly } = await import('../electron/store')
+  const file = join(mkdtempSync(join(tmpdir(), 'lb-old-')), 'ledger.jsonl')
+  const at = Date.now() - 3600e3
+  // Shaped like real rows from 0.1.5: tokens per turn, cost and savings running on.
+  const rows = [
+    { at, agent: 'claude', room: 'a', usage: { input: 317288, output: 198465, cached: 10696012, cost: 8.6464, written: 317198, saved: 39.3761, gross: 40.6448 } },
+    { at: at + 1, agent: 'codex', room: 'a', usage: { input: 100, output: 5, cached: 0, cost: 0, saved: 0, gross: 0 } },
+    { at: at + 2, agent: 'claude', room: 'a', usage: { input: 16086, output: 2743, cached: 3343050, cost: 9.4985, written: 16058, saved: 52.0154, gross: 53.3484, kept: 378 } },
+    { at: at + 3, agent: 'claude', room: 'b', usage: { input: 54414, output: 3700, cached: 515996, cost: 0.6124, written: 54396, saved: 1.7432, gross: 1.9608 } },
+    { at: at + 4, agent: 'codex', room: 'a', usage: { input: 150, output: 9, cached: 400, cost: 0, saved: 0.01, gross: 0.01 } },
+    { at: at + 5, agent: 'claude', room: 'a', usage: { input: 1972, output: 795, cached: 2072817, cost: 9.9447, written: 1956, saved: 59.8843, gross: 61.2251, kept: 676 } },
+    { at: at + 6, agent: 'claude', room: 'a', usage: { input: 900, output: 30, cached: 40000, cost: 0.02, saved: 0.1, gross: 0.12 } },
+    { at: at + 7, agent: 'claude', room: 'a', usage: { input: 900, output: 30, cached: 40000, cost: 0.03, saved: 0.2, gross: 0.2, v: 2 } },
+    { at: at + 8, agent: 'claude', room: 'a', usage: { input: 900, output: 30, cached: 40000, cost: 0.04, saved: 0.3, gross: 0.3, v: 2 } },
+  ]
+  const text = rows.map((r) => JSON.stringify(r) + '\n').join('')
+  writeFileSync(file, text)
+  const got = readLedger(file, 0).map((r) => r.usage)
+  const near = (a: number | undefined, b: number) => assert.ok(Math.abs((a ?? NaN) - b) < 1e-9, `${a} vs ${b}`)
+  near(got[2].cost, 9.4985 - 8.6464)
+  near(got[2].gross, 53.3484 - 40.6448)
+  near(got[2].saved, 52.0154 - 39.3761)
+  assert.deepEqual([got[2].input, got[2].cached, got[2].kept], [16086, 3343050, 378], 'Claude Code tokens were per turn already')
+  near(got[3].cost, 0.6124)
+  assert.deepEqual([got[4].input, got[4].output, got[4].cached], [50, 4, 400], 'Codex tokens ran on too')
+  near(got[5].cost, 9.9447 - 9.4985)
+  near(got[6].cost, 0.02)
+  near(got[7].cost, 0.03)
+  near(got[8].cost, 0.04)
+  near(got.filter((_, n) => rows[n].agent === 'claude' && rows[n].room === 'a' && n < 6).reduce((n, u) => n + u.cost, 0), 9.9447)
+  assert.equal(read(file, 'utf8'), text)
+  const own = turnsOnly()
+  assert.equal(own('grok', 'a', rows[0].usage), rows[0].usage)
+})
