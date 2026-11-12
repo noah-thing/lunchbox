@@ -1,7 +1,9 @@
-import { useId, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Day, Usage } from '../../shared/types'
 import { Mark } from '../ui/bits'
-import { money, tokens, useApp } from '../lib/desk'
+import { desk, money, tokens, useApp } from '../lib/desk'
+import { drawSavingsCard } from '../ui/shareCard'
+import { IconClose } from '../ui/icons'
 import type { View } from '../App'
 
 const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0, saved: 0, gross: 0, kept: 0 })
@@ -29,6 +31,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
   const week = total(ledger?.week)
   const days = ledger?.days ?? []
   const last7 = days.slice(-7)
+  const [card, setCard] = useState<string | null>(null)
 
   const crew = Object.entries(ledger?.week ?? {})
     .map(([id, u]) => ({ a: agents.find((x) => x.id === id), id, u }))
@@ -48,8 +51,25 @@ export function Savings({ go }: { go: (v: View) => void }) {
             <h1>Savings</h1>
             <p>What prompt caching saved across your rooms. Your agents still read the whole room, nothing is cut.</p>
           </div>
+          <div className="sv-actions">
           <span className="sv-range">Last 7 days</span>
+          {(gross(week) > 0 || reused(week) > 0) && <button className="btn small quiet" onClick={async () => {
+            const money = gross(week) > 0
+            setCard(await drawSavingsCard({
+              headline: money ? cash(gross(week)) : tokens(reused(week)),
+              line: money ? 'saved with prompt caching' : 'tokens read from cache instead of paid in full',
+              stats: [
+                { value: tokens(reused(week)), label: 'tokens from cache' },
+                { value: pct(ratio(week)), label: 'of every read' },
+                { value: String(crew.length), label: crew.length === 1 ? 'agent' : 'agents in the crew' },
+              ],
+              series: last7.map((d) => (money ? d.gross ?? Math.max(0, d.saved) : reused(d))),
+              range: 'Last 7 days',
+            }))
+          }}>Share</button>}
+          </div>
         </header>
+        {card && <ShareCard image={card} close={() => setCard(null)} />}
 
         <div className="sv-kpis rise" style={{ '--i': 1 } as CSSProperties}>
           <Kpi label="Saved with prompt caching" value={gross(week) > 0 ? cash(gross(week)) : reused(week) > 0 ? `${tokens(reused(week))} tokens` : '$0.00'}
@@ -209,4 +229,36 @@ function nice(n: number) {
   if (n <= 0) return 1
   const p = 10 ** Math.floor(Math.log10(n))
   return [1, 2, 2.5, 5, 10].map((m) => m * p).find((v) => v >= n)!
+}
+
+// The card, shown before it goes anywhere. Copy and save keep the image; Post on X copies it first,
+// so it is one paste away in the composer X opens.
+function ShareCard({ image, close }: { image: string; close: () => void }) {
+  const [said, setSaid] = useState('')
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    addEventListener('keydown', esc)
+    return () => removeEventListener('keydown', esc)
+  }, [close])
+  const copy = async () => { try { await desk.call('image:copy', image); setSaid('Copied') } catch { setSaid('Could not copy. Save it instead') } }
+  const post = async () => {
+    try { await desk.call('image:copy', image); setSaid('Copied. Paste it into your post') } catch { setSaid('Save the image, then attach it to your post') }
+    window.open(`https://x.com/intent/post?text=${encodeURIComponent('My AI agents saved this much this week, working together in one app.\n\nhttps://mylunchbox.dev')}`, '_blank')
+  }
+  return (
+    <div className="scrim center" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="ncard sharecard" role="dialog" aria-label="Share your savings">
+        <img src={image} alt="Your Lunchbox savings for the last 7 days" width={1200} height={675} />
+        <div className="nbody">
+          <div className="row">
+            <button className="iconbtn" onClick={close} aria-label="Close"><IconClose /></button>
+            <span className="grow sharesaid">{said}</span>
+            <button className="btn small quiet" onClick={async () => { try { if (await desk.call('image:save', image, 'lunchbox-savings')) setSaid('Saved') } catch { setSaid('Could not save') } }}>Save</button>
+            <button className="btn small quiet" onClick={copy}>Copy image</button>
+            <button className="btn small" onClick={post}>Post on X</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }

@@ -20,6 +20,22 @@ writeFileSync(join(work, 'messy.html'), `<!doctype html><meta name=viewport cont
   const { symlinkSync } = await import('node:fs')
   symlinkSync('/etc/hosts', join(work, 'link.html'))
 }
+writeFileSync(join(work, 'states.html'), `<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>States</title><style>
+body{margin:0;font:16px system-ui;background:#fbfaf7}nav{display:flex;gap:24px;padding:20px 32px;white-space:nowrap;overflow:hidden;width:100%;box-sizing:border-box}
+nav a{color:#222;text-decoration:none}
+.good{margin:40px 32px;padding:12px 20px;border:0;border-radius:8px;background:#1b1a18;color:#fff;font:15px system-ui}
+.good:hover{background:#3a3833}.good:focus-visible{outline:3px solid #2d6cdf;outline-offset:2px}
+.flat{margin:0 32px;color:#555;outline:none}</style>
+<nav><a href="#a">Pricing</a><a href="#b">Customers</a><a href="#c">Documentation</a><a href="#d">Changelog</a></nav>
+<button class="good">Start free</button><a class="flat" href="#x">Read the docs</a>`)
+writeFileSync(join(work, 'mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="6" y="6" width="52" height="52" rx="14" fill="#e8553d"/><circle cx="32" cy="32" r="12" fill="#fff"/></svg>')
+// A real model when the network allows; the test still runs without it.
+try {
+  const r = await fetch('https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Duck/glTF-Binary/Duck.glb')
+  if (r.ok) writeFileSync(join(work, 'duck.glb'), Buffer.from(await r.arrayBuffer()))
+} catch {}
+// expert_view loads three.js from vendor/ next to the bundle, as the app does from out/.
+await import('node:fs').then(({ cpSync }) => cpSync(new URL('../out/vendor', import.meta.url).pathname, join(out, 'vendor'), { recursive: true }))
 await build({ entryPoints: ['electron/browser.ts'], outfile: join(out, 'browser.cjs'), bundle: true, platform: 'node', format: 'cjs', external: ['electron'], logLevel: 'warning' })
 writeFileSync(join(out, 'main.cjs'), `
 const { app } = require('electron')
@@ -32,6 +48,10 @@ app.whenReady().then(async () => {
   try {
     report.push(await b.look(${JSON.stringify(work)}, 'page.html', false, 'Home Page'))
     report.push(await b.look(${JSON.stringify(work)}, 'page.html', true, 'home'))
+    report.push(await b.states(${JSON.stringify(work)}, 'states.html', 'states'))
+    report.push(await b.inspect(${JSON.stringify(work)}, 'mark.svg', 'mark'))
+    if (require('fs').existsSync(${JSON.stringify(work)} + '/duck.glb')) report.push(await b.inspect(${JSON.stringify(work)}, 'duck.glb', 'duck'))
+    try { await b.inspect(${JSON.stringify(work)}, 'page.html', 'x'); report.push('HTML NOT REFUSED') } catch (e) { report.push('view refused html: ' + e.message.slice(0, 60)) }
     report.push(await b.audit(${JSON.stringify(work)}, 'messy.html'))
     try { await b.look(${JSON.stringify(work)}, 'link.html', false, 'x'); report.push('SYMLINK NOT REFUSED') } catch (e) { report.push('symlink refused: ' + e.message) }
     try { await b.look(${JSON.stringify(work)}, 'http://169.254.169.254/latest', false, 'x'); report.push('METADATA NOT REFUSED') } catch (e) { report.push('metadata refused: ' + e.message) }

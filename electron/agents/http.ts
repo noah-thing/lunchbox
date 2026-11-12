@@ -115,6 +115,7 @@ export async function chat(name: string, key: string, model: string, system: str
   const id = await pick(name, key, model)
   const usage: Usage = { input: 0, output: 0, cached: 0, cost: 0 }
   let text = ''
+  let thought = false
   const push = (d?: string) => { if (d) { text += d; onDelta(d) } }
   let res: Response
 
@@ -161,21 +162,31 @@ export async function chat(name: string, key: string, model: string, system: str
     usage.saved = cacheSaving(id, usage.cached, writes, usage.input + usage.cached) ?? undefined
     usage.gross = readSaving(id, usage.cached, usage.input + usage.cached) ?? undefined
   } else if (p.style === 'openai') {
-    res = await fetch(`${p.base}/chat/completions`, {
+    const ask = (usageToo: boolean) => fetch(`${p.base}/chat/completions`, {
       method: 'POST', signal, headers: headers(p.style, key),
       body: JSON.stringify({
-        model: id, stream: true, stream_options: { include_usage: true },
+        model: id, stream: true, ...(usageToo ? { stream_options: { include_usage: true } } : {}),
         messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }],
         // OpenAI routes requests with the same key to the same cache; other compatible APIs ignore it.
         ...(name === 'openai' && cacheKey ? { prompt_cache_key: cacheKey } : {}),
       }),
     })
+    res = await ask(true)
+    // Some compatible servers, free gateways among them, refuse the usage option; ask again without.
+    if (res.status === 400 || res.status === 422) {
+      const why = await res.clone().text().catch(() => '')
+      if (/stream_options|include_usage|unrecognized|unknown (field|param)|extra (inputs|fields)|not permitted/i.test(why)) res = await ask(false)
+    }
     if (!res.ok) throw await failure(res)
     for await (const line of lines(res)) {
       const o = data(line)
       if (!o) continue
-      if (o.error) throw new Error(o.error.message ?? 'Stream error')
-      push(o.choices?.[0]?.delta?.content)
+      if (o.error) throw new Error(o.error.message ?? (typeof o.error === 'string' ? o.error : 'Stream error'))
+      const d = o.choices?.[0]?.delta
+      // Reasoning models stream their thinking apart from the answer; it is not shown, but it means
+      // an empty answer is a model that thought until it ran out, not a broken connection.
+      if (d?.reasoning || d?.reasoning_content) thought = true
+      push(typeof d?.content === 'string' ? d.content : undefined)
       if (o.usage) {
         const cached = o.usage.prompt_tokens_details?.cached_tokens ?? 0
         Object.assign(usage, { input: (o.usage.prompt_tokens ?? 0) - cached, output: o.usage.completion_tokens ?? 0, cached, cost: o.usage.cost ?? 0 })
@@ -213,6 +224,10 @@ export async function chat(name: string, key: string, model: string, system: str
   }
   // A model that streams nothing back has failed, even when the server said done. Saying so beats
   // an empty bubble the person cannot read anything from.
-  if (!text.trim() && p.style === 'ollama') throw new Error(`${id} sent back an empty answer. Small local models often do this on long rooms; try a larger model, or start a new room.`)
+  if (!text.trim()) {
+    if (p.style === 'ollama') throw new Error(`${id} sent back an empty answer. Small local models often do this on long rooms; try a larger model, or start a new room.`)
+    if (thought) throw new Error(`${id} spent its whole answer thinking and sent no text. Ask again, or pick another model.`)
+    throw new Error(`${id} sent back an empty answer. Free and small models do this now and then; ask again, or pick another model.`)
+  }
   return { text: text.trim(), usage }
 }

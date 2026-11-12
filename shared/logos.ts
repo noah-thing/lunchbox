@@ -5,7 +5,7 @@ import type { Connector } from './types'
 const LOGOS: [RegExp, string][] = [
   [/openrouter\.ai/, 'openrouter'], [/generativelanguage\.googleapis|aistudio/, 'gemini'], [/models\.github|github\.ai/, 'github'], [/nvidia\.com/, 'nvidia'],
   [/deepseek/, 'deepseek'], [/groq\.com/, 'groq'], [/mistral\.ai/, 'mistral'], [/together\.(xyz|ai)/, 'together'], [/fireworks\.ai/, 'fireworks'],
-  [/cerebras/, 'cerebras'], [/moonshot|kimi/, 'kimi'], [/deepinfra/, 'deepinfra'], [/perplexity/, 'perplexity'], [/anthropic|claude/, 'claude'],
+  [/cerebras/, 'cerebras'], [/kilo\.ai/, 'kilo'], [/moonshot|kimi/, 'kimi'], [/deepinfra/, 'deepinfra'], [/perplexity/, 'perplexity'], [/anthropic|claude/, 'claude'],
   [/openai\.com/, 'openai'], [/x\.ai\b/, 'grok'], [/:11434|ollama/, 'ollama'], [/:1234\b|lmstudio/, 'lmstudio'], [/llama|:8080\b/, 'llamacpp'],
   [/^opencode\b/, 'opencode'], [/^qodercli\b|^qoder\b/, 'qoder'], [/^crush\b/, 'crush'], [/^aider\b/, 'aider'], [/^goose\b/, 'goose'],
   [/^cursor-agent\b|^cursor\b/, 'cursor'], [/^qwen\b/, 'qwen'], [/^amp\b/, 'amp'], [/^claude\b/, 'claude'], [/^codex\b/, 'codex'], [/^gemini\b/, 'gemini'], [/^grok\b/, 'grok'],

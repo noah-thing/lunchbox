@@ -1,7 +1,7 @@
 {
   "name": "lunchbox",
   "productName": "Lunchbox",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "A desktop app that runs Claude Code, Codex, Grok and Gemini together on your projects, with the logins you already have.",
   "author": {
@@ -52,7 +52,8 @@
     "files": [
       "out/**",
       "build/icon-1024.png",
-      "package.json"
+      "package.json",
+      "!node_modules/three/**"
     ],
     "asar": true,
     "mac": {
@@ -126,6 +127,7 @@
     "afterPack": "scripts/adhoc-sign.cjs"
   },
   "dependencies": {
-    "axe-core": "4.14.0"
+    "axe-core": "4.14.0",
+    "three": "0.170.0"
   }
 }

@@ -27,9 +27,38 @@ export function Notices() {
     return () => { a(); b() }
   }, [])
   const dismiss = (id: string) => { setList((l) => l.filter((n) => n.id !== id)); desk.call('notice:dismiss', id) }
-  const go = (n: Notice) => { if (n.action) window.open(n.action.url, '_blank'); dismiss(n.id) }
+  // lunchbox:update installs the waiting update, or fetches it first; anything else is a web link.
+  const go = (n: Notice) => {
+    if (n.action?.url === 'lunchbox:update') {
+      if (update.state === 'ready') { if (busy) setQueued(true); else restart() }
+      else if (update.state === 'available') desk.call('update:download')
+      else if (update.state === 'manual') window.open(update.url, '_blank')
+      else desk.call('update:check')
+    } else if (n.action) window.open(n.action.url, '_blank')
+    dismiss(n.id)
+  }
+  // The first time a version is ready, it gets a card with one button; after that the bar is enough.
+  const [seen, setSeen] = useState(() => { try { return localStorage.getItem('lb.updateCard') ?? '' } catch { return '' } })
+  const ready1 = update.state === 'ready' && seen !== update.version ? update.version : ''
+  const closeCard = () => { setSeen(ready1); try { localStorage.setItem('lb.updateCard', ready1) } catch {} }
+  // It waits while another dialog is open, so it never lands on top of one, and Escape closes it.
+  const [clear, setClear] = useState(false)
+  useEffect(() => {
+    if (!ready1) return
+    const look = () => setClear(!document.querySelector('.scrim:not(.updscrim)'))
+    look()
+    const t = setInterval(look, 800)
+    return () => clearInterval(t)
+  }, [ready1])
 
   const card = list.find((n) => n.kind === 'card')
+  const showUpdate = !!ready1 && !card && clear
+  useEffect(() => {
+    if (!showUpdate) return
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeCard() }
+    addEventListener('keydown', esc)
+    return () => removeEventListener('keydown', esc)
+  })
   const banner = list.find((n) => n.kind === 'banner')
   const toasts = list.filter((n) => n.kind === 'toast').slice(0, 3)
   const ready = !later && (update.state === 'ready' || update.state === 'manual' || update.state === 'available' || update.state === 'downloading')
@@ -61,6 +90,25 @@ export function Notices() {
               <button className="iconbtn" onClick={() => dismiss(n.id)} aria-label="Close"><IconClose /></button>
             </div>
           ))}
+        </div>
+      )}
+      {showUpdate && (
+        <div className="scrim center updscrim" onMouseDown={(e) => e.target === e.currentTarget && closeCard()}>
+          <div className="ncard nupdate" role="dialog" aria-label={`Lunchbox ${ready1} is ready`}>
+            <button className="iconbtn nclose" onClick={closeCard} aria-label="Close"><IconClose /></button>
+            <div className="nbody">
+              <span className="nkicker">Update</span>
+              <h2>Lunchbox {ready1} is ready</h2>
+              <p>It has downloaded in the background. Restart to finish; your rooms open again where you left them.</p>
+              <div className="row">
+                <span className="grow" />
+                <button className="btn small quiet" onClick={closeCard}>Later</button>
+                {busy
+                  ? <button className="btn small" onClick={() => { setQueued(true); closeCard() }} disabled={queued}>{queued ? 'Restarts when your agents finish' : 'Restart when agents finish'}</button>
+                  : <button className="btn small" autoFocus onClick={() => { closeCard(); restart() }}>Restart and update</button>}
+              </div>
+            </div>
+          </div>
         </div>
       )}
       {card && (

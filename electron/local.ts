@@ -30,11 +30,10 @@ function appPath(id: string) {
 // download as Ollama lists it.
 export function suggest(): { model: string; size: string } {
   const gb = totalmem() / 2 ** 30
-  if (gb <= 9) return { model: 'qwen3:1.7b', size: '1.4 GB' }
-  if (gb <= 13) return { model: 'qwen3:4b', size: '2.5 GB' }
-  if (gb <= 24) return { model: 'qwen3:8b', size: '5.2 GB' }
-  if (gb <= 40) return { model: 'qwen3:14b', size: '9.3 GB' }
-  return { model: 'qwen3:30b', size: '19 GB' }
+  if (gb <= 13) return { model: 'qwen3.5:4b', size: '3.3 GB' }
+  if (gb <= 24) return { model: 'qwen3.5:9b', size: '6.6 GB' }
+  if (gb <= 40) return { model: 'qwen3.6:27b', size: '17 GB' }
+  return { model: 'qwen3-coder:30b', size: '19 GB' }
 }
 
 export async function localSetup(id: string, bin: string): Promise<LocalSetup> {

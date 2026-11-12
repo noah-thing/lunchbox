@@ -388,7 +388,7 @@ test('pulling a local model reports the model layer, then ready', async () => {
     assert.equal(last.finished, true)
     assert.equal(last.total, 5000, 'a small layer never replaces the model layer')
     assert.equal(last.done, 5000)
-    assert.match(suggest().model, /^qwen3:/)
+    assert.match(suggest().model, /^qwen3/)
   } finally {
     PROVIDERS.ollama.base = base
     server.close()
@@ -857,4 +857,45 @@ test('studio: instructions change only when Studio is on, and stay the same turn
   assert.ok(off.includes('Lunchbox around this room') && !off.includes('propose_flow'))
   assert.ok(protocol(meta, crew[0], crew, 'workspace', undefined, ['propose_flow'], [], 'claude', null).includes('offer one with propose_flow'))
   assert.ok(!protocol(meta, crew[1], crew, 'workspace', undefined, ['propose_flow'], [], 'claude', null).includes('Lunchbox around this room'))
+})
+
+// Free models answer in their own ways: some think in a separate stream and can run out before
+// the answer, some gateways refuse the usage option. Each case must end in text or a clear error.
+test('openai style: free model quirks end in text or a sentence, never an empty bubble', async () => {
+  let mode = ''
+  let asked: any[] = []
+  const server = createServer((req, res) => {
+    let raw = ''
+    req.on('data', (c) => { raw += c })
+    req.on('end', () => {
+      const body = JSON.parse(raw)
+      asked.push(body)
+      const sse = (rows: unknown[]) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(rows.map((r) => `data: ${JSON.stringify(r)}`).join('\n\n') + '\n\ndata: [DONE]\n\n') }
+      if (mode === 'strict' && body.stream_options) { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{"error":{"message":"Unrecognized request argument supplied: stream_options"}}'); return }
+      if (mode === 'thinking') return sse([{ choices: [{ delta: { content: null, reasoning: 'Let me think about' } }] }, { choices: [{ delta: { reasoning: ' this' }, finish_reason: 'length' }] }])
+      if (mode === 'empty') return sse([{ choices: [{ delta: {}, finish_reason: 'stop' }] }])
+      if (mode === 'limit') { res.writeHead(429, { 'content-type': 'application/json' }); res.end('{"error":{"message":"Rate limit exceeded: free-models-per-day. Add credits to unlock more."}}'); return }
+      sse([{ choices: [{ delta: { role: 'assistant', content: '' } }] }, { choices: [{ delta: { content: 'Hello' } }] }, { choices: [{ delta: { content: ' there' } }] }, { choices: [], usage: { prompt_tokens: 12, completion_tokens: 2 } }])
+    })
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()))
+  PROVIDERS['free-test'] = { name: 'Free', base: `http://127.0.0.1:${(server.address() as { port: number }).port}`, style: 'openai' } as never
+  const go = () => chat('free-test', '', 'free/model', 'system', 'hi', new AbortController().signal, () => {})
+  try {
+    mode = 'ok'
+    assert.equal((await go()).text, 'Hello there')
+    mode = 'strict'; asked = []
+    assert.equal((await go()).text, 'Hello there', 'asks again without stream_options')
+    assert.equal(asked.length, 2)
+    assert.ok(asked[0].stream_options && !asked[1].stream_options)
+    mode = 'thinking'
+    await assert.rejects(go(), /spent its whole answer thinking/)
+    mode = 'empty'
+    await assert.rejects(go(), /sent back an empty answer/)
+    mode = 'limit'
+    await assert.rejects(go(), (e: Error) => { assert.ok(limitOf(e.message), 'a free daily limit reads as a usage limit, so the next agent takes over'); return true })
+  } finally {
+    delete PROVIDERS['free-test']
+    server.close()
+  }
 })

@@ -1,10 +1,13 @@
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { BrowserWindow, WebContentsView, type Rectangle } from 'electron'
+import { BrowserWindow, WebContentsView, type NativeImage, type Rectangle } from 'electron'
 import type { Tool } from './hands'
-import { AXE_RUN, MEASURE, report, type Axe, type Measured } from './audit'
+import { AXE_RUN, CONTROLS, FOCUSED, MEASURE, STRETCH, report, type Axe, type Measured } from './audit'
+import { describeModel, imagePage, modelPage, type View } from './viewer'
 
 export type BrowserState = { url: string; title: string; loading: boolean; back: boolean; forward: boolean; driver?: string; action?: string; device: Device; shown: boolean }
 export type Device = 'desktop' | 'tablet' | 'phone'
@@ -67,6 +70,17 @@ const pulse = (x: number, y: number) => `(() => {
 // every later look.
 const within = <T,>(job: Promise<T>, ms: number, what: string) =>
   Promise.race([job, new Promise<never>((_, no) => setTimeout(() => no(new Error(`${what} took longer than ${ms / 1000} seconds`)), ms))])
+
+// Two pictures of the same control differ when enough pixels moved to be seen.
+function differs(a: NativeImage, b: NativeImage) {
+  const x = a.toBitmap(), y = b.toBitmap()
+  if (x.length !== y.length || !x.length) return true
+  let moved = 0
+  for (let i = 0; i < x.length; i += 4) if (Math.abs(x[i] - y[i]) + Math.abs(x[i + 1] - y[i + 1]) + Math.abs(x[i + 2] - y[i + 2]) > 30) moved++
+  return moved / (x.length / 4) > 0.004
+}
+
+type Box = { x: number; y: number; w: number; h: number; label: string }
 
 const web = (u: string) => /^https?:\/\//i.test(u) && !/^https?:\/\/(169\.254\.|0\.0\.0\.0|\[?::\]?)/i.test(u)
 
@@ -262,11 +276,169 @@ export class Browser {
       return target
     }
     if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(target)) return `http://${target}`
+    return pathToFileURL(this.inside(workspace, target)).href
+  }
+
+  private inside(workspace: string, target: string) {
     const root = realpathSync(resolve(workspace))
     let file: string
     try { file = realpathSync(resolve(root, target)) } catch { throw new Error(`There is no ${target} in the room's folder`) }
     if (!file.startsWith(root + sep)) throw new Error('Local files to look at must be inside the room\'s folder')
-    return pathToFileURL(file).href
+    return file
+  }
+
+  // What the controls on the first screen do when pointed at and when reached with Tab, measured by
+  // comparing pixels, and how the page holds up when every short label is three times longer.
+  states(workspace: string, target: string, name: string) {
+    return this.queueLook(async () => {
+      const url = this.target(workspace, target)
+      const root = realpathSync(resolve(workspace))
+      const stem = (name || 'states').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'states'
+      const W = 1440, H = 900
+      const { win, wc } = await this.hidden(url, target, W, H)
+      const crops: { label: string; kind: string; normal: string; changed: string }[] = []
+      const flat: string[] = [], unfocused: string[] = []
+      let stretched = ''
+      try {
+        await within(wc.insertCSS('::-webkit-scrollbar { display: none !important }'), 5000, 'Preparing the page').catch(() => {})
+        await new Promise((r) => setTimeout(r, 500))
+        const base = await within(wc.capturePage(), 15000, 'Capturing the page')
+        const k = base.getSize().width / W
+        const cut = (img: NativeImage, b: Box) => {
+          const x = Math.max(0, Math.floor((b.x - 10) * k)), y = Math.max(0, Math.floor((b.y - 10) * k))
+          const width = Math.min(img.getSize().width - x, Math.ceil((b.w + 20) * k)), height = Math.min(img.getSize().height - y, Math.ceil((b.h + 20) * k))
+          return img.crop({ x, y, width, height })
+        }
+        const one = (img: NativeImage) => (k > 1 ? img.resize({ width: Math.round(img.getSize().width / k), quality: 'best' }) : img).toDataURL()
+
+        const controls = await within(wc.executeJavaScript(CONTROLS, true), 10000, 'Finding the controls') as Box[]
+        for (const c of controls) {
+          wc.sendInputEvent({ type: 'mouseMove', x: Math.round(c.x + c.w / 2), y: Math.round(c.y + c.h / 2) })
+          await new Promise((r) => setTimeout(r, 280))
+          const now = await within(wc.capturePage(), 15000, 'Capturing a hover')
+          const before = cut(base, c), after = cut(now, c)
+          if (!differs(before, after)) flat.push(c.label || 'unnamed control')
+          crops.push({ label: c.label, kind: 'Hover', normal: one(before), changed: one(after) })
+        }
+        wc.sendInputEvent({ type: 'mouseMove', x: 2, y: 2 })
+        // A window nobody sees never has focus, and Chromium draws no focus ring without it, so the
+        // page is told it is focused, as it would be in front of a person.
+        try {
+          if (!wc.debugger.isAttached()) wc.debugger.attach('1.3')
+          await within(wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }), 5000, 'Focusing the page')
+        } catch {}
+        await within(wc.executeJavaScript('document.activeElement && document.activeElement.blur && document.activeElement.blur(); scrollTo(0, 0); true', true), 5000, 'Resetting focus').catch(() => {})
+        const reached = new Set<string>()
+        for (let i = 0; i < 8; i++) {
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' })
+          wc.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' })
+          await new Promise((r) => setTimeout(r, 220))
+          const f = await within(wc.executeJavaScript(FOCUSED, true), 5000, 'Reading focus') as (Box & { inView: boolean }) | null
+          if (!f) break
+          // Tab came round to the start again.
+          const at = `${Math.round(f.x)},${Math.round(f.y)},${f.label}`
+          if (reached.has(at)) break
+          reached.add(at)
+          if (!f.inView || f.w < 1 || f.h < 1) continue
+          const now = await within(wc.capturePage(), 15000, 'Capturing focus')
+          const before = cut(base, f), after = cut(now, f)
+          if (!differs(before, after)) unfocused.push(f.label || 'unnamed control')
+          crops.push({ label: f.label, kind: 'Focus', normal: one(before), changed: one(after) })
+        }
+
+        // Long labels last, since the page is changed for good.
+        await within(wc.executeJavaScript(`scrollTo(0, 0); ${STRETCH}`, true), 10000, 'Lengthening the labels')
+        win.setContentSize(390, 844)
+        await new Promise((r) => setTimeout(r, 600))
+        const m = await within(wc.executeJavaScript(MEASURE, true), 15000, 'Measuring the page') as Measured
+        const shot = await within(wc.capturePage(), 15000, 'Capturing the page')
+        const longFile = join(root, 'looks', `${stem}-long-phone.png`)
+        mkdirSync(dirname(longFile), { recursive: true })
+        writeFileSync(longFile, (shot.getSize().width > 390 ? shot.resize({ width: 390, quality: 'best' }) : shot).toPNG())
+        const bad = m.findings.filter((x) => ['overflow', 'overlap', 'clipped'].includes(x.kind))
+        stretched = `Long text, every short label three times longer, at phone width: ${bad.length ? bad.map((x) => `${x.text}${x.at.length ? ` (${x.at.join('; ')})` : ''}`).join('; ') : 'nothing overflowed, overlapped or was cut off'}. Saved ${relative(root, longFile)}.`
+      } finally {
+        win.destroy()
+      }
+
+      // One contact sheet, so the agent reads a single image: each control at rest and changed.
+      let sheet = ''
+      if (crops.length) {
+        const page = join(tmpdir(), `lunchbox-states-${randomUUID()}.html`)
+        const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`)
+        writeFileSync(page, `<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:28px;background:#f4f3ef;font:13px -apple-system,Helvetica,Arial,sans-serif;color:#1b1a18}
+.r{display:grid;grid-template-columns:90px 220px 1fr 1fr;gap:16px;align-items:center;padding:12px 0;border-top:1px solid #dddbd4}
+.r b{font-weight:600}.r span{color:#77756f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}img{max-width:100%;background:#fff;outline:1px solid #e3e1da}
+.h{display:grid;grid-template-columns:90px 220px 1fr 1fr;gap:16px;color:#77756f;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding-bottom:8px}</style>
+<div class="h"><span>State</span><span>Control</span><span>At rest</span><span>Pointed at or focused</span></div>
+${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><img src="${c.normal}"><img src="${c.changed}"></div>`).join('')}
+<script>window.__h = document.documentElement.scrollHeight</script>`, { mode: 0o600 })
+        let sw: BrowserWindow | null = null
+        try {
+          const opened = await this.hidden(pathToFileURL(page).href, 'the contact sheet', 1200, 900)
+          sw = opened.win
+          const sc = opened.wc
+          const h = Number(await within(sc.executeJavaScript('document.documentElement.scrollHeight', true), 5000, 'Measuring the sheet').catch(() => 900)) || 900
+          sw.setContentSize(1200, Math.min(h, 6000))
+          await new Promise((r) => setTimeout(r, 300))
+          const img = await within(sc.capturePage(), 15000, 'Capturing the sheet')
+          const file = join(root, 'looks', `${stem}-states.png`)
+          writeFileSync(file, (img.getSize().width > 1200 ? img.resize({ width: 1200, quality: 'best' }) : img).toPNG())
+          sheet = relative(root, file)
+        } finally {
+          sw?.destroy()
+          rmSync(page, { force: true })
+        }
+      }
+      const hovered = crops.filter((c) => c.kind === 'Hover').length, focused = crops.filter((c) => c.kind === 'Focus').length
+      return [
+        `States of ${target}${sheet ? `. Contact sheet: ${sheet}` : ''}`,
+        hovered ? `Hover: ${flat.length ? `${flat.length} of ${hovered} controls change nothing when pointed at: ${flat.join('; ')}` : `all ${hovered} controls respond when pointed at`}.` : 'Hover: no controls on the first screen.',
+        focused ? `Focus: ${unfocused.length ? `${unfocused.length} of ${focused} controls show no visible focus when reached with Tab: ${unfocused.join('; ')}. Keyboard users cannot see where they are` : `all ${focused} controls show focus when reached with Tab`}.` : 'Focus: Tab reached nothing on the first screen.',
+        stretched,
+        'Open the images and fix what is missing, then run expert_states again to confirm.',
+      ].filter(Boolean).join('\n')
+    })
+  }
+
+  // Images and logos at the sizes they will be used, on light and dark; 3D models from three sides.
+  inspect(workspace: string, target: string, name: string) {
+    return this.queueLook(async () => {
+      const file = this.inside(workspace, target)
+      const model = /\.(glb|gltf)$/i.test(file)
+      if (!model && !/\.(svg|png|jpe?g|webp|gif|avif)$/i.test(file)) throw new Error('expert_view takes an image (SVG, PNG, JPG, WebP, GIF, AVIF) or a 3D model (GLB or glTF). For pages use expert_look.')
+      const bytes = statSync(file).size
+      if (model && bytes > 80 * 1048576) return `${target} is ${(bytes / 1048576).toFixed(0)} MB, too large to open here. For the web, aim well under 10 MB.`
+      const page = join(tmpdir(), `lunchbox-view-${randomUUID()}.html`)
+      writeFileSync(page, model ? modelPage(file) : imagePage(file), { mode: 0o600 })
+      const root = realpathSync(resolve(workspace))
+      const stem = (name || target.split(/[\\/]/).pop()!.replace(/\.\w+$/, '')).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'view'
+      const [w, h] = model ? [1440, 480] : [1080, 1240]
+      let opened: Awaited<ReturnType<typeof this.hidden>> | null = null
+      try {
+        opened = await this.hidden(pathToFileURL(page).href, target, w, h)
+        const { wc } = opened
+        let v: View | null = null
+        for (const t0 = Date.now(); !v && Date.now() - t0 < 25000;) {
+          v = await within(wc.executeJavaScript('window.__view || null', true), 5000, 'Reading the view').catch(() => null) as View | null
+          if (!v) await new Promise((r) => setTimeout(r, 250))
+        }
+        if (!v) throw new Error(`${target} did not finish loading within 25 seconds`)
+        if (!v.ok) throw new Error(`Could not open ${target}: ${v.error}`)
+        await new Promise((r) => setTimeout(r, 200))
+        const shot = await within(wc.capturePage(), 15000, 'Capturing the view')
+        const out = join(root, 'looks', `${stem}-${model ? 'views' : 'sizes'}.png`)
+        mkdirSync(dirname(out), { recursive: true })
+        writeFileSync(out, (shot.getSize().width > w ? shot.resize({ width: w, quality: 'best' }) : shot).toPNG())
+        const at = relative(root, out)
+        return model
+          ? `Saved ${at}: front, three quarters and top, lit with a key, a fill and a rim light. ${describeModel(v, bytes)} Open the image and check the silhouette, proportions, shading seams and whether it sits on the ground.`
+          : `Saved ${at}: the image at 16, 32, 64, 128 and 512px, on white and on near black. It is ${v.width} × ${v.height}. Open it and check it still reads at 16px, holds up on both backgrounds and has no stray edges.`
+      } finally {
+        opened?.win.destroy()
+        rmSync(page, { force: true })
+      }
+    })
   }
 
   private async hidden(url: string, label: string, width: number, height: number) {
@@ -448,6 +620,26 @@ export class Browser {
         input: { target: { type: 'string', description: 'A URL, a localhost address such as localhost:3000, or a path to an HTML file inside the folder' } },
         required: ['target'],
         run: (a) => this.audit(workspace, String(a.target ?? '')),
+      },
+      {
+        name: 'expert_view',
+        description: 'Look at an image or a 3D model the way it will be used. An image or logo (SVG, PNG, JPG, WebP) is shown at 16, 32, 64, 128 and 512px on white and near black. A 3D model (GLB or glTF) is lit and framed from the front, three quarters and the top, with triangles, meshes, materials, file size and dimensions. Returns the image path; open it to judge the result.',
+        input: {
+          target: { type: 'string', description: 'Path to the image or model inside the folder' },
+          name: { type: 'string', description: 'A short name for the saved image' },
+        },
+        required: ['target'],
+        run: (a) => this.inspect(workspace, String(a.target ?? ''), typeof a.name === 'string' ? a.name : ''),
+      },
+      {
+        name: 'expert_states',
+        description: 'Check the states people actually meet: points at each control on the first screen and tabs through them, comparing pixels to find controls with no hover response or no visible focus, then makes every short label three times longer and measures the page at phone width for overflow, overlap and cut off text. Saves a contact sheet and a phone capture; open them to judge.',
+        input: {
+          target: { type: 'string', description: 'A URL, a localhost address such as localhost:3000, or a path to an HTML file inside the folder' },
+          name: { type: 'string', description: 'A short name for the saved images' },
+        },
+        required: ['target'],
+        run: (a) => this.states(workspace, String(a.target ?? ''), typeof a.name === 'string' ? a.name : ''),
       },
       {
         name: 'browser_console',
