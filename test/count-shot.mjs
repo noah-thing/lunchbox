@@ -23,7 +23,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 const launch = async (profile, statsUrl = url) => {
   const app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'), args: ['.', `--user-data-dir=${profile}`], cwd: root,
-    env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, LUNCHBOX_STATS_URL: statsUrl },
+    env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.execPath.replace(/\/[^/]+$/, '')}:/usr/bin:/bin`, LUNCHBOX_PATH_ONLY: '1', LUNCHBOX_STATS_URL: statsUrl },
     timeout: 30000,
   })
   const page = await app.firstWindow()

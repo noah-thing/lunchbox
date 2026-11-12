@@ -55,6 +55,7 @@ const MAX_HOPS = 24
 const FLOW_ASK = 15 * 60e3
 // Grok Build only loads MCP servers from config files, which the room does not touch.
 const BORROWS = new Set(['claude', 'codex', 'gemini'])
+const LOST_SESSION = /(session|conversation|thread|rollout)[^\n]{0,60}(not found|no such|invalid|expired|unknown|missing|does not exist|could not be (found|loaded|resumed))|no (conversation|session|thread|rollout) found|(could not|cannot|can't|failed to|unable to) (find|load|resume)[^\n]{0,40}(session|conversation|thread|rollout)|--resume|unexpected[^\n]{0,30}(session|resume)/i
 // What "always" remembers for edits in Ask mode, in the place command prefixes are kept.
 const EDITS = '\u0000edits'
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
@@ -743,7 +744,6 @@ export class Engine {
     const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
       ? [...kit(this.host(room, me, crew, access, inner)), ...(this.hooks.tools?.(who, meta.workspace, access, room) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
       : []
-    const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
     // A model behind an API has no file tools of its own, so the room gives it some.
     const bench = http ? this.bench(room, who, access) : undefined
@@ -753,6 +753,8 @@ export class Engine {
     // A resumed session already has the protocol; it goes again only when it changed. The mark
     // is kept with the room, so restarting Lunchbox does not send every session its rules twice.
     const sent = createHash('sha1').update(system).digest('hex').slice(0, 16)
+    // Granted last, with nothing between it and the turn that could fail and leave it open.
+    const grant = tools.length ? this.hands!.grant(tools) : null
     const running = run(who, {
       prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || meta.protos?.[who] !== sent, cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url, bench,
@@ -830,7 +832,9 @@ export class Engine {
       this.hooks.emit('ledger', this.ledger())
       this.hooks.turned?.(who, r.usage)
     }
-    if (resumed && r.error && !r.text && !r.limit && /session|resume|conversation|thread|not found|unexpected|no such|invalid/i.test(r.error)) {
+    // Only a failure to pick the session up again: an error that merely says "invalid" or "not
+    // found", a bad key or a missing model, used to throw the session away and run the turn twice.
+    if (resumed && r.error && !r.text && !r.limit && LOST_SESSION.test(r.error)) {
       this.store.update(room, (m) => { delete m.sessions[who] })
       return this.turn(room, who, task, access, ctx)
     }

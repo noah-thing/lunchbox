@@ -38,6 +38,8 @@ const plistVersion = async (appPath: string) =>
 // Downloads, verifies and unpacks a release. Resolves with the path of the new Lunchbox.app, ready
 // to be swapped in, or throws with a reason a person can read.
 export async function prepare(base: string, version: string, asset: Asset, progress: (p: number) => void): Promise<string> {
+  // The version names a folder that is emptied first, so it has to be a version and nothing else.
+  if (!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version)) throw new Error('the release has no proper version number')
   const dir = join(app.getPath('userData'), 'updates', version)
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })

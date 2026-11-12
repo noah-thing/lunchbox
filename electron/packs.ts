@@ -99,6 +99,7 @@ export async function fetchPack(url: string, dir: string): Promise<Pack> {
 }
 
 export function removePack(id: string, dir: string) {
+  if (!/^[a-z0-9-]{2,40}$/.test(String(id))) return
   rmSync(join(dir, `${id}.json`), { force: true })
 }
 

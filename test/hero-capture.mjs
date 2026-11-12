@@ -23,7 +23,7 @@ for (const name of ['claude', 'codex', 'grok']) symlinkSync(root + 'test/fake-ag
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${mkdtempSync(join(tmpdir(), 'lunchbox-hero-'))}`], cwd: root,
-  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '12', FAKE_SCRIPT: 'showcase', SHOWCASE_PACE: 'real', SHOWCASE_HOLD: '5200' },
+  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.execPath.replace(/\/[^/]+$/, '')}:/usr/bin:/bin`, LUNCHBOX_PATH_ONLY: '1', FAKE_DELAY: '12', FAKE_SCRIPT: 'showcase', SHOWCASE_PACE: 'real', SHOWCASE_HOLD: '5200' },
   timeout: 30000,
 })
 const timeline = { size: { width: 1440, height: 900 }, frames: [], marks: [] }

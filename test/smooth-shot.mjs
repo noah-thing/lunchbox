@@ -13,7 +13,7 @@ symlinkSync(root + 'test/fake-agent.mjs', `${bin}/claude`)
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${temp('profile')}`], cwd: root,
-  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '0', FAKE_SCRIPT: 'progress' },
+  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.execPath.replace(/\/[^/]+$/, '')}:/usr/bin:/bin`, LUNCHBOX_PATH_ONLY: '1', FAKE_DELAY: '0', FAKE_SCRIPT: 'progress' },
   timeout: 30000,
 })
 const page = await app.firstWindow()

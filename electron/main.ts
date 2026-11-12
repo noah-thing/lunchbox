@@ -129,7 +129,11 @@ function notify(title: string, body: string, room: string) {
 }
 
 function wire() {
-  const h = (channel: string, fn: (...args: any[]) => unknown) => ipcMain.handle(channel, (_e, ...args) => fn(...args))
+  // Only the app's own window may call in, never a page inside the agent browser or a frame.
+  const h = (channel: string, fn: (...args: any[]) => unknown) => ipcMain.handle(channel, (e, ...args) => {
+    if (e.sender !== win?.webContents || e.senderFrame !== e.sender.mainFrame) throw new Error('Not allowed')
+    return fn(...args)
+  })
 
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
   h('agents', () => engine.agents)
@@ -339,7 +343,14 @@ function wire() {
     const r = await dialog.showOpenDialog(win, { title: 'Choose a folder', properties: ['openDirectory', 'createDirectory'] })
     return r.canceled ? null : r.filePaths[0]
   })
-  h('reveal', (path: string) => (existsSync(path) ? shell.openPath(path) : 'missing'))
+  // Opening is for folders and pictures. Anything else is shown in its folder, never started: the
+  // path can come from an agent's message, and opening a program or a script would run it.
+  h('reveal', (path: string) => {
+    if (typeof path !== 'string' || !existsSync(path)) return 'missing'
+    if (statSync(path).isDirectory() || IMAGE_TYPES[extname(path).toLowerCase()]) return shell.openPath(path)
+    shell.showItemInFolder(path)
+    return ''
+  })
   h('file:image', (path: string) => {
     const type = IMAGE_TYPES[extname(path).toLowerCase()]
     if (!type || !existsSync(path) || statSync(path).size > 12e6) return null

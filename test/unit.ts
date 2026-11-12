@@ -1222,3 +1222,11 @@ test('agent browser pages are capped: the one unused longest goes, never one at 
   assert.equal(evict([tab('a', 5), tab('b', 3, true), tab('c', 9)], 3), 'a')
   assert.equal(evict([tab('a', 5, true), tab('b', 3, true), tab('c', 9, true)], 3), null)
 })
+
+test('asks: a long row of heading or emphasis marks is read at once, not for minutes', () => {
+  const t0 = Date.now()
+  for (const mark of ['#', '*', '_', '> ', '- ', '1. ']) assert.deepEqual(asks(`${mark.repeat(4000)}\nplain`, ['codex']).asks, [])
+  assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0} ms`)
+  assert.deepEqual(asks('### 2) > **@codex**: run the tests', ['codex']).asks, [{ to: 'codex', ask: 'run the tests' }])
+  assert.deepEqual(asks('@codex: **please** check `a.ts`', ['codex']).asks, [{ to: 'codex', ask: 'please** check `a.ts`' }])
+})

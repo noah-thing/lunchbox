@@ -20,13 +20,14 @@ function readJson<T>(file: string, fallback: T): T {
   try { return JSON.parse(readFileSync(file, 'utf8')) as T } catch { return fallback }
 }
 
-function writeJson(file: string, value: unknown) {
-  writeText(file, JSON.stringify(value, null, 1))
+function writeJson(file: string, value: unknown, mode?: number) {
+  writeText(file, JSON.stringify(value, null, 1), mode)
 }
 
-function writeText(file: string, text: string) {
+// mode keeps a file to this account alone, for the keys.
+function writeText(file: string, text: string, mode?: number) {
   const tmp = `${file}.${process.pid}.tmp`
-  writeFileSync(tmp, text)
+  writeFileSync(tmp, text, mode ? { mode } : undefined)
   // On Windows a virus scanner or the indexer can hold the target open for a moment.
   for (let i = 1; ; i++) {
     try {
@@ -175,11 +176,18 @@ export class Store {
     return log
   }
 
+  // A room's file, named by its id. An id is letters and digits; anything else, a path among
+  // them, names no room.
+  private file(id: string) {
+    if (!/^[\w-]{1,64}$/.test(String(id))) throw new Error('No such room')
+    return join(this.dir, 'rooms', `${id}.jsonl`)
+  }
+
   private load(id: string) {
     const log: Event[] = []
     const own = turnsOnly()
     try {
-      readFileSync(join(this.dir, 'rooms', `${id}.jsonl`), 'utf8').split('\n').forEach((line, i) => {
+      readFileSync(this.file(id), 'utf8').split('\n').forEach((line, i) => {
         if (!line) return
         // A line that does not parse keeps its place, since agents' heard marks count lines.
         try {
@@ -205,7 +213,7 @@ export class Store {
     const meta = this.rooms.get(id)
     if (!meta) return
     this.events(id).push(event)
-    this.write(join(this.dir, 'rooms', `${id}.jsonl`), JSON.stringify(event) + '\n')
+    this.write(this.file(id), JSON.stringify(event) + '\n')
     meta.updated = event.at
     this.touch(id)
   }
@@ -236,7 +244,7 @@ export class Store {
     this.rooms.delete(id)
     this.logs.delete(id)
     this.cold.delete(id)
-    const file = join(this.dir, 'rooms', `${id}.jsonl`)
+    const file = this.file(id)
     this.pending.delete(file)
     rmSync(file, { force: true })
     this.touch(id)
@@ -299,7 +307,7 @@ export class Store {
     const sealed = readJson<Record<string, string>>(join(this.dir, 'keys.json'), {})
     if (key) sealed[provider] = this.cipher.seal(key)
     else delete sealed[provider]
-    writeJson(join(this.dir, 'keys.json'), sealed)
+    writeJson(join(this.dir, 'keys.json'), sealed, 0o600)
   }
 
   record(agent: string, room: string, usage: Usage) {
