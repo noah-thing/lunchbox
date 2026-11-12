@@ -372,20 +372,6 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .crew.on small{color:var(--dim)}
 .crew.spent{opacity:.45}
 .crew .meter i{width:2px;height:8px}
-.stepbar{display:grid;grid-auto-flow:column;gap:2px;margin:4px 0 10px}
-.stepbar i{height:3px;border-radius:1px;background:var(--cell);transition:background-color 400ms var(--out)}
-.stepbar i.done{background:var(--ink)}
-.stepbar i.you{background:var(--warn)}
-.task{display:flex;align-items:flex-start;gap:10px;min-height:28px;padding:5px 0;font-size:12.5px;line-height:18px;color:var(--dim)}
-.task code{font:11.5px var(--mono);padding:0 4px;border-radius:3px;background:var(--hover)}
-.task>i{margin-top:5px;width:8px;height:8px;border-radius:2px;box-shadow:inset 0 0 0 1.25px var(--faint);flex:none;transition:background-color 300ms var(--out),box-shadow 300ms var(--out)}
-.task.done>i{background:var(--dim);box-shadow:none}
-.task.done .grow{color:var(--faint)}
-.task.you{color:var(--ink)}
-.task.you>i{box-shadow:inset 0 0 0 1.5px var(--warn)}
-.task small{font-size:11.5px;color:var(--faint)}
-.task .needs{font-size:10.5px}
-.task .needs::before{display:none}
 .mem{display:flex;align-items:center;gap:10px;height:30px;font-size:12.5px;color:var(--dim)}
 .mem .grow small{font:11px var(--mono);color:var(--faint);margin-left:8px}
 .mem .late,.mem .fresh{display:flex;align-items:center;gap:4px;font-size:11.5px}
@@ -947,3 +933,62 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .freenote{margin-top:20px;font-size:12px;color:var(--faint)}
 .savings .sv-actions .sv-range{margin-top:0;align-self:auto}
 
+
+/* The plan. Drawn live: row by row each box is traced from its top corner in one stroke, then its
+   step fades in. Done steps fill, tick and strike through; the step being worked on has a slow
+   breathing dot. Only strokes, opacity and transforms move. */
+.plan{margin:8px 0 4px;max-width:600px;overflow:hidden}
+.plan ol{list-style:none;margin:0;padding:0}
+.planfold{display:block;margin:0 0 4px;font-size:11.5px;color:var(--faint)}
+.planfold:hover{color:var(--ink)}
+.planrow{display:flex;align-items:flex-start;gap:10px;padding:4px 0;font-size:13.5px;line-height:21px;color:var(--ink)}
+.planbox{flex:none;width:16px;height:16px;margin-top:2.5px;overflow:visible}
+.planbox .frame{fill:none;stroke:var(--faint);stroke-width:1.2;stroke-dasharray:1;stroke-dashoffset:0;transition:stroke 300ms var(--out)}
+.planbox .fill{fill:var(--ink);opacity:0;transform:scale(.5);transform-origin:8px 8px;transition:opacity 220ms var(--out),transform 340ms var(--out)}
+.planbox .tick{fill:none;stroke:var(--ground);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset 300ms 120ms cubic-bezier(.65,0,.35,1)}
+.planbox .pulse{fill:var(--ink);opacity:0;transform:scale(.5);transform-origin:8px 8px}
+.plantext{min-width:0;flex:1}
+.planstep{background:linear-gradient(currentColor,currentColor) 0 58%/0 1px no-repeat;-webkit-box-decoration-break:clone;box-decoration-break:clone;transition:background-size 480ms 220ms var(--out),color 360ms var(--out)}
+.planrow.done{color:var(--faint)}
+.planrow.done .frame{stroke:var(--ink)}
+.planrow.done .fill{opacity:1;transform:none}
+.planrow.done .tick{stroke-dashoffset:0}
+.planrow.done .planstep{background-size:100% 1px}
+.planrow.on .frame{stroke:var(--ink)}
+.planrow.on .pulse{animation:planpulse 1.6s ease-in-out infinite}
+@keyframes planpulse{0%,100%{opacity:.2;transform:scale(.45)}50%{opacity:.85;transform:scale(.9)}}
+.drawing .planrow .frame{animation:plantrace 440ms cubic-bezier(.65,0,.35,1) both;animation-delay:var(--d)}
+@keyframes plantrace{from{stroke-dashoffset:1;stroke:var(--ink)}70%{stroke:var(--ink)}}
+.drawing .planrow .plantext{animation:planin 420ms var(--out) both;animation-delay:calc(var(--d) + 300ms)}
+@keyframes planin{from{opacity:0;transform:translateX(-6px)}}
+
+.planbar{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;margin:2px 0 10px}
+.planbar i{height:3px;border-radius:2px;background:var(--cell);overflow:hidden;position:relative}
+.planbar i::after{content:"";position:absolute;inset:0;background:var(--ink);transform:scaleX(0);transform-origin:left;transition:transform 560ms var(--out)}
+.planbar i.done::after{transform:none}
+.planbar i.on::after{opacity:.35;transform:none;animation:planbreathe 1.6s ease-in-out infinite}
+@keyframes planbreathe{50%{opacity:.7}}
+
+/* Handed to the panel: the rows close up and fade, the chat below glides up after them. */
+.plan{display:grid;grid-template-rows:1fr;transition:grid-template-rows 520ms cubic-bezier(.65,0,.35,1),opacity 320ms var(--out),margin 520ms cubic-bezier(.65,0,.35,1)}
+.plan>ol{min-height:0}
+.plan.leaving{grid-template-rows:0fr;opacity:0;margin:0}
+
+/* In the panel. */
+.planside h2 small{font-feature-settings:"tnum"}
+.planside .planrow{font-size:12.5px;line-height:18px;padding:4px 0}
+.planside .planbox{width:14px;height:14px;margin-top:2px}
+.planside.arriving{animation:planglow 900ms var(--out) both}
+@keyframes planglow{from{background-color:var(--hover)}}
+.planwho{display:block;font-size:11px;color:var(--faint)}
+.plannow{display:block;margin-top:3px;font:11px/16px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
+.plannow .what{display:block;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* The chat's live line with a plan: the step it is on, then what is happening this moment. */
+.workpair{margin-top:6px}
+.workstep{display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12.5px;line-height:18px;color:var(--dim);animation:planin 320ms var(--out) both}
+.workstep .n{flex:none;font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
+.workstep .t{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.workpair .workline{margin-top:2px}
+.ev.settled :is(.plan,.workstep){animation:none}
+.ev.settled .plan *{animation:none!important;transition:none!important}

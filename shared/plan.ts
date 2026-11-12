@@ -8,7 +8,7 @@ const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\
 
 // Two step texts are the same step when one starts the other, so "Write the hero" and
 // "Write the hero section" match.
-const same = (a: string, b: string) => {
+export const same = (a: string, b: string) => {
   const x = key(a)
   const y = key(b)
   return !!x && !!y && (x.startsWith(y) || y.startsWith(x))
@@ -30,6 +30,12 @@ function named(text: string, crew: { id: string; short: string }[]) {
 // everything ticked does not take over steps that others finished.
 export function plan(events: Event[], crew: { id: string; short: string }[] = []): Step[] {
   let steps: Step[] = []
+  for (const e of events) steps = advance(steps, e, crew)
+  return steps
+}
+
+// A plan carried on through more events, such as the turns still being written.
+export function planOn(steps: Step[], events: Event[], crew: { id: string; short: string }[] = []): Step[] {
   for (const e of events) steps = advance(steps, e, crew)
   return steps
 }
@@ -103,7 +109,11 @@ function checklists(text: string): Item[] {
     const m = line.match(ITEM)
     if (m) {
       if (!open) lists.push([])
-      lists[lists.length - 1].push({ text: m[2], check: m[1] !== ' ' })
+      const list = lists[lists.length - 1]
+      // A step ticked further down the same list closes it rather than joining it twice.
+      const hit = m[1] !== ' ' ? list.find((i) => same(i.text, m[2])) : undefined
+      if (hit) hit.check = true
+      else list.push({ text: m[2], check: m[1] !== ' ' })
       open = true
     } else if (line.trim()) open = false
   }

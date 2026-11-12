@@ -1,5 +1,6 @@
 import { Fragment, memo, type ReactNode } from 'react'
-import { foldChecklists, sincePlan, type Step } from '../../shared/plan'
+import { foldChecklists, same, sincePlan, type Step } from '../../shared/plan'
+import { PlanCard } from './Plan'
 
 // Code, bold, web links, links to files on disk (shown as the file name) and bare URLs.
 const INLINE = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|\[[^\]\n]+\]\((?!https?:)[^)\n]+\)|https?:\/\/[^\s)<>]+[^\s).,;:!?<>'"])/g
@@ -46,7 +47,9 @@ function blocks(src: string, prior: Pick<Step, 'text' | 'done'>[] = []): Block[]
       const ordered = !!item[2]
       const last = out[out.length - 1]
       const entry = { text: item[4], check: item[3] === undefined ? undefined : item[3] !== ' ' }
-      if (last?.t === 'list' && last.ordered === ordered) last.items.push(entry)
+      const ticks = entry.check && last?.t === 'list' ? last.items.find((it) => it.check !== undefined && same(it.text, entry.text)) : undefined
+      if (ticks) ticks.check = true
+      else if (last?.t === 'list' && last.ordered === ordered) last.items.push(entry)
       else out.push({ t: 'list', ordered, items: [entry] })
       continue
     }
@@ -63,8 +66,12 @@ export function Inline({ text }: { text: string }) {
 }
 
 // prior: the room's plan before this message, so a repeated checklist shows only what changed.
-export const Rich = memo(function Rich({ text, caret = false, prior }: { text: string; caret?: boolean; prior?: Pick<Step, 'text' | 'done'>[] }) {
-  const list = blocks(text, prior)
+// plan: the room's plan. A checklist that is that plan lives in the panel, so the chat draws it as
+// it arrives and lets it go; a different list, a summary at the end say, stays where it is.
+export const Rich = memo(function Rich({ text, caret = false, prior, plan }: { text: string; caret?: boolean; prior?: Pick<Step, 'text' | 'done'>[]; plan?: Pick<Step, 'text'>[] }) {
+  // A line still arriving as "- [" reads as a plain bullet for a moment and would flip a plan into
+  // a list and back. It waits until it is clearly one or the other.
+  const list = blocks(caret ? text.replace(/(^|\n)[ \t]*[-*](?:[ \t]+\[?[ xX]?\]?)?[ \t]*$/, '$1') : text, prior)
   return (
     <div className="rich">
       {list.map((b, i) => {
@@ -74,6 +81,13 @@ export const Rich = memo(function Rich({ text, caret = false, prior }: { text: s
           case 'h': return <h4 key={i}>{inline(b.text)}{end}</h4>
           case 'code': return <pre key={i} className="codeblock" data-lang={b.lang || undefined}>{b.text}{end}</pre>
           case 'list': {
+            // A live list that starts with an open step is a plan from its first line, so it never
+            // changes shape when the second arrives.
+            if (b.items.every((it) => it.check !== undefined) && (b.items.length > 1 || (caret && i === list.length - 1 && !b.items[0].check))) {
+              const isPlan = !!plan?.length && b.items.every((it) => plan.some((s) => same(s.text, it.text)))
+              if (isPlan && !caret) return null
+              return <PlanCard key={i} items={b.items} live={caret} plan={isPlan} render={inline} />
+            }
             const Tag = b.ordered ? 'ol' : 'ul'
             return (
               <Tag key={i}>

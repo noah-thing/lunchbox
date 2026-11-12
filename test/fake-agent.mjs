@@ -29,6 +29,43 @@ if (process.env.FAKE_SCRIPT === 'showcase') {
   process.exit(0)
 }
 
+// FAKE_SCRIPT=progress: a long Claude turn as Claude Code streams it, thinking, writing a file
+// through its tool input, then more thinking and a command, with progress shots taken between.
+if (process.env.FAKE_SCRIPT === 'progress' && name === 'claude') {
+  const se = (event) => say({ type: 'stream_event', event })
+  const think = (n) => { se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }); for (let t = 100; t <= n; t += 100) { say({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: t, estimated_tokens_delta: 100 }); sleep(120) } }
+  say({ type: 'system', subtype: 'init', session_id: 'progress', model: 'claude-opus-5-5' })
+  const write = (text) => { se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }); for (const w of text.split(/(?<= )/)) { se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: w } }); sleep(25) } }
+  say({ type: 'system', subtype: 'status', status: 'requesting' })
+  think(1200)
+  write("I'll build the pricing page and prove it works.\n\n- [ ] Plan the tiers and the layout\n- [ ] Write the pricing page\n- [ ] Build it and run the tests\n- [ ] Check it at phone width\n")
+  think(4200)
+  write('- [x] Plan the tiers and the layout\n')
+  think(600)
+  se({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'w1', name: 'Write', input: {} } })
+  const json = JSON.stringify({ file_path: process.cwd() + '/src/pages/pricing.tsx', content: 'export function Pricing() {\n  return <main />\n}\n'.repeat(200) })
+  for (let i = 0; i < json.length; i += 160) { se({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: json.slice(i, i + 160) } }); sleep(40) }
+  se({ type: 'content_block_stop', index: 1 })
+  say({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w1', name: 'Write', input: JSON.parse(json) }] } })
+  say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'w1', content: 'File created' }] } })
+  write('- [x] Write the pricing page\n')
+  say({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 2000, error_status: 529 })
+  sleep(2500)
+  say({ type: 'system', subtype: 'status', status: 'requesting' })
+  think(1200)
+  se({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'b1', name: 'Bash', input: {} } })
+  se({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"command": "npm run build && npx playwright test pricing"}' } })
+  say({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'npm run build && npx playwright test pricing' } }] } })
+  sleep(3000)
+  say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b1', content: 'built\n4 passed\nexit code 0' }] } })
+  write('- [x] Build it and run the tests\n')
+  think(2000)
+  write('- [x] Check it at phone width\n\nThe pricing page is in src/pages/pricing.tsx and its four tests pass.')
+  const reply = 'The pricing page is in src/pages/pricing.tsx and its four tests pass.'
+  say({ type: 'result', subtype: 'success', is_error: false, result: reply, session_id: 'progress', total_cost_usd: 0.2, usage: { input_tokens: 6, output_tokens: 3900 } })
+  process.exit(0)
+}
+
 // FAKE_SCRIPT=subagents: Claude splits the work across three subagents and reports back.
 if (process.env.FAKE_SCRIPT === 'subagents' && name === 'claude') {
   const tasks = [['a', 'Map where auth tokens are checked', 'Explore', 'haiku'], ['b', 'Write tests for the token parser', 'general-purpose', 'sonnet'], ['c', 'Review the session middleware', 'code-reviewer', 'opus']]

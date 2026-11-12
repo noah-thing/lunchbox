@@ -18,6 +18,7 @@ import { fill, nextRun } from '../shared/flow'
 import { merge, section, strip } from '../electron/room/project'
 import { markdown, replay } from '../electron/export'
 import { cmdLine, firstPath } from '../electron/system'
+import { sentence, stepOf } from '../shared/steps'
 import type { Event, RoomMeta } from '../shared/types'
 
 const fixture = (name: string) =>
@@ -37,6 +38,31 @@ test('claude: streams text, pairs tool calls with results, reads usage and sessi
   assert.ok(turn.acts.length > 0, 'tool activity')
   assert.ok(turn.usage.output > 0 && turn.usage.cost > 0, 'usage')
   assert.equal(turn.error, undefined)
+})
+
+test('claude: thinking, a file being written and retries show as they happen', () => {
+  const p = claudeLike()
+  const se = (event: unknown) => p.line({ type: 'stream_event', event })
+  assert.equal(p.line({ type: 'system', subtype: 'status', status: 'requesting' })?.working, '~Thinking')
+  assert.equal(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } })?.working, '~Thinking')
+  p.line({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 400, estimated_tokens_delta: 400 })
+  assert.equal(p.line({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 900, estimated_tokens_delta: 500 })?.tokens, 900)
+  assert.equal(se({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 't1', name: 'Write', input: {} } })?.working, 'Write')
+  assert.equal(se({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"file_path": "/Users/a/site/src/pa' } })?.working, 'Write')
+  const u = se({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: 'ge.html", "content": "<h1>' + 'x'.repeat(400) } })
+  assert.equal(u?.working, 'Write /Users/a/site/src/page.html')
+  assert.ok((u?.tokens ?? 0) > 1000, 'tool input counts as written')
+  assert.deepEqual(stepOf(u!.working!), { verb: 'Writing', text: '…/site/src/page.html' })
+  assert.equal(se({ type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } })?.working, '')
+  assert.equal(p.line({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10 })?.working, '~Reconnecting, try 2 of 11')
+  assert.equal(sentence('Claude', '~Thinking'), 'Claude is thinking')
+  assert.equal(sentence('Codex', '~Fix plan'), 'Codex: Fix plan')
+  assert.equal(sentence('Claude', 'Grep useSmooth'), 'Claude is searching the code for useSmooth')
+})
+
+test('codex: a reasoning summary becomes the step it is on', () => {
+  const p = codex()
+  assert.equal(p.line({ type: 'item.completed', item: { type: 'reasoning', text: '**Inspecting the build script**\n\nI need to see how...' } })?.working, '~Inspecting the build script')
 })
 
 test('grok: same shape as claude without partial deltas', () => {

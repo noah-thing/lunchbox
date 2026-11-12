@@ -123,6 +123,8 @@ export type LiveTurn = {
   started: number
   // What the agent is doing this moment, such as a command it is running.
   now?: string
+  // Tokens written so far this turn, thinking included, for agents that report them as they go.
+  tokens?: number
   // Set when the turn is drawing an image for a crewmate; label is the image's description.
   image?: boolean
   label?: string

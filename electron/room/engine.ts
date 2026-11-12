@@ -760,7 +760,14 @@ export class Engine {
         if (at >= 0) lt.acts[at] = s
         else lt.acts.push(s)
       }
-      if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
+      if (u.tokens) lt.tokens = u.tokens
+      if (u.working) {
+        // Paths inside the room's folder read from the folder down.
+        const now = u.working.split('/private' + meta.workspace + '/').join('').split(meta.workspace + '/').join('')
+        live.doing = sentence(me.short, now)
+        lt.now = now.slice(0, 120)
+      }
+      else if (u.working === '' && lt.now) { lt.now = undefined; live.doing = `${me.short} is writing` }
       this.changed(room)
     })
     const procs = this.procs.get(room) ?? new Set()

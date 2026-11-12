@@ -15,8 +15,10 @@ export type Turn = {
   working?: string
 }
 
-// agents carries subagents as they change; each replaces the one with the same id.
-export type Update = { delta?: string; acts?: Act[]; working?: string; agents?: Extract<Act, { t: 'agent' }>[] }
+// agents carries subagents as they change; each replaces the one with the same id. working is the
+// step in progress, '' once there is none; a step starting with ~ is a phrase rather than a tool.
+// tokens counts what the agent has written so far this turn, thinking included, as it streams.
+export type Update = { delta?: string; acts?: Act[]; working?: string; agents?: Extract<Act, { t: 'agent' }>[]; tokens?: number }
 
 // Claude Code reports cache reads and writes per model, so the saving is priced per model at API
 // rates. A subscription pays nothing per token; this is what the same work would have cost. When a
@@ -112,12 +114,27 @@ export function toAct(name: string, input: Record<string, unknown>, raw: string,
 // user messages carrying tool_use and tool_result, then a result line with usage.
 const SUBAGENT = /^(Task|Agent)$/
 
+// A tool call streams its input before it runs, and writing a long file can take minutes. The
+// field that names what it works on is read out of the JSON as soon as it is complete.
+const FIELD = /"(?:file_path|path|target_file|notebook_path|command|pattern|query|url|description|skill)"\s*:\s*"((?:[^"\\]|\\.)*)"/
+function early(json: string) {
+  const m = json.match(FIELD)
+  if (!m) return ''
+  try { return (JSON.parse(`"${m[1]}"`) as string).split('\n')[0].slice(0, 160) } catch { return '' }
+}
+
 export function claudeLike() {
   const turn = newTurn()
   const pending = new Map<string, { name: string; input: Record<string, unknown> }>()
   const subs = new Map<string, Extract<Act, { t: 'agent' }>>()
   let streamed = false
   let model: string | undefined
+  // Written tokens, estimated: Claude Code counts thinking for us; text and tool input are about
+  // four characters a token.
+  let tokens = 0
+  let chars = 0
+  let call: { name: string; json: string; shown: string } | null = null
+  const count = () => tokens + Math.round(chars / 4)
 
   // A subagent's own messages carry the id of the call that started it. They never reach the
   // answer; they only move its row along.
@@ -138,18 +155,45 @@ export function claudeLike() {
       case 'system':
         if (o.subtype === 'init' && o.session_id) turn.session = o.session_id
         if (o.subtype === 'init' && typeof o.model === 'string') model = o.model
+        if (o.subtype === 'thinking_tokens' && typeof o.estimated_tokens_delta === 'number') {
+          tokens += o.estimated_tokens_delta
+          return { working: '~Thinking', tokens: count() }
+        }
+        if (o.subtype === 'status' && o.status === 'requesting') return { working: '~Thinking' }
+        if (o.subtype === 'status' && o.status === 'compacting') return { working: '~Compacting the conversation to make room' }
+        // The API was busy or dropped the request; Claude Code waits and sends it again.
+        if (o.subtype === 'api_retry') return { working: `~Reconnecting${o.max_retries ? `, try ${o.attempt + 1} of ${o.max_retries + 1}` : ''}` }
         return null
       case 'stream_event': {
-        const d = o.event?.delta
-        // A turn that writes, uses a tool, then writes again: keep the parts as paragraphs.
-        if (o.event?.type === 'content_block_start' && o.event.content_block?.type === 'text' && turn.text.trim() && !turn.text.endsWith('\n\n')) {
-          turn.text += '\n\n'
-          return { delta: '\n\n' }
+        const e = o.event ?? {}
+        const d = e.delta
+        const block = e.content_block
+        if (e.type === 'content_block_start' && block?.type === 'thinking') return { working: '~Thinking' }
+        if (e.type === 'content_block_start' && block?.type === 'tool_use') {
+          call = SUBAGENT.test(block.name) ? null : { name: block.name, json: '', shown: '' }
+          return call ? { working: block.name } : null
         }
-        if (o.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
+        if (e.type === 'content_block_delta' && d?.type === 'input_json_delta' && d.partial_json) {
+          chars += d.partial_json.length
+          if (!call) return { tokens: count() }
+          call.json += d.partial_json
+          if (!call.shown) call.shown = early(call.json)
+          return { working: `${call.name} ${call.shown}`.trim(), tokens: count() }
+        }
+        if (e.type === 'content_block_stop') call = null
+        // A turn that writes, uses a tool, then writes again: keep the parts as paragraphs.
+        if (e.type === 'content_block_start' && block?.type === 'text') {
+          if (turn.text.trim() && !turn.text.endsWith('\n\n')) {
+            turn.text += '\n\n'
+            return { delta: '\n\n', working: '' }
+          }
+          return { working: '' }
+        }
+        if (e.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
           streamed = true
+          chars += d.text.length
           turn.text += d.text
-          return { delta: d.text }
+          return { delta: d.text, tokens: count() }
         }
         return null
       }
@@ -237,6 +281,11 @@ export function codex(model = '') {
           turn.text += delta
           turn.final = it.text
           return { delta }
+        }
+        // Codex sums up its reasoning as it goes, headed with a short bold title.
+        if (it.type === 'reasoning' && it.text) {
+          const head = (String(it.text).match(/\*\*(.+?)\*\*/)?.[1] ?? String(it.text).split('\n')[0]).replace(/[*_`]/g, '').trim().slice(0, 90)
+          return head ? { working: `~${head}` } : null
         }
         const acts: Act[] = []
         if (it.type === 'command_execution') acts.push({ t: 'cmd', command: unwrap(it.command ?? ''), exit: it.exit_code ?? null, out: clip(it.aggregated_output ?? '', 1500) })
