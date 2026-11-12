@@ -1089,3 +1089,103 @@ test('savings: old ledger rows holding running totals are read as single turns, 
   const own = turnsOnly()
   assert.equal(own('grok', 'a', rows[0].usage), rows[0].usage)
 })
+
+// A server that answers any chat request and keeps what it was sent.
+async function echo(reply: (body: any, n: number) => { status?: number; lines: string[] }) {
+  const seen: { body: any; headers: Record<string, any> }[] = []
+  const server = createServer((req, res) => {
+    let raw = ''
+    req.on('data', (c) => { raw += c })
+    req.on('end', () => {
+      const body = JSON.parse(raw)
+      seen.push({ body, headers: req.headers })
+      const r = reply(body, seen.length)
+      res.writeHead(r.status ?? 200, { 'content-type': r.status ? 'application/json' : 'text/event-stream' })
+      res.end(r.lines.join('\n\n'))
+    })
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()))
+  return { seen, url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, close: () => server.close() }
+}
+const sse = (usage: object) => ({ lines: ['data: {"choices":[{"delta":{"content":"Done."}}]}', `data: ${JSON.stringify({ choices: [], usage })}`, 'data: [DONE]', ''] })
+
+test('cache: Claude on OpenRouter is sent marked blocks, and every OpenRouter room names its session', async () => {
+  const s = await echo(() => sse({ prompt_tokens: 9000, completion_tokens: 5, cost: 0.004, prompt_tokens_details: { cached_tokens: 8000, cache_write_tokens: 600 } }))
+  const base = PROVIDERS.openrouter.base
+  PROVIDERS.openrouter.base = s.url
+  try {
+    const history = ['The conversation so far:', 'Person: one', 'Claude: two']
+    const r = await chat('openrouter', 'k', 'anthropic/claude-sonnet-5', 'Rules', 'Memory and task', AbortSignal.timeout(5000), () => {}, history, 'room1:openrouter')
+    const [sys, user] = s.seen[0].body.messages
+    assert.deepEqual(sys.content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.equal(user.content.length, 4)
+    assert.deepEqual(user.content[2].cache_control, { type: 'ephemeral' }, 'breakpoint on the last history block')
+    assert.equal(user.content[3].cache_control, undefined, 'the changing part is never cached')
+    assert.equal(user.content.slice(0, 3).map((b: any) => b.text).join(''), history.join('\n\n'), 'the model reads the same conversation as before')
+    assert.equal(s.seen[0].body.session_id, 'room1:openrouter')
+    assert.deepEqual([r.usage.input, r.usage.cached, r.usage.written, r.usage.cost], [1000, 8000, 600, 0.004])
+    // A turn later the conversation has grown, and every block sent before is byte for byte the same.
+    await chat('openrouter', 'k', 'anthropic/claude-sonnet-5', 'Rules', 'Next task', AbortSignal.timeout(5000), () => {}, [...history, 'Person: three'], 'room1:openrouter')
+    const again = s.seen[1].body.messages[1].content
+    assert.deepEqual(again.slice(0, 3).map((b: any) => b.text), user.content.slice(0, 3).map((b: any) => b.text))
+    assert.equal(again[2].cache_control, undefined)
+    assert.deepEqual(again[3].cache_control, { type: 'ephemeral' })
+
+    await chat('openrouter', 'k', 'openai/gpt-6-luna', 'Rules', 'Memory and task', AbortSignal.timeout(5000), () => {}, history, 'room1:openrouter')
+    const plainBody = s.seen[2].body
+    assert.equal(plainBody.messages[0].content, 'Rules', 'other models keep plain messages')
+    assert.equal(plainBody.messages[1].content, history.join('\n\n'))
+    assert.equal(plainBody.session_id, 'room1:openrouter')
+    assert.equal(plainBody.prompt_cache_key, undefined)
+  } finally {
+    PROVIDERS.openrouter.base = base
+    s.close()
+  }
+})
+
+test('cache: a route that refuses marked blocks still gets the room as plain text', async () => {
+  const s = await echo((_b, n) => (n === 1 ? { status: 400, lines: ['{"error":{"message":"content must be a string"}}'] } : sse({ prompt_tokens: 50, completion_tokens: 5 })))
+  const base = PROVIDERS.openrouter.base
+  PROVIDERS.openrouter.base = s.url
+  try {
+    const r = await chat('openrouter', 'k', 'anthropic/claude-sonnet-5', 'Rules', 'Task', AbortSignal.timeout(5000), () => {}, ['Head', 'Person: one'], 'r:openrouter')
+    assert.equal(r.text, 'Done.')
+    assert.equal(s.seen.length, 2)
+    assert.equal(s.seen[1].body.messages[0].content, 'Rules')
+    assert.equal(s.seen[1].body.messages[1].content, 'Head\n\nPerson: one')
+  } finally {
+    PROVIDERS.openrouter.base = base
+    s.close()
+  }
+})
+
+test('cache: xAI is told which conversation it is, and DeepSeek cache hits are counted', async () => {
+  const s = await echo(() => sse({ prompt_tokens: 5000, completion_tokens: 5, prompt_cache_hit_tokens: 4800, prompt_cache_miss_tokens: 200 }))
+  const base = PROVIDERS.xai.base
+  PROVIDERS.xai.base = s.url
+  PROVIDERS['conn:deep'] = { base: s.url, style: 'openai', prefer: /./ }
+  try {
+    await chat('xai', 'k', 'grok-4.7', 'Rules', 'Task', AbortSignal.timeout(5000), () => {}, ['Head'], 'room1:grok-api')
+    assert.equal(s.seen[0].headers['x-grok-conv-id'], 'room1:grok-api')
+    assert.equal(s.seen[0].body.session_id, undefined)
+    const r = await chat('conn:deep', 'k', 'deepseek-chat', 'Rules', 'Task', AbortSignal.timeout(5000), () => {}, ['Head'], 'room1:deep')
+    assert.equal(s.seen[1].headers['x-grok-conv-id'], undefined)
+    assert.deepEqual([r.usage.input, r.usage.cached], [200, 4800])
+  } finally {
+    PROVIDERS.xai.base = base
+    delete PROVIDERS['conn:deep']
+    s.close()
+  }
+})
+
+test('cache: the lifetime a turn reports is the shortest entry it wrote', () => {
+  const result = (short: number, hour: number) => ({ type: 'result', subtype: 'success', result: 'ok', session_id: 's', total_cost_usd: 0.01, usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 9000, cache_creation_input_tokens: short + hour, cache_creation: { ephemeral_5m_input_tokens: short, ephemeral_1h_input_tokens: hour } } })
+  const ttl = (short: number, hour: number) => { const p = claudeLike(); p.line(result(short, hour)); return p.turn.usage.ttl }
+  assert.equal(ttl(0, 500), 3600)
+  assert.equal(ttl(500, 0), 300)
+  assert.equal(ttl(40, 500), 300)
+  assert.equal(ttl(0, 0), undefined, 'a turn that only read says nothing new')
+  const grok = claudeLike()
+  grok.line({ type: 'result', result: 'ok', usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0 } })
+  assert.equal(grok.turn.usage.ttl, undefined)
+})

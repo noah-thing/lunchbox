@@ -127,10 +127,23 @@ const data = (line: string) => {
   try { return JSON.parse(raw) } catch { return null }
 }
 
+type Block = { type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: '1h' } }
+
+// One block per message of the conversation and a breakpoint on the last one. The next turn
+// finds that breakpoint again within the 20 block lookback and reads everything before it from
+// cache; only the new messages, the memory and the task are billed in full. A second mark sits on
+// the last block of the previous step of 20, so a busy room still finds its earlier prefix.
+function marked(history: string[]): Block[] {
+  const blocks: Block[] = history.map((text) => ({ type: 'text', text }))
+  for (const i of new Set([blocks.length - 1, 20 * Math.floor((blocks.length - 1) / 20) - 1])) if (i >= 0) blocks[i].cache_control = { type: 'ephemeral' }
+  return blocks
+}
+
 // history is the conversation, which only grows at the end; prompt is what changes every turn.
-// Keeping them apart lets every provider cache the history as a prefix: Anthropic through an
-// explicit breakpoint on its last block, OpenAI, xAI and Gemini automatically, Ollama by keeping
-// the model and its prompt cache loaded between turns.
+// Keeping them apart lets every provider cache the history as a prefix: Anthropic through explicit
+// marks, OpenAI, xAI, DeepSeek and Gemini automatically, Ollama by keeping the model and its
+// prompt cache loaded between turns. cacheKey names the room and agent, for providers that route
+// by it.
 export async function chat(name: string, key: string, model: string, system: string, prompt: string, signal: AbortSignal, onDelta: (d: string) => void, history: string[] = [], cacheKey = '') {
   const p = PROVIDERS[name]
   const id = await pick(name, key, model)
@@ -142,14 +155,7 @@ export async function chat(name: string, key: string, model: string, system: str
 
   if (p.style === 'anthropic') {
     let start: { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number; cache_creation?: { ephemeral_1h_input_tokens?: number } } = {}
-    // One block per message of the conversation and a breakpoint on the last one. The next turn
-    // finds that breakpoint again within the 20 block lookback and reads everything before it
-    // from cache; only the new messages, the memory and the task are billed in full.
-    const blocks: { type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl?: '1h' } }[] = history.map((text) => ({ type: 'text', text }))
-    // Two marks in the history: the newest block, and the last block of the previous step of 20,
-    // so a busy room still finds its earlier prefix within the provider's lookback.
-    const marks = new Set([blocks.length - 1, 20 * Math.floor((blocks.length - 1) / 20) - 1].filter((i) => i >= 0))
-    for (const i of marks) blocks[i].cache_control = { type: 'ephemeral' }
+    const blocks = marked(history)
     res = await fetch(`${p.base}/messages`, {
       method: 'POST', signal, headers: headers(p, key),
       body: JSON.stringify({
@@ -177,26 +183,40 @@ export async function chat(name: string, key: string, model: string, system: str
       if (o.type === 'error') throw new Error(o.error?.message ?? 'Anthropic stream error')
     }
     // The API reports tokens, not dollars, so price the call here once the output is known.
-    const hour = start.cache_creation?.ephemeral_1h_input_tokens ?? 0
-    const writes = { short: Math.max(0, (usage.written ?? 0) - hour), hour }
+    const long = start.cache_creation?.ephemeral_1h_input_tokens ?? 0
+    const writes = { short: Math.max(0, (usage.written ?? 0) - long), hour: long }
+    // The conversation lives as long as its shortest entry, so five minutes when any was written.
+    if (usage.written) usage.ttl = writes.short ? 300 : 3600
     usage.cost = claudeCost(id, { input: start.input_tokens ?? 0, read: usage.cached, output: usage.output, ...writes }) ?? 0
     usage.saved = cacheSaving(id, usage.cached, writes, usage.input + usage.cached) ?? undefined
     usage.gross = readSaving(id, usage.cached, usage.input + usage.cached) ?? undefined
   } else if (p.style === 'openai') {
-    const ask = (usageToo: boolean) => fetch(`${p.base}/chat/completions`, {
-      method: 'POST', signal, headers: headers(p, key),
+    // Claude through OpenRouter caches only what is marked, the way Anthropic's own API does, so
+    // it gets the same blocks and marks. Everything else there caches a plain prefix by itself.
+    const claude = name === 'openrouter' && /^anthropic\//.test(id)
+    const ask = (usageToo: boolean, marks: boolean) => fetch(`${p.base}/chat/completions`, {
+      method: 'POST', signal,
+      // xAI keeps a conversation on the server that holds its cache when it is told which one it is.
+      headers: { ...headers(p, key), ...(name === 'xai' && cacheKey ? { 'x-grok-conv-id': cacheKey } : {}) },
       body: JSON.stringify({
         model: id, stream: true, ...(usageToo ? { stream_options: { include_usage: true } } : {}),
-        messages: [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }],
+        messages: marks
+          ? [{ role: 'system', content: [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } }] }, { role: 'user', content: [...marked(history.map((l, n) => (n ? `\n\n${l}` : l))), { type: 'text', text: prompt }] }]
+          : [{ role: 'system', content: system }, ...turnsOf(history), { role: 'user', content: prompt }],
         // OpenAI routes requests with the same key to the same cache; other compatible APIs ignore it.
         ...(name === 'openai' && cacheKey ? { prompt_cache_key: cacheKey } : {}),
+        // OpenRouter picks the provider by the first messages unless told which session this is,
+        // and the conversation grows, so without it each turn can land where nothing is cached.
+        ...(name === 'openrouter' && cacheKey ? { session_id: cacheKey } : {}),
       }),
     })
-    res = await ask(true)
+    res = await ask(true, claude)
     // Some compatible servers, free gateways among them, refuse the usage option; ask again without.
     if (res.status === 400 || res.status === 422) {
       const why = await res.clone().text().catch(() => '')
-      if (/stream_options|include_usage|unrecognized|unknown (field|param)|extra (inputs|fields)|not permitted/i.test(why)) res = await ask(false)
+      if (/stream_options|include_usage|unrecognized|unknown (field|param)|extra (inputs|fields)|not permitted/i.test(why)) res = await ask(false, claude)
+      // A route that will not take marked blocks still gets the room, as plain text.
+      else if (claude) res = await ask(true, false)
     }
     if (!res.ok) throw await failure(res)
     for await (const line of lines(res)) {
@@ -209,8 +229,11 @@ export async function chat(name: string, key: string, model: string, system: str
       if (d?.reasoning || d?.reasoning_content) thought = true
       push(typeof d?.content === 'string' ? d.content : undefined)
       if (o.usage) {
-        const cached = o.usage.prompt_tokens_details?.cached_tokens ?? 0
+        // DeepSeek reports its cache hits under its own name.
+        const cached = o.usage.prompt_tokens_details?.cached_tokens ?? o.usage.prompt_cache_hit_tokens ?? 0
         Object.assign(usage, { input: (o.usage.prompt_tokens ?? 0) - cached, output: o.usage.completion_tokens ?? 0, cached, cost: o.usage.cost ?? 0 })
+        const written = o.usage.prompt_tokens_details?.cache_write_tokens
+        if (written) usage.written = written
       }
     }
   } else if (p.style === 'google') {
