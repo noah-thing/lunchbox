@@ -19,6 +19,7 @@ import { merge, section, strip } from '../electron/room/project'
 import { markdown, replay } from '../electron/export'
 import { cmdLine, firstPath } from '../electron/system'
 import { sentence, stepOf } from '../shared/steps'
+import { cut, weave } from '../shared/weave'
 import type { Event, RoomMeta } from '../shared/types'
 
 const fixture = (name: string) =>
@@ -63,6 +64,23 @@ test('claude: thinking, a file being written and retries show as they happen', (
 test('codex: a reasoning summary becomes the step it is on', () => {
   const p = codex()
   assert.equal(p.line({ type: 'item.completed', item: { type: 'reasoning', text: '**Inspecting the build script**\n\nI need to see how...' } })?.working, '~Inspecting the build script')
+})
+
+test('help asked for mid-turn reads inside the turn that asked, in exports too', () => {
+  const head = 'I built the island. I will ask a crewmate.'
+  const text = `${head}\n\nCodex is right, I fixed the cliffs.`
+  assert.deepEqual(cut(text, [head.length]), [head, 'Codex is right, I fixed the cliffs.'])
+  assert.deepEqual(cut('One line only', [40]), ['One line only', ''])
+  const events = [
+    { kind: 'you', id: 'u', at: 1, text: 'Build it' },
+    { kind: 'hands', id: 'h', at: 2, from: 'claude', to: 'codex', ask: 'Weakest points?', answer: 'The cliffs.', acts: [], via: 'tool', inside: { turn: 't1', mark: head.length } },
+    { kind: 'say', id: 's', at: 3, who: 'claude', text, acts: [{ t: 'edit', path: 'a.js', change: 'edit' }], turn: 't1' },
+  ] as Event[]
+  const woven = weave(events)
+  assert.deepEqual(woven.map((e) => e.kind), ['you', 'say', 'hands', 'say'])
+  assert.equal((woven[1] as { text: string }).text, head)
+  assert.equal((woven[3] as { acts: unknown[] }).acts.length, 1, 'acts stay with the end of the turn')
+  assert.equal(woven[3].id, 's')
 })
 
 test('grok: same shape as claude without partial deltas', () => {

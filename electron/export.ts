@@ -1,5 +1,6 @@
 import type { Act, Event, RoomMeta } from '../shared/types'
 import { wallWhy } from '../shared/wall'
+import { weave } from '../shared/weave'
 
 type Names = (id: string) => string
 
@@ -15,7 +16,7 @@ function actsLine(acts: Act[]) {
 
 export function markdown(meta: RoomMeta, events: Event[], name: Names) {
   const out = [`# ${meta.name}`, '', `${time(meta.created)} · ${meta.crew.map(name).join(', ')}`, '']
-  for (const e of events) {
+  for (const e of weave(events)) {
     switch (e.kind) {
       case 'you': out.push(`**You:** ${e.text}${e.files?.length ? `\n\n_Attached: ${e.files.join(', ')}_` : ''}`, ''); break
       case 'say': {
@@ -75,7 +76,7 @@ function card(e: Event, name: Names): string | null {
 // One HTML file that plays the room back the way it happened, with real gaps squeezed so a long
 // session watches in about a minute. No scripts or fonts are fetched.
 export function replay(meta: RoomMeta, events: Event[], name: Names) {
-  const cards = events.map((e) => ({ at: e.at, html: card(e, name) })).filter((c) => c.html)
+  const cards = weave(events).map((e) => ({ at: e.at, html: card(e, name) })).filter((c) => c.html)
   const body = cards.map((c, i) => `<section data-at="${c.at - (cards[0]?.at ?? 0)}" style="--i:${i}">${c.html}</section>`).join('\n')
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

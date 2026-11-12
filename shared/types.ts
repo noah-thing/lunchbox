@@ -58,9 +58,11 @@ export type DecideAction =
   | { type: 'accept' }
   | { type: 'flow'; flow: { name: string; steps: FlowStep[]; every?: Every; at?: string; day?: number } }
 
-export type Event = { id: string; at: number } & (
+// inside: written while another agent's turn was running, for that turn, and shown within it at
+// the point it was asked for: mark is how much of that turn's text came before.
+export type Event = { id: string; at: number; inside?: { turn: string; mark: number } } & (
   | { kind: 'you'; text: string; to?: string[]; arena?: boolean; cat?: Category; lead?: string; files?: string[]; from?: 'flow' | 'phone' }
-  | { kind: 'say'; who: string; text: string; acts: Act[]; usage?: Usage; proof?: Proof[]; arena?: string; reply?: string; error?: string; ms?: number }
+  | { kind: 'say'; who: string; text: string; acts: Act[]; usage?: Usage; proof?: Proof[]; arena?: string; reply?: string; error?: string; ms?: number; turn?: string }
   | { kind: 'hands'; from: string; to: string; ask: string; answer: string; acts: Act[]; usage?: Usage; error?: string; ms?: number; via?: 'tool' }
   | { kind: 'image'; by: string; for: string; prompt: string; path: string; size?: string; usage?: Usage }
   | { kind: 'wall'; from: string; to: string; until?: number; reason: string; arena?: string }

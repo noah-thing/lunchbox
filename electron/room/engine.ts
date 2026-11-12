@@ -42,7 +42,9 @@ type Task = (
 // tried holds who already failed on this message, so a failure everyone shares is not handed round in circles.
 // main is who follows the conversation for this message: the room's main agent, or its stand-in.
 // Everyone else who takes part gets a briefing instead of the log.
-type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string>; tried?: Set<string>; main?: string }
+// host: the turn that called for help, so what the helpers write is shown inside it.
+type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string>; tried?: Set<string>; main?: string; host?: { turn: string; mark: () => number } }
+const within = (ctx: Ctx) => (ctx.host ? { inside: { turn: ctx.host.turn, mark: ctx.host.mark() } } : {})
 type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
 // Failures of one command in one turn before the loop guard stops it.
@@ -649,9 +651,9 @@ export class Engine {
   // steps out when done. Its report goes back to the agent that brought it in.
   private async bring(room: string, from: string, to: string, job: string, context: string | undefined, access: Access, ctx: Ctx) {
     if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
-    this.add(room, { kind: 'joined', who: to, by: from, task: job.slice(0, 200) })
+    this.add(room, { kind: 'joined', who: to, by: from, task: job.slice(0, 200), ...within(ctx) })
     const r = await this.turn(room, to, { kind: 'job', from, job, context }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1 })
-    this.add(room, { kind: 'left', who: r?.who ?? to })
+    this.add(room, { kind: 'left', who: r?.who ?? to, ...within(ctx) })
     if (!r?.text) throw new Error(`${this.name(to)} could not take this on right now.`)
     return r.text
   }
@@ -678,7 +680,7 @@ export class Engine {
       const said = await this.consult(room, from, 'codex', ask, access, ctx, this.store.settings.imageModel ? { codex: this.store.settings.imageModel } : undefined, true, prompt, size).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
-    this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage })
+    this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage, ...within(ctx) })
     return `Saved ${relative(meta.workspace, path)}`
   }
 
@@ -689,7 +691,7 @@ export class Engine {
     if (blocked) {
       const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
       if (next && ctx.main === who) ctx.main = next
-      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until })
+      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until, ...within(ctx) })
       if (!next || ++ctx.hops.n > MAX_HOPS) return null
       return this.turn(room, next, task, access, ctx)
     }
@@ -726,8 +728,10 @@ export class Engine {
     if (task.kind === 'answer') live.cable = { from: task.from, to: who, at: Date.now() }
     this.changed(room)
 
+    // Help this turn calls for is shown inside it, where it was asked for, not above it.
+    const inner: Ctx = !ctx.host && !ctx.arena && lt.kind === 'say' ? { ...ctx, host: { turn: lt.id, mark: () => lt.text.length } } : ctx
     const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
-      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
+      ? [...kit(this.host(room, me, crew, access, inner)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
       : []
     const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
@@ -767,7 +771,7 @@ export class Engine {
         live.doing = sentence(me.short, now)
         lt.now = now.slice(0, 120)
       }
-      else if (u.working === '' && lt.now) { lt.now = undefined; live.doing = `${me.short} is writing` }
+      else if (u.working === '') { lt.now = undefined; live.doing = `${me.short} is writing` }
       this.changed(room)
     })
     const procs = this.procs.get(room) ?? new Set()
@@ -851,7 +855,7 @@ export class Engine {
     const parsed = task.kind === 'answer' || task.kind === 'job' || ctx.arena ? { asks: [], text: r.text } : asks(r.text, handles)
     let event: Event
     if (task.kind === 'answer') {
-      const hands = { kind: 'hands' as const, from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via }
+      const hands = { kind: 'hands' as const, from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via, ...within(ctx) }
       if (task.quiet) event = { ...hands, id: uid(), at: Date.now() }
       else {
         event = this.add(room, hands)
@@ -859,6 +863,7 @@ export class Engine {
       }
     } else {
       const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms,
+        ...(inner.host?.turn === lt.id ? { turn: lt.id } : within(ctx)),
         // A CLI can fail after writing part of its answer: the text is kept and the failure shown under it.
         ...(r.error && !r.limit ? { error: plain(r.error) } : {}) }
       const proof = check(draft.text, [...events, { ...draft, id: '', at: 0 }], !!meta.studio && tools.length > 0)
@@ -914,7 +919,7 @@ export class Engine {
     ctx.tried = (ctx.tried ?? new Set()).add(who)
     const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
     if (next && ctx.main === who) ctx.main = next
-    this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until, reason })
+    this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until, reason, ...within(ctx) })
     if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
     if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
     return null

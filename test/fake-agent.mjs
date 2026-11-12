@@ -118,6 +118,26 @@ if (mcp && input.includes('Bring:')) {
   process.exit(0)
 }
 
+// Claude writes, asks Codex mid-turn through the room's tool, then carries on with the answer.
+if (mcp && input.includes('Consult:') && name === 'claude') {
+  let id = 0
+  const rpc = async (method, params) => (await fetch(mcp, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) })).json()
+  await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name, version: '1' } })
+  const se = (event) => say({ type: 'stream_event', event })
+  const write = (text) => { se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }); for (const w of text.split(/(?<= )/)) { se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: w } }); sleep(30) } }
+  say({ type: 'system', subtype: 'init', session_id: `${name}-session`, model: 'fake' })
+  write('I built the island and rendered six views. For a second opinion I will ask a crewmate for the weakest points.')
+  say({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'c1', name: 'mcp__lunchbox__ask_crewmate', input: { agent: 'codex', question: 'Name the three weakest points in the renders.' } }] } })
+  const got = (await rpc('tools/call', { name: 'ask_crewmate', arguments: { agent: 'codex', question: 'Name the three weakest points in the renders.' } })).result.content[0].text
+  say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'c1', content: got }] } })
+  sleep(1500)
+  write('Codex is right about the cliffs. I broke them up with ledges and planted paths, and re-rendered the north view.')
+  const text = 'I built the island and rendered six views. For a second opinion I will ask a crewmate for the weakest points.\n\nCodex is right about the cliffs. I broke them up with ledges and planted paths, and re-rendered the north view.'
+  say({ type: 'assistant', message: { content: [{ type: 'text', text }] } })
+  say({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: `${name}-session`, total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } })
+  process.exit(0)
+}
+
 if (mcp && input.includes('Borrow:')) {
   let id = 0
   const rpc = async (method, params) => {

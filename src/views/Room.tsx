@@ -3,6 +3,7 @@ import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict 
 import { wallWhy } from '../../shared/wall'
 import { plan, planOn, plansBefore, type Step } from '../../shared/plan'
 import { searchOf, stepOf, type Search } from '../../shared/steps'
+import { cut } from '../../shared/weave'
 import { Loader, Mark, Meter, Sure, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
@@ -387,10 +388,37 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   const priors = useMemo(() => plansBefore(events), [events])
   const current = useMemo(() => plan(events), [events])
   const going = useMemo(() => planOn(current, liveEvents(live ?? undefined)), [current, live])
+  // Help a turn called for while it ran, shown inside that turn where it was asked for: the turn's
+  // text up to the ask, the help, then the rest of the turn.
+  const hosts = new Set<string>([...events.flatMap((e) => (e.kind === 'say' && e.turn ? [e.turn] : [])), ...(live?.turns ?? []).map((t) => t.id)])
+  const helped = new Map<string, Event[]>()
+  for (const e of events) if (e.inside && hosts.has(e.inside.turn)) helped.set(e.inside.turn, [...(helped.get(e.inside.turn) ?? []), e])
+  const isSettled = (e: Event) => {
+    if (!settled.current.has(e.id) && [...seen.current.values()].some((t) => replaces(e, t))) settled.current.add(e.id)
+    return settled.current.has(e.id)
+  }
+  const row = (e: Event, grouped: boolean, still: boolean, key = e.id, piece?: Piece, text?: string) =>
+    <Settled.Provider key={key} value={still}><Row e={e} grouped={grouped} agents={agents} actions={actions} chosen={chosen} prior={priors.get(e.id)} plan={going} piece={piece} text={text} /></Settled.Provider>
+  // The pieces between the turn's opening and its live or finished end.
+  const helps = (list: Event[], parts: string[], who: string, at: number, still: boolean, key: string) => list.forEach((h, i) => {
+    rows.push(row(h, false, isSettled(h)))
+    if (i < list.length - 1 && parts[i + 1]) rows.push(row({ kind: 'say', id: `${key}:${i}`, at, who, text: parts[i + 1], acts: [] }, true, still, `${key}:${i}`, 'mid'))
+  })
   const arenas = new Set<string>()
   const rows: ReactNode[] = []
   let last = ''
   for (const e of events) {
+    if (e.inside && hosts.has(e.inside.turn)) continue
+    if (e.kind === 'say' && e.turn && helped.has(e.turn)) {
+      const list = helped.get(e.turn)!
+      const parts = cut(e.text, list.map((h) => h.inside!.mark))
+      const still = isSettled(e)
+      rows.push(row(e, last === e.who, still, e.id, 'head', parts[0]))
+      helps(list, parts, e.who, e.at, still, e.id)
+      rows.push(row(e, true, still, `${e.id}:end`, 'tail', parts[parts.length - 1]))
+      last = e.who
+      continue
+    }
     if (e.kind === 'say' && e.arena) {
       if (arenas.has(e.arena)) continue
       arenas.add(e.arena)
@@ -401,8 +429,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       continue
     }
     const speaker = e.kind === 'say' ? e.who : e.kind
-    if (!settled.current.has(e.id) && [...seen.current.values()].some((t) => replaces(e, t))) settled.current.add(e.id)
-    rows.push(<Settled.Provider key={e.id} value={settled.current.has(e.id)}><Row e={e} grouped={e.kind === 'say' && last === speaker} agents={agents} actions={actions} chosen={chosen} prior={priors.get(e.id)} plan={going} /></Settled.Provider>)
+    rows.push(row(e, e.kind === 'say' && last === speaker, isSettled(e)))
     last = speaker
   }
   const landed = (t: LiveTurn) => events.some((e) => replaces(e, t))
@@ -413,6 +440,15 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       continue
     }
     const helper = live!.turns.find((x) => x.from === t.who && x.id !== t.id)
+    const list = helped.get(t.id)
+    if (list && t.kind === 'say') {
+      const parts = cut(t.text, list.map((h) => h.inside!.mark))
+      rows.push(row({ kind: 'say', id: `${t.id}:head`, at: t.started, who: t.who, text: parts[0], acts: [] }, last === t.who, true, `${t.id}:head`, 'head'))
+      helps(list, parts, t.who, t.started, true, t.id)
+      rows.push(<LiveRow key={t.id} t={{ ...t, text: parts[parts.length - 1] }} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped helper={helper && agentOf(helper.who, agents)} prior={current} plan={going} />)
+      last = t.who
+      continue
+    }
     rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} prior={current} plan={going} />)
     last = t.who
   }
@@ -469,7 +505,11 @@ function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
   return `${why}. ${next}${e.until && e.until > Date.now() ? ` Back at ${clock(e.until)}.` : ''}`
 }
 
-function Row({ e, grouped, agents, actions, chosen, prior, plan }: { e: Event; grouped: boolean; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string>; prior?: Step[]; plan?: Step[] }) {
+// A turn that called for help mid-way is drawn in pieces around it: the head carries the name,
+// the tail the outcome, the acts and the message tools.
+type Piece = 'head' | 'mid' | 'tail'
+
+function Row({ e, grouped, agents, actions, chosen, prior, plan, piece, text }: { e: Event; grouped: boolean; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string>; prior?: Step[]; plan?: Step[]; piece?: Piece; text?: string }) {
   switch (e.kind) {
     case 'you':
       return (
@@ -486,10 +526,17 @@ function Row({ e, grouped, agents, actions, chosen, prior, plan }: { e: Event; g
       )
     case 'say': {
       const a = agentOf(e.who, agents)
+      const shown = text ?? e.text
+      if (piece && piece !== 'tail') return (
+        <Ev id={piece === 'head' ? e.id : undefined} mark={<Mark seed={a.mark} size={16} />} grouped={grouped || piece === 'mid'} className="turn">
+          {piece === 'head' && !grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
+          {shown && <Rich text={shown} prior={prior} plan={plan} />}
+        </Ev>
+      )
       return (
-        <Ev id={e.id} mark={<Mark seed={a.mark} size={16} />} grouped={grouped} className="turn">
+        <Ev id={piece ? undefined : e.id} mark={<Mark seed={a.mark} size={16} />} grouped={grouped} className="turn">
           {!grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
-          {e.text && <Rich text={e.text} prior={prior} plan={plan} />}
+          {shown && <Rich text={shown} prior={prior} plan={plan} />}
           {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}{e.error !== 'Stopped' && <button className="reportbtn" onClick={() => openReport({ context: `${a.short}: ${e.error}` })}>Report this</button>}</div>}
           <Acts acts={e.acts} />
           {e.proof?.map((p) => (
