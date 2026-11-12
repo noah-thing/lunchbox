@@ -36,7 +36,8 @@ export type AgentInfo = {
 // saved is net of the premium paid to write the cache; gross is what the cached reads alone saved.
 // v 2 marks a turn counted on its own. Claude Code and Codex rows without it may hold a resumed
 // session's running totals, and are corrected when read.
-export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; gross?: number; kept?: number; v?: 2 }
+// ttl: seconds the provider said it keeps what this turn cached, where it says.
+export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; gross?: number; kept?: number; ttl?: number; v?: 2 }
 
 // What a CLI session has reported in total so far: its cost, and token counts per model.
 export type Meter = { cost: number; rows: Record<string, number[]> }
@@ -100,6 +101,8 @@ export type RoomMeta = {
   sessions: Record<string, string>
   // Each agent's session totals as of its last turn, so the next turn can be counted on its own.
   meters?: Record<string, Meter & { session: string }>
+  // A mark of the protocol each agent's session was last sent.
+  protos?: Record<string, string>
   seen: Record<string, Record<string, number>>
   heard: Record<string, number>
   blocks: Block[]

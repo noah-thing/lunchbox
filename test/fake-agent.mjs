@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Stands in for the claude, grok and codex binaries in the engine test. It prints the same
 // stream formats the real CLIs do and records each call so the test can check the arguments.
-import { appendFileSync, readFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename } from 'node:path'
 
 const name = basename(process.argv[1]).replace(/\.(cmd|mjs)$/, '')
@@ -176,5 +176,16 @@ say({ type: 'assistant', message: { content: [{ type: 'text', text: reply }] } }
 // Shaped like a real Claude Code turn: the long system prompt comes back from cache, the new prompt is written.
 const fresh = Math.round(input.length / 4)
 const usage = { input_tokens: 6, output_tokens: Math.round(reply.length / 4), cache_read_input_tokens: 14200, cache_creation_input_tokens: fresh }
-const modelUsage = { 'claude-sonnet-5-5': { inputTokens: 6, outputTokens: usage.output_tokens, cacheReadInputTokens: 14200, cacheCreationInputTokens: fresh } }
-say({ type: 'result', subtype: 'success', is_error: false, result: reply, session_id: session, total_cost_usd: 0.01, usage, modelUsage })
+const modelUsage = { 'claude-sonnet-5-5': { inputTokens: 6, outputTokens: usage.output_tokens, cacheReadInputTokens: 14200, cacheCreationInputTokens: fresh, costUSD: 0.01 } }
+let cost = 0.01
+// FAKE_RUNNING is a file: with it the cost and per model rows run on across resumes of a session,
+// the way Claude Code reports them, while usage stays the turn's own.
+if (process.env.FAKE_RUNNING && name === 'claude') {
+  let before = {}
+  try { before = JSON.parse(readFileSync(process.env.FAKE_RUNNING, 'utf8')) } catch {}
+  const row = modelUsage['claude-sonnet-5-5']
+  for (const k of Object.keys(row)) row[k] += before[k] ?? 0
+  cost = row.costUSD
+  writeFileSync(process.env.FAKE_RUNNING, JSON.stringify(row))
+}
+say({ type: 'result', subtype: 'success', is_error: false, result: reply, session_id: session, total_cost_usd: cost, usage, modelUsage })

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { sentence } from '../../shared/steps'
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -71,8 +71,6 @@ export class Engine {
   private pending = new Map<string, number>()
   private gens = new Map<string, number>()
   private flushed = new Set<string>()
-  // The protocol last sent to each resumed session, so an unchanged one is not sent again.
-  private protos = new Map<string, string>()
   private allowed = new Map<string, Set<string>>()
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
@@ -745,8 +743,11 @@ export class Engine {
     const fails = new Map<string, number>()
     let looped = ''
     const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits, ctx.main ?? this.main(meta), meta.studio ? meta.design ?? [] : null)
+    // A resumed session already has the protocol; it goes again only when it changed. The mark
+    // is kept with the room, so restarting Lunchbox does not send every session its rules twice.
+    const sent = createHash('sha1').update(system).digest('hex').slice(0, 16)
     const running = run(who, {
-      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || this.protos.get(`${room}:${who}`) !== system, cwd: meta.workspace, access,
+      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || meta.protos?.[who] !== sent, cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
@@ -898,8 +899,8 @@ export class Engine {
       m.seen[who] = briefed ? { ...m.seen[who], ...p.seen } : p.seen
       m.saved.full += p.full
       m.saved.sent += p.sent
+      if (me.via === 'cli') (m.protos ??= {})[who] = sent
     })
-    this.protos.set(`${room}:${who}`, system)
 
     const edited = r.acts.filter((a) => a.t === 'edit').map((a) => (a as { path: string }).path)
     if (edited.length) {

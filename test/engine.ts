@@ -493,3 +493,58 @@ test('room: an Ollama main agent calls a crewmate', { skip: process.platform ===
     server.close()
   }
 })
+
+// Claude Code's cost and per model rows run on across resumes. Each turn is recorded on its own,
+// and a restart of Lunchbox neither loses the count nor sends the session its rules again.
+test('room: resumed turns are counted once each, across a restart', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-meter-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  const log = (process.env.FAKE_LOG = join(root, 'calls.jsonl'))
+  process.env.FAKE_RUNNING = join(root, 'running.json')
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { resetPath } = await import('../electron/system')
+  resetPath()
+  const plain = { seal: (t: string) => t, open: (t: string) => t }
+  const open = async () => {
+    const store = new Store(join(root, 'data'), plain)
+    const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] })
+    await engine.refresh()
+    return { store, engine }
+  }
+  try {
+    let { store, engine } = await open()
+    const room = engine.create({ crew: ['claude'], workspace: root })
+    for (const text of ['Fix the login bug', 'Now the signup form']) {
+      engine.send(room.id, text, 'workspace')
+      await engine.idle(room.id)
+    }
+    store.flush()
+    ;({ store, engine } = await open())
+    engine.send(room.id, 'And the footer', 'workspace')
+    await engine.idle(room.id)
+    store.flush()
+
+    const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    assert.equal(calls.length, 3)
+    assert.ok(calls[0].input.includes('one of several AI agents'), 'a new session gets the protocol')
+    assert.ok(calls[2].args.includes('--resume'), 'the session survives the restart')
+    assert.ok(!calls[1].input.includes('one of several AI agents') && !calls[2].input.includes('one of several AI agents'), 'and is not sent its rules again')
+
+    const turns = store.events(room.id).flatMap((e) => (e.kind === 'say' && e.usage ? [e.usage] : []))
+    assert.deepEqual(turns.map((u) => Math.round(u.cost * 100)), [1, 1, 1], 'each turn costs what it cost')
+    assert.deepEqual(turns.map((u) => u.cached), [14200, 14200, 14200])
+    assert.equal(store.room(room.id)?.meters?.claude.rows['claude-sonnet-5-5'][2], 42600, 'the session total is kept with the room')
+    const week = store.totals().week.claude
+    assert.ok(Math.abs(week.cost - 0.03) < 1e-9, `the ledger adds up to the session's cost, got ${week.cost}`)
+    assert.equal(week.cached, 42600)
+    // What the reads saved at the Sonnet rates in the price table, once per turn.
+    assert.ok(Math.abs((week.gross ?? 0) - (3 * 14200 * 1.8) / 1e6) < 1e-9, `${week.gross}`)
+  } finally {
+    delete process.env.FAKE_RUNNING
+  }
+})
