@@ -118,7 +118,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .sbitem svg{flex:none}
 .sbitem small,.sbroom small{font:11px var(--mono);color:var(--faint)}
 .sbitem.on,.sbroom.on{color:var(--ink)}
-.sbitem>.sbsel,.sbroom>.sbsel{position:absolute;inset:0;border-radius:6px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);pointer-events:none;will-change:transform}
+.sbitem>.sbsel,.sbroom>.sbsel{position:absolute;inset:0;border-radius:6px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);pointer-events:none}
 @media (hover:hover){.sbitem:hover,.sbroom:hover{color:var(--ink);background:var(--hover)}.sbitem.on:hover,.sbroom.on:hover{background:none}}
 .sbitem:active,.sbroom:active{transform:scale(.985)}
 .waitdot{width:6px;height:6px;border-radius:1.5px;background:var(--warn);flex:none;animation:markbreathe 1.6s ease-in-out infinite}

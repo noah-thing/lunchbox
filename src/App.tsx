@@ -154,17 +154,9 @@ export function App() {
   }, [toast])
 
   // Page changes are plain state changes: the new page rises in with CSS and the sidebar highlight
-  // glides over. A view transition here snapshotted the whole window and cost a frame each time.
+  // simply sits on the current item. A view transition here snapshotted the whole window and cost
+  // a frame each time.
   const go = (v: View) => { setPalette(false); setView(v) }
-  const lastSel = useRef<DOMRect | null>(null)
-  useLayoutEffect(() => {
-    const el = document.querySelector<HTMLElement>('.sidebar .sbsel')
-    const now = el?.getBoundingClientRect() ?? null
-    const was = lastSel.current
-    lastSel.current = now
-    if (!el || !now || !was || calm() || Math.abs(was.top - now.top) < 1) return
-    el.animate([{ transform: `translateY(${was.top - now.top}px)` }, { transform: 'none' }], { duration: 380, easing: 'cubic-bezier(.3,.9,.2,1)' })
-  })
   const openPalette = (open: boolean) => setPalette(open)
   useEffect(() => desk.on('open-room', (id: string) => go({ name: 'room', id })), [])
 
