@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, nativeTheme, Notification, safeStorage, shell } from 'electron'
 import type { Access, Connector, Flow, Report, Settings, Skill } from '../shared/types'
+import { Count } from './count'
 import { installed, modelsFor, testConnector, useConnectors } from './agents'
 import { markdown, replay } from './export'
 import { Flows } from './flows'
@@ -40,6 +41,7 @@ let store: Store
 let engine: Engine
 let limits: Limits
 let flows: Flows
+let count: Count
 let remote: Remote
 let browser: Browser
 let toolbox: Toolbox
@@ -256,6 +258,8 @@ function wire() {
   h('settings', () => store.settings)
   h('settings:set', async (patch: Partial<Settings>) => {
     store.saveSettings(patch)
+    // Turning the count back on sends today's count straight away.
+    if (patch.count === true) void count?.send()
     if (patch.connectors) useConnectors(store.settings.connectors)
     if (patch.autoUpdate !== undefined) updates?.setAuto(patch.autoUpdate)
     if (patch.models || patch.disabled || patch.connectors) await engine.refresh()
@@ -377,6 +381,8 @@ app.whenReady().then(async () => {
   limits = new Limits(store, (l) => { emit('limits', l); emit('ledger', engine.ledger()) }, () => engine.agents.filter((a) => a.found && a.via === 'cli').map((a) => a.id))
   engine = new Engine(store, { emit, notify, packs, tools, turned: (who, u) => limits.turned(who, u), flow: (f) => flows?.put(f) }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
   flows = new Flows(store, engine, { emit, notify })
+  count = new Count(store)
+  count.start()
   remote = new Remote(store, engine, { emit, defaults })
   wire()
   const icon = join(__dirname, '../build/icon-1024.png')

@@ -209,6 +209,11 @@ export type Settings = {
   dismissed?: string[]
   autoUpdate?: boolean
   feedIssued?: number
+  // The anonymous install count, on unless turned off in Settings. countId is a random ID made on
+  // this computer; countDay is the last day it was sent.
+  count?: boolean
+  countId?: string
+  countDay?: string
 }
 
 // Anything not built in: an API that speaks the OpenAI or Anthropic format, or a command-line

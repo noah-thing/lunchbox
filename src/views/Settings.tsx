@@ -129,6 +129,10 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <Toggle on={settings.autoUpdate !== false} set={(v) => reload.settings({ autoUpdate: v })} label="Install updates automatically" />
           </div>
           <div className="setting">
+            <div className="grow"><b>Anonymous count</b><span>Once a day, a random ID made on this computer, the Lunchbox version and your system. No IP address, nothing about your rooms, files, prompts or keys. It tells us how many people use Lunchbox and which versions.</span></div>
+            <Toggle on={settings.count !== false} set={(v) => reload.settings({ count: v })} label="Anonymous count" />
+          </div>
+          <div className="setting">
             <div className="grow"><b>Checkpoints</b><span>Save the folder before every message so any change can be rewound. Kept outside the project, in its own history.</span></div>
             <Toggle on={settings.snapshots !== false} set={(v) => reload.settings({ snapshots: v })} label="Checkpoints" />
           </div>
