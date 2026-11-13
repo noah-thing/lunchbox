@@ -141,6 +141,10 @@ export function Settings({ theme, setTheme, look, setLook, restart, say }: {
             <div className="grow"><b>Checkpoints</b><span>Save the folder before every message so any change can be rewound. Kept outside the project, in its own history.</span></div>
             <Toggle on={settings.snapshots !== false} set={(v) => reload.settings({ snapshots: v })} label="Checkpoints" />
           </div>
+          <div className="setting">
+            <div className="grow"><b>Unload local models when they finish</b><span>Ollama frees the model's memory as soon as it answers. The next message takes a few seconds longer while the model loads again.</span></div>
+            <Toggle on={settings.unload === true} set={(v) => reload.settings({ unload: v })} label="Unload local models when they finish" />
+          </div>
           <div className="setting col">
             <div className="grow"><b>Main agent</b><span>Takes your messages in a new room and brings the others in when they are better placed. The rest stay on call and do not read along. Change it per room in the agent menu.</span></div>
             <div className="chips">

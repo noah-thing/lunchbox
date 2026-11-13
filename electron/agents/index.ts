@@ -39,6 +39,10 @@ export type Input = {
   fresh?: boolean
   // For HTTP agents: the room's folder and its rules, which the model works in through tools.
   bench?: Bench
+  // Hands over a message the person sent while this turn runs, once, between the agent's steps.
+  inbox?: () => string | null
+  // Local models: free the model from memory when it has answered.
+  unload?: boolean
 }
 
 export type Result = {
@@ -94,7 +98,11 @@ function claudeHook(i: Input, file: string): Pick<Spec, 'extra'> & { args: strin
   const dirs = i.outputs ? ['--add-dir', i.outputs] : []
   if (!i.hook) return { args: dirs }
   const path = file.replace(/\.txt$/, '.settings.json')
-  const settings = { hooks: { PreToolUse: [{ matcher: i.guarded ? '*' : 'Bash', hooks: [{ type: 'http', url: i.hook, timeout: 10 }] }] } }
+  const settings = { hooks: {
+    PreToolUse: [{ matcher: i.guarded ? '*' : 'Bash', hooks: [{ type: 'http', url: i.hook, timeout: 10 }] }],
+    // After each step, so a message sent mid-turn reaches the agent without stopping it.
+    ...(i.inbox ? { PostToolUse: [{ matcher: '*', hooks: [{ type: 'http', url: i.hook, timeout: 10 }] }] } : {}),
+  } }
   return { args: ['--settings', path, ...dirs], extra: [{ path, text: JSON.stringify(settings) }] }
 }
 
@@ -355,7 +363,8 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     const ctl = new AbortController()
     const t0 = Date.now()
     wear(d, keys)
-    const hands = input.bench ? { bench: input.bench, onStep: (s: { working?: string; acts?: Act[] }) => onUpdate(s) } : undefined
+    const hands = input.bench ? { bench: input.bench, onStep: (s: { working?: string; acts?: Act[] }) => onUpdate(s), inbox: input.inbox } : undefined
+    if (PROVIDERS[provider]?.style === 'ollama') PROVIDERS[provider].unload = !!input.unload
     const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey, hands)
       .then((r) => ({ text: r.text, acts: r.acts, usage: r.usage, denied: [], ms: Date.now() - t0 }))
       .catch((e: Error & { text?: string; acts?: Act[]; usage?: Usage }) => {

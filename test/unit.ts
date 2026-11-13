@@ -1429,6 +1429,20 @@ test('claude: a turn reports its model, and what its first and last request read
   assert.ok(Math.abs(p.turn.quick! - (30900 * 2 * 0.75) / 1e6) < 1e-9)
 })
 
+test('hands: a message sent mid-turn reaches Claude Code after its next step, once', async (t) => {
+  const hands = new Hands()
+  await hands.start()
+  t.after(() => hands.stop())
+  let waiting: string | null = 'Use tabs, not spaces'
+  const grant = hands.grant([], undefined, () => { const m = waiting; waiting = null; return m })
+  assert.ok(grant.hook, 'a turn with an inbox gets a hook even without tools')
+  const post = (body: object) => fetch(grant.hook, { method: 'POST', body: JSON.stringify(body) }).then((r) => r.json())
+  assert.deepEqual(await post({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }), {}, 'nothing before a step')
+  assert.deepEqual(await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Use tabs, not spaces' } })
+  assert.deepEqual(await post({ hook_event_name: 'PostToolUse', tool_name: 'Read' }), {}, 'handed over once')
+  grant.revoke()
+})
+
 test('hands: a shortened command posts its output with a token that opens nothing else', async (t) => {
   const hands = new Hands()
   await hands.start()

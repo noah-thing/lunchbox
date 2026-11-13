@@ -6,7 +6,8 @@ import { Sieve, manual, readCall, schema, unthink } from './textcalls'
 import { cacheSaving, claudeCost, readSaving } from '../../shared/prices'
 
 // extra: headers a connector's server wants on every request, such as a plan or project id.
-type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp; extra?: Record<string, string> }
+// unload: free the model from memory as soon as it answers, for people who need the RAM back.
+type Provider = { base: string; style: 'anthropic' | 'openai' | 'google' | 'ollama'; prefer: RegExp; extra?: Record<string, string>; unload?: boolean }
 
 export const PROVIDERS: Record<string, Provider> = {
   anthropic: { base: 'https://api.anthropic.com/v1', style: 'anthropic', prefer: /sonnet/ },
@@ -492,7 +493,7 @@ function ollamaWire(a: Ask, info: Local): Wire {
       const { res, beat, end } = await post(`${a.p.base}/chat`, {
         method: 'POST', headers: headers(a.p, a.key),
         body: JSON.stringify({
-          model: a.id, stream: true, keep_alive: '30m', messages,
+          model: a.id, stream: true, keep_alive: a.p.unload ? 0 : '30m', messages,
           // A cap on the answer too: a small model that falls into repeating itself would
           // otherwise write until the window is full.
           options: { num_ctx: info.window, num_predict: Math.min(16384, info.window) },
@@ -535,7 +536,7 @@ const REPAIRS = 2
 const SAME = 3
 
 export type Step = { working?: string; acts?: Act[] }
-export type Hands = { bench: Bench; onStep(s: Step): void }
+export type Hands = { bench: Bench; onStep(s: Step): void; inbox?(): string | null }
 
 // history is the conversation, which only grows at the end; prompt is what changes every turn.
 // Keeping them apart lets every provider cache the history as a prefix: Anthropic through explicit
@@ -650,6 +651,10 @@ export async function chat(name: string, key: string, model: string, system: str
       repairs = 0
       if (viaText) wire.say(done.map((d) => `Result of ${d.call.name}${d.ok ? '' : ' (it failed)'}:\n${d.text}`).join('\n\n') + '\n\nCarry on. Use another tool block if you need one, or answer the person.')
       else wire.results(done)
+      // A message the person sent while this turn ran joins here, between steps, so the model
+      // takes it in without being stopped.
+      const sent = hands.inbox?.()
+      if (sent) wire.say(sent)
       hands.onStep({ working: '~Thinking' })
       if (n === ROUNDS - 1) throw new Error(`${id} used ${ROUNDS} tool calls without finishing, so Lunchbox stopped it. Ask it to carry on.`)
     }

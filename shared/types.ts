@@ -233,6 +233,8 @@ export type Skill = {
 }
 
 export type Settings = {
+  // Local models are freed from memory as soon as they answer.
+  unload?: boolean
   models: Record<string, string>
   budgets: Record<string, number>
   disabled: string[]

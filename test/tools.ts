@@ -114,6 +114,30 @@ test('bench: Plan only reads, Ask asks before each change, Auto just works', asy
   assert.deepEqual(ran.act && { ...ran.act, out: undefined }, { t: 'cmd', command: 'node src/app.js', exit: 0, out: undefined })
 })
 
+test('ollama: a message sent mid-turn joins between steps, and unload frees the model', async () => {
+  const { bench } = folder()
+  const script = [calls('list_directory', {}), says('Done, and I used the new name.')]
+  const f = await fake((n) => script[n], (req, res) => {
+    if (req.url !== '/api/show') return false
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'qwen.context_length': 32768 } }))
+    return true
+  })
+  PROVIDERS['fake-mid'] = { base: `${f.base}/api`, style: 'ollama', prefer: /./, unload: true }
+  const w = watch()
+  let waiting: string | null = 'Call it greet instead'
+  try {
+    const r = await chat('fake-mid', '', 'coder:27b', 'Rules', 'Rename it', AbortSignal.timeout(8000), w.delta, [], 'r:mid', { bench, onStep: w.onStep, inbox: () => { const m = waiting; waiting = null; return m } })
+    assert.equal(r.text, 'Done, and I used the new name.')
+    const chats = f.seen.filter((x: any) => x.body?.messages)
+    const second = chats[1].body.messages
+    assert.equal(second.at(-1).role, 'user', 'the message comes after the step it waited for')
+    assert.equal(second.at(-1).content, 'Call it greet instead')
+    assert.equal(second.filter((m: any) => m.content === 'Call it greet instead').length, 1, 'and is handed over once')
+    assert.equal(chats[0].body.keep_alive, 0, 'unloaded as soon as it answers')
+  } finally { delete PROVIDERS['fake-mid']; f.close() }
+})
+
 test('ollama: a model with tool calling works through the folder over several rounds', async () => {
   const { root, bench } = folder()
   const script = [
@@ -248,7 +272,8 @@ test('openai style: streamed tool calls are put together, run, and answered, and
     const r = await chat('fake-openai', 'k', 'gpt-x', 'Rules', 'Read them', AbortSignal.timeout(8000), w.delta, ['Head'], '', { bench, onStep: w.onStep })
     assert.equal(f.seen[0].body.tools.length, 6)
     assert.equal(f.seen[0].body.tools[0].type, 'function')
-    const second = f.seen[1].body.messages
+    const chats = f.seen.filter((x: any) => x.body?.messages)
+    const second = chats[1].body.messages
     assert.deepEqual(second.at(-3).tool_calls.map((c: any) => [c.id, c.function.name, c.function.arguments]), [['c1', 'read_file', '{"path":"src/app.js"}'], ['c2', 'read_file', '{"path":"README.md"}']])
     assert.deepEqual(second.slice(-2).map((m: any) => [m.role, m.tool_call_id]), [['tool', 'c1'], ['tool', 'c2']])
     assert.ok(second.at(-2).content.includes('const greeting'))

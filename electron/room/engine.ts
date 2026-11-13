@@ -880,12 +880,27 @@ export class Engine {
     const unattended = !!meta.flow || task.kind === 'answer' || task.kind === 'job'
     const short = who === 'claude' && (resumed ? meta.quick?.[who] === session : unattended && saving.warm !== false)
     this.cool(room, who)
+    // Messages the person sends while this turn runs reach the agent between its steps instead
+    // of waiting for the turn to end: Claude Code through its after-step hook, HTTP agents through
+    // their own loop. The message joins the room inside this turn, where the agent read it.
+    const midway = !ctx.host && !ctx.arena && lt.kind === 'say' && !meta.flow && (who === 'claude' || http)
+    const inbox = midway ? () => {
+      const list = this.live(room).queued ?? []
+      if (!list.length) return null
+      for (const q of list) {
+        this.unqueue(room, q.id)
+        this.add(room, { kind: 'you', text: q.text, files: q.files, inside: { turn: lt.id, mark: lt.text.length } })
+      }
+      const said = list.map((q) => q.text + (q.files?.length ? `\n\nAttached: ${q.files.join(', ')}` : '')).join('\n\n')
+      return `The person sent this while you were working. Take it into account from here, and keep going unless it asks you to stop:\n\n${said}`
+    } : undefined
     // Granted last, with nothing between it and the turn that could fail and leave it open.
-    const grant = this.hands && (tools.length || watch) ? this.hands.grant(tools, watch) : null
+    const grant = this.hands && (tools.length || watch || (inbox && who === 'claude')) ? this.hands.grant(tools, watch, inbox) : null
     const running = run(who, {
       prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || meta.protos?.[who] !== sent, cwd: meta.workspace, access,
       model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url || undefined, bench,
       hook: grant?.hook || undefined, outputs: shorten ? outputs(room) : undefined, effort: this.store.settings.effort?.[who], lean: saving.lean, short,
+      inbox: grant?.hook || http ? inbox : undefined, unload: this.store.settings.unload,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
       if (u.acts) {

@@ -41,7 +41,7 @@ const VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']
 // credential: it names the tools that turn may use and stops working when the turn ends.
 export class Hands {
   private server: Server | null = null
-  private grants = new Map<string, { tools: Tool[]; watch?: Watch; drop: string }>()
+  private grants = new Map<string, { tools: Tool[]; watch?: Watch; drop: string; inbox?: () => string | null }>()
   // Where a shortened command sends its output. That address ends up on a command line, which
   // other programs on the computer can read, so it has a token of its own that opens nothing else.
   private drops = new Map<string, Watch>()
@@ -69,15 +69,16 @@ export class Hands {
     this.port = 0
   }
 
-  grant(tools: Tool[], watch?: Watch) {
+  // inbox hands over a message the person sent mid-turn, once, after the agent's next step.
+  grant(tools: Tool[], watch?: Watch, inbox?: () => string | null) {
     // Without a server the agents run without the room's tools rather than call a dead address.
     if (!this.port) return { url: '', hook: '', revoke: () => {} }
     const token = randomBytes(18).toString('base64url')
     const drop = randomBytes(18).toString('base64url')
-    this.grants.set(token, { tools, watch, drop })
+    this.grants.set(token, { tools, watch, drop, inbox })
     if (watch) this.drops.set(drop, watch)
     const base = `http://127.0.0.1:${this.port}`
-    return { url: tools.length ? `${base}/mcp/${token}` : '', hook: watch ? `${base}/hook/${token}` : '', revoke: () => { this.grants.delete(token); this.drops.delete(drop) } }
+    return { url: tools.length ? `${base}/mcp/${token}` : '', hook: watch || inbox ? `${base}/hook/${token}` : '', revoke: () => { this.grants.delete(token); this.drops.delete(drop) } }
   }
 
   private send(res: ServerResponse, status: number, body?: unknown) {
@@ -109,7 +110,7 @@ export class Hands {
     }
     const raw = Buffer.concat(chunks).toString('utf8')
     if (drop) return this.output(res, raw, drop, rest ?? '')
-    if (route === 'hook') return this.send(res, 200, this.hook(raw, granted!.watch, granted!.drop))
+    if (route === 'hook') return this.send(res, 200, this.hook(raw, granted!.watch, granted!.drop, granted!.inbox))
     const tools = granted!.tools
     let body: Rpc | Rpc[]
     try { body = JSON.parse(raw) } catch { return this.send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) }
@@ -121,9 +122,13 @@ export class Hands {
   }
 
   // Called by the agent before each of its tool calls.
-  private hook(raw: string, watch: Watch | undefined, drop: string) {
-    let o: { tool_name?: string; tool_input?: Record<string, unknown> }
+  private hook(raw: string, watch: Watch | undefined, drop: string, inbox?: () => string | null) {
+    let o: { hook_event_name?: string; tool_name?: string; tool_input?: Record<string, unknown> }
     try { o = JSON.parse(raw) } catch { return {} }
+    if (o.hook_event_name === 'PostToolUse') {
+      const sent = inbox?.()
+      return sent ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: sent } } : {}
+    }
     if (watch?.kind === 'refuse') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'No tools in this turn. Reply in words only.' } }
     const command = o.tool_input?.command
     if (watch?.kind !== 'shorten' || o.tool_name !== 'Bash' || typeof command !== 'string' || o.tool_input?.run_in_background || !logs(command)) return {}
