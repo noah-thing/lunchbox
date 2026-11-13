@@ -20,6 +20,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p electron",
     "test": "node scripts/test.mjs",
     "live": "node scripts/live.mjs",
+    "bench": "node scripts/bench.mjs",
     "tour": "node test/tour.mjs",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",

@@ -80,8 +80,8 @@ Each tool uses your own login and plan. Your work goes from your computer to the
   </tr>
   <tr>
     <td valign="top">
-      <b>Prompt caching</b><br>
-      Lunchbox orders each request so the provider can reuse what it read last time. The Savings page shows the tokens and money that saved.
+      <b>Saving</b><br>
+      Lunchbox orders each request so the provider can reuse what it read last time, keeps a room's cache alive while you are away, and shortens long test and build output before an agent reads it. The Savings page shows what each of these saved.
     </td>
     <td valign="top">
       <b>Flows</b><br>
@@ -150,7 +150,7 @@ Lunchbox blocks a few commands in all four modes, such as `rm -rf ~`. You can re
 ### Pool, Savings, Packs and Flows
 
 - **Pool** adds up your plans and keys: what is left in each five hour and weekly window, when it resets, and which agent your picks rate highest for each kind of work.
-- **Savings** shows what prompt caching saved, per agent and per room.
+- **Savings** shows what Lunchbox saved and what your agents' own prompt caching saved, per agent and per room. The two are counted apart.
 - **Packs** give a room instructions for one kind of work, such as software, research, SEO or writing. [docs/packs.md](docs/packs.md) shows how to write your own.
 - **Flows** run a few steps on a schedule, each in a room of its own.
 
@@ -178,6 +178,7 @@ npm run dev         # Vite and Electron with hot reload
 npm test            # policy rules, parsers, caching, limits and full rooms run with fake agents
 npm run typecheck
 npm run tour        # drives the real app and saves screenshots to test/shots
+npm run bench       # the same tasks in plain Claude Code and in a room, with real agents and real usage
 npm run dist        # installers for the current platform in release/
 ```
 
