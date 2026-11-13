@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/noah-thing/lunchbox/actions/workflows/ci.yml"><img src="https://github.com/noah-thing/lunchbox/raw/badges/ci.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.4-F2F0EA?style=flat-square&labelColor=121110" alt="Version 0.1.4">
+  <img src="https://img.shields.io/badge/version-0.1.6-F2F0EA?style=flat-square&labelColor=121110" alt="Version 0.1.6">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-F2F0EA?style=flat-square&labelColor=121110&label=runs%20on" alt="Runs on macOS, Windows and Linux">
   <img src="https://img.shields.io/badge/Electron-45-F2F0EA?style=flat-square&labelColor=121110&logo=electron&logoColor=F2F0EA" alt="Electron 45">
   <img src="https://img.shields.io/badge/license-all%20rights%20reserved-F2F0EA?style=flat-square&labelColor=121110" alt="All rights reserved">
@@ -50,7 +50,7 @@ Lunchbox is a shared agent room: a desktop app where AI agents from different ve
 
 It supports Claude Code, Codex, Grok Build and Gemini CLI, OpenCode and other command line agents, local models through Ollama, LM Studio or llama.cpp, and API keys from 16 providers including Anthropic, OpenAI, xAI and Google. Lunchbox is free; get it at [mylunchbox.dev](https://mylunchbox.dev).
 
-Each tool uses your own login and plan. Your work goes from your computer to the company behind the tool, with no Lunchbox server in between.
+Each tool uses your own login and plan. Your work goes from your computer to the company behind the tool, with no Lunchbox server in between. Once a day Lunchbox sends an anonymous count: a random ID, the version and the system. Nothing about your rooms, files, prompts or keys. Turn it off in Settings.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/room-dark.png">
