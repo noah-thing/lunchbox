@@ -117,7 +117,14 @@ test('bench: Plan only reads, Ask asks before each change, Auto just works', asy
 test('ollama: a message sent mid-turn joins between steps, and unload frees the model', async () => {
   const { bench } = folder()
   const script = [calls('list_directory', {}), says('Done, and I used the new name.')]
+  const freed: string[] = []
   const f = await fake((n) => script[n], (req, res) => {
+    if (req.url === '/api/generate') {
+      freed.push(req.url)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{"done":true}')
+      return true
+    }
     if (req.url !== '/api/show') return false
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'qwen.context_length': 32768 } }))
@@ -134,7 +141,9 @@ test('ollama: a message sent mid-turn joins between steps, and unload frees the 
     assert.equal(second.at(-1).role, 'user', 'the message comes after the step it waited for')
     assert.equal(second.at(-1).content, 'Call it greet instead')
     assert.equal(second.filter((m: any) => m.content === 'Call it greet instead').length, 1, 'and is handed over once')
-    assert.equal(chats[0].body.keep_alive, 0, 'unloaded as soon as it answers')
+    assert.ok(chats.every((x: any) => x.body.keep_alive === '30m'), 'the model stays loaded between the steps of a turn')
+    await new Promise((r) => setTimeout(r, 50))
+    assert.equal(freed.length, 1, 'and is freed once, when the turn is over')
   } finally { delete PROVIDERS['fake-mid']; f.close() }
 })
 

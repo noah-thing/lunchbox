@@ -493,7 +493,7 @@ function ollamaWire(a: Ask, info: Local): Wire {
       const { res, beat, end } = await post(`${a.p.base}/chat`, {
         method: 'POST', headers: headers(a.p, a.key),
         body: JSON.stringify({
-          model: a.id, stream: true, keep_alive: a.p.unload ? 0 : '30m', messages,
+          model: a.id, stream: true, keep_alive: '30m', messages,
           // A cap on the answer too: a small model that falls into repeating itself would
           // otherwise write until the window is full.
           options: { num_ctx: info.window, num_predict: Math.min(16384, info.window) },
@@ -550,6 +550,13 @@ export type Hands = { bench: Bench; onStep(s: Step): void; inbox?(): string | nu
 export async function chat(name: string, key: string, model: string, system: string, prompt: string, signal: AbortSignal, onDelta: (d: string) => void, history: string[] = [], cacheKey = '', hands?: Hands) {
   const p = await reach(PROVIDERS[name])
   const id = await pick(name, key, model)
+  // Unloading is asked for once the whole turn is over, not on each request: a turn with tools is
+  // many requests, and the model would otherwise load again between every step. The next request
+  // from anywhere, this room or another app, loads it again on its own.
+  const release = () => {
+    if (p.style !== 'ollama' || !PROVIDERS[name]?.unload) return
+    fetch(`${p.base}/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: id, keep_alive: 0 }), signal: AbortSignal.timeout(5000) }).catch(() => {})
+  }
   const usage: Usage = { input: 0, output: 0, cached: 0, cost: 0 }
   const acts: Act[] = []
   const near = local(p.base)
@@ -667,9 +674,11 @@ export async function chat(name: string, key: string, model: string, system: str
       else if (p.style === 'ollama' && /model .*not found|404/.test(err.message)) err = new Error(`${id} is not downloaded on this Ollama server. Pick another model in Agents, or run: ollama pull ${id}`)
     }
     // What was done before it broke stays on the record with the reason.
+    release()
     throw Object.assign(err, { text: text.trim().replace(/\n{3,}/g, '\n\n'), acts, usage })
   }
   clearTimeout(slow)
+  release()
   // A model that streams nothing back has failed, even when the server said done. Saying so beats
   // an empty bubble the person cannot read anything from.
   if (!text.trim() && !acts.length) {
