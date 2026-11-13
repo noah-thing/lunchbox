@@ -855,7 +855,7 @@ test('flows: a step is judged only by what it added to the room', async () => {
 
 test('band patterns: every one stays in range, holds still for a still frame, and a visit picks a new one', async () => {
   const { PATTERNS, NAMES, glyph, nextPattern } = await import('../src/ui/patterns')
-  assert.equal(NAMES.length, 8)
+  assert.equal(NAMES.length, 14)
   for (const name of NAMES) {
     const f = PATTERNS[name]
     for (let c = 0; c < 140; c += 7) for (let r = 0; r < 9; r++) {
