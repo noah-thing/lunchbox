@@ -66,6 +66,37 @@ if (process.env.FAKE_SCRIPT === 'progress' && name === 'claude') {
   process.exit(0)
 }
 
+// FAKE_SCRIPT=prose: one long written answer as it streams, with every kind of block forming on the
+// way: paragraphs, a heading, a list, a code fence, a command and a file edit between them.
+if (process.env.FAKE_SCRIPT === 'prose' && name === 'claude') {
+  const se = (event) => say({ type: 'stream_event', event })
+  const write = (text) => { se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }); for (const w of text.split(/(?<= )/)) { se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: w } }); sleep(22) } }
+  const tool = (id, name, input, result) => {
+    say({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } })
+    sleep(700)
+    say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: result }] } })
+  }
+  const parts = [
+    'The date parser reads the month before the day, which is why every date after the twelfth fails. Here is what I found and what I changed.\n\n## What goes wrong\n\n',
+    '- `parseDate` splits on the slash and trusts the order\n- the locale is never passed down from the form\n- the test file only covers January, so nothing caught it\n\n',
+    'The fix is small. The parser takes the locale and picks the order from it:\n\n```ts\nexport function parseDate(text: string, locale = \'en-GB\') {\n  const [a, b, year] = text.split(\'/\').map(Number)\n  const dayFirst = locale !== \'en-US\'\n  return new Date(year, (dayFirst ? b : a) - 1, dayFirst ? a : b)\n}\n```\n\n',
+    'I also added the missing cases to the test file and ran the suite.\n\n1. Dates after the twelfth in both orders\n2. The last day of February in a leap year\n3. An empty string, which now returns null\n\n',
+    'All of it passes. The form now sends its locale, so the parser no longer has to guess.',
+  ]
+  say({ type: 'system', subtype: 'init', session_id: 'prose', model: 'claude-sonnet-5-5' })
+  write(parts[0]); write(parts[1])
+  tool('r1', 'Read', { file_path: process.cwd() + '/src/date.ts' }, 'export function parseDate')
+  write(parts[2])
+  tool('e1', 'Edit', { file_path: process.cwd() + '/src/date.ts', old_string: 'a', new_string: 'b' }, 'File updated')
+  write(parts[3])
+  tool('b1', 'Bash', { command: 'npm test -- date' }, '9 passed\nexit code 0')
+  write(parts[4])
+  const reply = parts.join('')
+  say({ type: 'assistant', message: { content: [{ type: 'text', text: reply }] } })
+  say({ type: 'result', subtype: 'success', is_error: false, result: reply, session_id: 'prose', total_cost_usd: 0.04, usage: { input_tokens: 6, output_tokens: 420, cache_read_input_tokens: 14200, cache_creation_input_tokens: 300 } })
+  process.exit(0)
+}
+
 // FAKE_SCRIPT=subagents: Claude splits the work across three subagents and reports back.
 if (process.env.FAKE_SCRIPT === 'subagents' && name === 'claude') {
   const tasks = [['a', 'Map where auth tokens are checked', 'Explore', 'haiku'], ['b', 'Write tests for the token parser', 'general-purpose', 'sonnet'], ['c', 'Review the session middleware', 'code-reviewer', 'opus']]
