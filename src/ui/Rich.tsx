@@ -1,5 +1,6 @@
 import { Fragment, memo, type ReactNode } from 'react'
 import { foldChecklists, same, sincePlan, type Step } from '../../shared/plan'
+import { steady } from '../../shared/stream'
 import { PlanCard } from './Plan'
 
 // Code, bold, web links, links to files on disk (shown as the file name) and bare URLs.
@@ -23,7 +24,8 @@ type Block =
   | { t: 'code'; lang: string; text: string }
   | { t: 'list'; ordered: boolean; items: { text: string; check?: boolean }[] }
 
-function blocks(src: string, prior: Pick<Step, 'text' | 'done'>[] = []): Block[] {
+// live: the last line is still being typed.
+function blocks(src: string, prior: Pick<Step, 'text' | 'done'>[] = [], live = false): Block[] {
   const out: Block[] = []
   const lines = src.replace(/\r/g, '').split('\n')
   let para: string[] = []
@@ -49,6 +51,9 @@ function blocks(src: string, prior: Pick<Step, 'text' | 'done'>[] = []): Block[]
       const entry = { text: item[4], check: item[3] === undefined ? undefined : item[3] !== ' ' }
       const ticks = entry.check && last?.t === 'list' ? last.items.find((it) => it.check !== undefined && same(it.text, entry.text)) : undefined
       if (ticks) ticks.check = true
+      // A tick being typed for a step already on the list is not a new step. It waits until
+      // enough of it is there to say which step it ticks.
+      else if (live && i === lines.length - 1 && entry.check && last?.t === 'list' && last.items.some((it) => it.check !== undefined)) continue
       else if (last?.t === 'list' && last.ordered === ordered) last.items.push(entry)
       else out.push({ t: 'list', ordered, items: [entry] })
       continue
@@ -68,10 +73,10 @@ export function Inline({ text }: { text: string }) {
 // prior: the room's plan before this message, so a repeated checklist shows only what changed.
 // plan: the room's plan. A checklist that is that plan lives in the panel, so the chat draws it as
 // it arrives and lets it go; a different list, a summary at the end say, stays where it is.
-export const Rich = memo(function Rich({ text, caret = false, prior, plan }: { text: string; caret?: boolean; prior?: Pick<Step, 'text' | 'done'>[]; plan?: Pick<Step, 'text'>[] }) {
-  // A line still arriving as "- [" reads as a plain bullet for a moment and would flip a plan into
-  // a list and back. It waits until it is clearly one or the other.
-  const list = blocks(caret ? text.replace(/(^|\n)[ \t]*[-*](?:[ \t]+\[?[ xX]?\]?)?[ \t]*$/, '$1') : text, prior)
+// caret: the text is still being written. flowing: this row showed the turn while it ran, so a
+// plan it drew is still on its way to the panel after the turn has ended.
+export const Rich = memo(function Rich({ text, caret = false, flowing = caret, prior, plan }: { text: string; caret?: boolean; flowing?: boolean; prior?: Pick<Step, 'text' | 'done'>[]; plan?: Pick<Step, 'text'>[] }) {
+  const list = blocks(caret ? steady(text) : text, prior, caret)
   return (
     <div className="rich">
       {list.map((b, i) => {
@@ -85,8 +90,8 @@ export const Rich = memo(function Rich({ text, caret = false, prior, plan }: { t
             // changes shape when the second arrives.
             if (b.items.every((it) => it.check !== undefined) && (b.items.length > 1 || (caret && i === list.length - 1 && !b.items[0].check))) {
               const isPlan = !!plan?.length && b.items.every((it) => plan.some((s) => same(s.text, it.text)))
-              if (isPlan && !caret) return null
-              return <PlanCard key={i} items={b.items} live={caret} plan={isPlan} render={inline} />
+              if (isPlan && !flowing) return null
+              return <PlanCard key={i} items={b.items} live={flowing} writing={caret} plan={isPlan} render={inline} />
             }
             const Tag = b.ordered ? 'ol' : 'ul'
             return (
@@ -102,7 +107,8 @@ export const Rich = memo(function Rich({ text, caret = false, prior, plan }: { t
           }
         }
       })}
-      {caret && !list.length && <span className="caret" />}
+      {/* The first line is there before its first word, so the row does not grow when it comes. */}
+      {caret && !list.length && <p><span className="caret" /></p>}
     </div>
   )
 })

@@ -4,6 +4,7 @@ import { wallWhy } from '../../shared/wall'
 import { plan, planOn, plansBefore, type Step } from '../../shared/plan'
 import { searchOf, stepOf, type Search } from '../../shared/steps'
 import { cut } from '../../shared/weave'
+import { glide, reflow, reflowing, type Glide } from '../lib/glide'
 import { Loader, Mark, Meter, Sure, Thumb } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { Menu } from '../ui/Access'
@@ -124,7 +125,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // A new plan lifts out of the chat into the panel, so the panel opens for it. Only for now: the
   // choice to keep it closed stays saved.
   useEffect(() => {
-    const open = () => { if (!panelOn.current) { glideFrom.current = columnLeft(); setPanel(true) } }
+    const open = () => { if (!panelOn.current) { glideFrom.current = columnLeft(); reflow(); setPanel(true) } }
     addEventListener('lunchbox:plan', open)
     return () => removeEventListener('lunchbox:plan', open)
   }, [])
@@ -145,6 +146,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // Defined before the loading return: the shortcut can fire while the room is still loading.
   const togglePanel = () => {
     glideFrom.current = columnLeft()
+    reflow()
     setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
   }
   // Queued text handed back to the message box, once per hand back: not on every live update, and
@@ -328,27 +330,19 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     if (!opened.current) { el.scrollTop = el.scrollHeight; ours.current = el.scrollTop; opened.current = events.length > 0; return }
   }, [size])
   const working = !!live?.turns.length || !!live?.runs.length
+  // Rows pushed down by what grows above them travel there at the pace the view follows, so
+  // nothing in the room moves in one step.
+  const flow = useRef<Glide | null>(null)
   useEffect(() => {
-    let raf = 0
-    const follow = () => {
-      const el = box.current
-      if (el && stick.current) {
-        const gap = el.scrollHeight - el.clientHeight - el.scrollTop
-        if (gap > 0.5) { el.scrollTop += Math.max(1, gap * 0.16); ours.current = el.scrollTop }
-      }
-      raf = requestAnimationFrame(follow)
-    }
-    raf = requestAnimationFrame(follow)
-    const stop = setTimeout(() => cancelAnimationFrame(raf), working ? 1e9 : 1500)
-    return () => { cancelAnimationFrame(raf); clearTimeout(stop) }
-  }, [working, size])
-  // A turn that finishes swaps its live row for the saved event. The swap must not play the
-  // arrival again, so events that replace a live row are marked settled and never animate in.
-  const settled = useRef(new Set<string>())
-  // When a live row becomes its saved event the column can come out a few pixels shorter, which
-  // would pull the view up. While a turn is live the column keeps the tallest height it has
-  // reached, and holds it through the swap. It lets go when the next turn starts, when the width
-  // changes and text reflows, and when a rewind or a fork removes events.
+    const g = glide(box.current!, column.current!, { stuck: () => stick.current, busy: () => holding.current, scrolled: (top) => { ours.current = top } })
+    flow.current = g
+    return () => g.stop()
+  }, [])
+  useLayoutEffect(() => { flow.current?.sync(); flow.current?.wake() })
+  // When a turn ends its row can come out shorter (the working line goes, a plan has left for the
+  // panel), which would pull the view up. While a turn is live the column keeps the tallest
+  // height it has reached and holds it afterwards; what comes next fills that space first. It
+  // lets go when the width changes and text reflows, and when a rewind or a fork removes events.
   const column = useRef<HTMLDivElement>(null)
   const tallest = useRef({ h: 0, n: 0, w: 0 })
   const holding = useRef(working)
@@ -358,7 +352,8 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     const el = column.current
     if (!el) return
     const ro = new ResizeObserver(() => {
-      if (el.offsetWidth !== tallest.current.w) { tallest.current.w = el.offsetWidth; release() }
+      // The panel opening or closing keeps the hold: letting go there would drop the view.
+      if (el.offsetWidth !== tallest.current.w) { tallest.current.w = el.offsetWidth; if (!reflowing()) release() }
       if (!holding.current) return
       const h = el.offsetHeight
       if (h > tallest.current.h) { tallest.current.h = h; el.style.minHeight = `${h}px` }
@@ -366,13 +361,23 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
-  useLayoutEffect(() => { if (working) release() }, [working])
   useLayoutEffect(() => {
     if (events.length < tallest.current.n) release()
     tallest.current.n = events.length
   }, [events.length])
   const seen = useRef(new Map<string, LiveTurn>())
   for (const t of live?.turns ?? []) seen.current.set(t.id, t)
+  // The live turn each saved event came out of. The row that showed the turn carries on as the
+  // event under the same key, so nothing is drawn a second time when a turn ends.
+  const born = useRef(new Map<string, string>())
+  const turnOf = (e: Event) => {
+    const known = born.current.get(e.id)
+    if (known !== undefined) return known || undefined
+    const taken = new Set(born.current.values())
+    const t = e.kind === 'say' && e.turn && seen.current.has(e.turn) ? seen.current.get(e.turn) : [...seen.current.values()].find((t) => !taken.has(t.id) && replaces(e, t))
+    born.current.set(e.id, t?.id ?? '')
+    return t?.id
+  }
   useEffect(() => {
     if (!focus) return
     const el = box.current?.querySelector(`[data-id="${focus}"]`)
@@ -388,68 +393,85 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   const priors = useMemo(() => plansBefore(events), [events])
   const current = useMemo(() => plan(events), [events])
   const going = useMemo(() => planOn(current, liveEvents(live ?? undefined)), [current, live])
-  // Help a turn called for while it ran, shown inside that turn where it was asked for: the turn's
-  // text up to the ask, the help, then the rest of the turn.
-  const hosts = new Set<string>([...events.flatMap((e) => (e.kind === 'say' && e.turn ? [e.turn] : [])), ...(live?.turns ?? []).map((t) => t.id)])
+  const turns = live?.turns ?? []
+  const landed = (t: LiveTurn) => events.some((e) => replaces(e, t))
+  // Help a turn called for while it ran is shown inside that turn, where it was asked for: the
+  // turn's text up to the ask, the help, then the rest of the turn. A crewmate still answering
+  // takes that place from its first moment, so nothing moves when its answer is saved.
+  const hosts = new Set<string>([...events.flatMap((e) => (e.kind === 'say' && e.turn ? [e.turn] : [])), ...turns.map((t) => t.id)])
   const helped = new Map<string, Event[]>()
   for (const e of events) if (e.inside && hosts.has(e.inside.turn)) helped.set(e.inside.turn, [...(helped.get(e.inside.turn) ?? []), e])
-  const isSettled = (e: Event) => {
-    if (!settled.current.has(e.id) && [...seen.current.values()].some((t) => replaces(e, t))) settled.current.add(e.id)
-    return settled.current.has(e.id)
+  const asked = useRef(new Map<string, number>())
+  const helping = new Map<string, LiveTurn[]>()
+  for (const x of turns) {
+    const host = x.from && !x.arena ? turns.find((t) => t.id !== x.id && t.who === x.from && t.kind === 'say' && !t.arena && !landed(t)) : undefined
+    if (!host || landed(x)) continue
+    if (!asked.current.has(x.id)) asked.current.set(x.id, host.text.length)
+    helping.set(host.id, [...(helping.get(host.id) ?? []), x])
   }
-  const row = (e: Event, grouped: boolean, still: boolean, key = e.id, piece?: Piece, text?: string) =>
-    <Settled.Provider key={key} value={still}><Row e={e} grouped={grouped} agents={agents} actions={actions} chosen={chosen} prior={priors.get(e.id)} plan={going} piece={piece} text={text} /></Settled.Provider>
-  // The pieces between the turn's opening and its live or finished end.
-  const helps = (list: Event[], parts: string[], who: string, at: number, still: boolean, key: string) => list.forEach((h, i) => {
-    rows.push(row(h, false, isSettled(h)))
-    if (i < list.length - 1 && parts[i + 1]) rows.push(row({ kind: 'say', id: `${key}:${i}`, at, who, text: parts[i + 1], acts: [] }, true, still, `${key}:${i}`, 'mid'))
-  })
+  const nested = new Set([...helping.values()].flat().map((x) => x.id))
+
+  const shared = { agents, actions, plan: going }
+  const row = (e: Event, still: boolean) => {
+    if (e.kind === 'hands') return <Hands key={turnOf(e) ?? e.id} e={e} prior={priors.get(e.id)} {...shared} />
+    return <Settled.Provider key={e.id} value={still}><Row e={e} agents={agents} actions={actions} chosen={chosen} /></Settled.Provider>
+  }
+  const lead = (t: LiveTurn) => (live!.active === t.who ? live!.doing : '')
+  // A turn drawn around the help it called for: its opening, each piece of help with the text
+  // that followed it, and last the row that carries the acts, the outcome and the message tools.
+  const around = (key: string, who: string, parts: string[], help: ReactNode[], grouped: boolean, still: boolean, e?: Say) => {
+    rows.push(<Turn key={`${key}:head`} who={who} e={e} piece="head" text={parts[0]} grouped={grouped} still={still} {...shared} />)
+    help.forEach((h, i) => {
+      rows.push(h)
+      if (i < help.length - 1 && parts[i + 1]) rows.push(<Turn key={`${key}:${i}`} who={who} e={e} piece="mid" text={parts[i + 1]} grouped still={still} {...shared} />)
+    })
+  }
   const arenas = new Set<string>()
   const rows: ReactNode[] = []
   let last = ''
   for (const e of events) {
     if (e.inside && hosts.has(e.inside.turn)) continue
-    if (e.kind === 'say' && e.turn && helped.has(e.turn)) {
-      const list = helped.get(e.turn)!
-      const parts = cut(e.text, list.map((h) => h.inside!.mark))
-      const still = isSettled(e)
-      rows.push(row(e, last === e.who, still, e.id, 'head', parts[0]))
-      helps(list, parts, e.who, e.at, still, e.id)
-      rows.push(row(e, true, still, `${e.id}:end`, 'tail', parts[parts.length - 1]))
-      last = e.who
-      continue
-    }
     if (e.kind === 'say' && e.arena) {
       if (arenas.has(e.arena)) continue
       arenas.add(e.arena)
       const done = events.filter((x): x is Say => x.kind === 'say' && x.arena === e.arena)
-      const going = live?.turns.filter((t) => t.arena === e.arena) ?? []
+      const going = turns.filter((t) => t.arena === e.arena)
       rows.push(<Arena key={e.id} id={e.arena} done={done} going={going} picked={picks.get(e.arena)} agents={agents} pick={actions.pick} />)
       last = ''
       continue
     }
-    const speaker = e.kind === 'say' ? e.who : e.kind
-    rows.push(row(e, e.kind === 'say' && last === speaker, isSettled(e)))
-    last = speaker
+    if (e.kind === 'say') {
+      const from = turnOf(e)
+      const key = from ?? e.id
+      const list = e.turn ? helped.get(e.turn) : undefined
+      if (list) {
+        const parts = cut(e.text, list.map((h) => h.inside!.mark))
+        around(key, e.who, parts, list.map((h) => row(h, !!turnOf(h))), last === e.who, !!from, e)
+        rows.push(<Turn key={key} who={e.who} e={e} piece="tail" text={parts[parts.length - 1]} grouped {...shared} />)
+      } else rows.push(<Turn key={key} who={e.who} e={e} grouped={last === e.who} prior={priors.get(e.id)} {...shared} />)
+      last = e.who
+      continue
+    }
+    rows.push(row(e, !!turnOf(e)))
+    last = e.kind
   }
-  const landed = (t: LiveTurn) => events.some((e) => replaces(e, t))
-  for (const t of live?.turns ?? []) {
-    if (landed(t)) continue
+  for (const t of turns) {
+    if (landed(t) || nested.has(t.id)) continue
     if (t.arena) {
-      if (!arenas.has(t.arena)) { arenas.add(t.arena); rows.push(<Arena key={t.id} id={t.arena} done={[]} going={live!.turns.filter((x) => x.arena === t.arena)} agents={agents} pick={actions.pick} />) }
+      if (!arenas.has(t.arena)) { arenas.add(t.arena); rows.push(<Arena key={t.id} id={t.arena} done={[]} going={turns.filter((x) => x.arena === t.arena)} agents={agents} pick={actions.pick} />) }
       continue
     }
-    const helper = live!.turns.find((x) => x.from === t.who && x.id !== t.id)
-    const list = helped.get(t.id)
-    if (list && t.kind === 'say') {
-      const parts = cut(t.text, list.map((h) => h.inside!.mark))
-      rows.push(row({ kind: 'say', id: `${t.id}:head`, at: t.started, who: t.who, text: parts[0], acts: [] }, last === t.who, true, `${t.id}:head`, 'head'))
-      helps(list, parts, t.who, t.started, true, t.id)
-      rows.push(<LiveRow key={t.id} t={{ ...t, text: parts[parts.length - 1] }} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped helper={helper && agentOf(helper.who, agents)} prior={current} plan={going} />)
-      last = t.who
-      continue
-    }
-    rows.push(<LiveRow key={t.id} t={t} agents={agents} doing={live!.active === t.who ? live!.doing : ''} grouped={t.kind === 'say' && last === t.who} helper={helper && agentOf(helper.who, agents)} prior={current} plan={going} />)
+    if (t.image) { rows.push(<Drawing key={t.id} t={t} agents={agents} />); last = t.who; continue }
+    if (t.kind === 'hands') { rows.push(<Hands key={t.id} t={t} doing={lead(t)} prior={current} {...shared} />); last = t.who; continue }
+    const list = helped.get(t.id) ?? []
+    const now = helping.get(t.id) ?? []
+    const helper = now[0] && agentOf(now[0].who, agents)
+    if (list.length + now.length) {
+      const parts = cut(t.text, [...list.map((h) => h.inside!.mark), ...now.map((x) => asked.current.get(x.id) ?? t.text.length)])
+      const help = [...list.map((h) => row(h, !!turnOf(h))), ...now.map((x) => (x.image ? <Drawing key={x.id} t={x} agents={agents} /> : <Hands key={x.id} t={x} doing={lead(x)} prior={current} {...shared} />))]
+      around(t.id, t.who, parts, help, last === t.who, true)
+      rows.push(<Turn key={t.id} who={t.who} t={{ ...t, text: parts[parts.length - 1] }} piece="tail" grouped doing={lead(t)} helper={helper} prior={current} {...shared} />)
+    } else rows.push(<Turn key={t.id} who={t.who} t={t} grouped={last === t.who} doing={lead(t)} helper={helper} prior={current} {...shared} />)
     last = t.who
   }
   // Only the first command waiting for an answer takes the keyboard, so one key never answers two.
@@ -488,8 +510,8 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
 
 const Settled = createContext(false)
 
-function Ev({ mark, grouped = false, className = '', id, children }: { mark: ReactNode; grouped?: boolean; className?: string; id?: string; children: ReactNode }) {
-  const settled = useContext(Settled)
+function Ev({ mark, grouped = false, className = '', id, still = false, children }: { mark: ReactNode; grouped?: boolean; className?: string; id?: string; still?: boolean; children: ReactNode }) {
+  const settled = useContext(Settled) || still
   return (
     <div className={`ev ${className}${grouped ? ' grouped' : ''}${settled ? ' settled' : ''}`} data-id={id}>
       <div className="gut">{!grouped && mark}</div>
@@ -509,7 +531,7 @@ function wallText(e: Extract<Event, { kind: 'wall' }>, agents: AgentInfo[]) {
 // the tail the outcome, the acts and the message tools.
 type Piece = 'head' | 'mid' | 'tail'
 
-function Row({ e, grouped, agents, actions, chosen, prior, plan, piece, text }: { e: Event; grouped: boolean; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string>; prior?: Step[]; plan?: Step[]; piece?: Piece; text?: string }) {
+function Row({ e, agents, actions, chosen }: { e: Event; agents: AgentInfo[]; actions: Actions; chosen: Map<string, string> }) {
   switch (e.kind) {
     case 'you':
       return (
@@ -521,56 +543,16 @@ function Row({ e, grouped, agents, actions, chosen, prior, plan, piece, text }: 
             <Rich text={e.text} />
             {e.files && <div className="attached">{e.files.map((f) => <span key={f} className="file" title={f}><Thumb path={f} /><span>{f.split(/[\\/]/).pop()}</span></span>)}</div>}
           </div>
-          {actions.checkpoint(e.id) && <Rewind id={e.id} actions={actions} />}
+          {/* The room for it is kept from the start: the checkpoint is recorded a moment after the message lands. */}
+          {actions.checkpoint(e.id) ? <Rewind id={e.id} actions={actions} /> : <div className="rewind" aria-hidden />}
         </div>
       )
-    case 'say': {
-      const a = agentOf(e.who, agents)
-      const shown = text ?? e.text
-      if (piece && piece !== 'tail') return (
-        <Ev id={piece === 'head' ? e.id : undefined} mark={<Mark seed={a.mark} size={16} />} grouped={grouped || piece === 'mid'} className="turn">
-          {piece === 'head' && !grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
-          {shown && <Rich text={shown} prior={prior} plan={plan} />}
-        </Ev>
-      )
-      return (
-        <Ev id={piece ? undefined : e.id} mark={<Mark seed={a.mark} size={16} />} grouped={grouped} className="turn">
-          {!grouped && <div className="who"><b className="name">{a.short}</b><span className="when">{clock(e.at)}</span></div>}
-          {shown && <Rich text={shown} prior={prior} plan={plan} />}
-          {e.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}{e.error !== 'Stopped' && <button className="reportbtn" onClick={() => openReport({ context: `${a.short}: ${e.error}` })}>Report this</button>}</div>}
-          <Acts acts={e.acts} />
-          {e.proof?.map((p) => (
-            <div key={p.claim} className={`proof${p.ok ? '' : ' bad'}`}><i />{p.ok ? 'Proved' : 'Not proved'}: {p.claim}<span>{p.text.replace(/`/g, '')}</span></div>
-          ))}
-          <Tools e={e} actions={actions} />
-        </Ev>
-      )
-    }
     case 'image': {
       const by = agentOf(e.by, agents)
       return (
         <Ev id={e.id} mark={<Mark seed={by.mark} size={16} />} className="hands">
           <div className="handhead"><b className="name">{by.short}</b><span>made an image for</span><Mark seed={agentOf(e.for, agents).mark} size={12} /><span>{agentOf(e.for, agents).short}</span><span className="when">{clock(e.at)}</span></div>
           <Picture path={e.path} prompt={e.prompt} size={e.size} />
-        </Ev>
-      )
-    }
-    case 'hands': {
-      const from = agentOf(e.from, agents)
-      const to = agentOf(e.to, agents)
-      return (
-        <Ev id={e.id} mark={<Mark seed={to.mark} size={16} />} className="hands">
-          <div className="handhead">
-            <b className="name">{to.short}</b><span>{e.via === 'tool' ? 'lent a hand to' : 'answered'}</span><Mark seed={from.mark} size={12} /><span>{from.short}</span>
-            {e.via === 'tool' && <span className="tag" title={`${from.short} called ${to.short} through the room's tools and kept working with the answer`}>mid-turn</span>}
-            <span className="when">{clock(e.at)}</span>
-          </div>
-          <div className="exchange">
-            <p className="asked">{e.ask}</p>
-            <div className="got">{e.answer ? <Rich text={e.answer} prior={prior} plan={plan} /> : <span className="err">{e.error ?? 'No answer'}</span>}</div>
-            <Acts acts={e.acts} />
-          </div>
-          <Tools e={e} actions={actions} />
         </Ev>
       )
     }
@@ -644,45 +626,90 @@ function liveEvents(live?: Live): Event[] {
     : { kind: 'say', id: t.id, at: t.started, who: t.who, text: t.text } as Event)
 }
 
-function LiveRow({ t, agents, doing, grouped, helper, prior, plan }: { t: LiveTurn; agents: AgentInfo[]; doing: string; grouped: boolean; helper?: AgentInfo; prior?: Step[]; plan?: Step[] }) {
-  const a = agentOf(t.who, agents)
-  // A line that hands work to a crewmate ("@grok: ...") becomes its own handoff block when the
-  // turn ends, so it is never typed out here first.
-  const said = t.kind === 'say' ? t.text.replace(/(^|\n)@[\w.-]+:[^\n]*(?=\n|$)/g, '').replace(/(^|\n)@[\w.-]*:?[^\n]*$/, '').trimEnd() : t.text
-  const shown = useSmooth(said)
-  const quiet = !said.trim()
-  // The step line belongs to the agent leading the room; a crewmate answering a question shows
-  // only what it is doing.
-  const working = <Working t={t} a={a} fallback={doing} waiting={helper} plan={t.kind === 'say' ? plan : undefined} />
-  if (t.image) {
-    const from = agentOf(t.from ?? '', agents)
-    return (
-      <Ev mark={<Mark seed={a.mark} size={16} active />} className="hands live">
-        <div className="handhead"><b className="name">{a.short}</b><span>is drawing an image for</span><Mark seed={from.mark} size={12} /><span>{from.short}</span></div>
-        <Developing t={t} a={a} />
-      </Ev>
-    )
-  }
-  if (t.kind === 'hands') {
-    const from = agentOf(t.from ?? '', agents)
-    return (
-      <Ev mark={<Mark seed={a.mark} size={16} active />} className="hands live">
-        <div className="handhead"><b className="name">{from.short}</b><span>asked</span><Mark seed={a.mark} size={12} /><b className="name">{a.short}</b></div>
-        <div className="exchange">
-          <p className="asked">{t.ask}</p>
-          {!quiet && <div className="got"><Rich text={shown} caret prior={prior} plan={plan} /></div>}
-          <Acts acts={t.acts} live />
-          {working}
-        </div>
-      </Ev>
-    )
-  }
+// What a live turn has said so far. A line that hands work to a crewmate ("@grok: ...") becomes
+// its own handoff block when the turn ends, so it is never typed out here first.
+const spoken = (t: LiveTurn) => t.text.replace(/(^|\n)@[\w.-]+:[^\n]*(?=\n|$)/g, '').replace(/(^|\n)@[\w.-]*:?[^\n]*$/, '').trimEnd()
+
+type Shared = { agents: AgentInfo[]; actions: Actions; plan?: Step[] }
+
+// One agent's turn, while it runs and after. The same row shows both, so when the turn ends the
+// text keeps its place and its pace, the working line gives way to the outcome, and nothing is
+// drawn again. A turn that called for help is drawn in pieces: head and mid carry only words.
+function Turn({ who, e, t, piece, text, grouped, still, doing = '', helper, prior, plan, agents, actions }: Shared & {
+  who: string; e?: Say; t?: LiveTurn; piece?: Piece; text?: string; grouped: boolean; still?: boolean; doing?: string; helper?: AgentInfo; prior?: Step[]
+}) {
+  const a = agentOf(who, agents)
+  const flowing = useRef(!!t).current
+  const raw = t ? spoken(t) : text ?? e?.text ?? ''
+  const shown = useSmooth(raw, flowing)
+  const writing = !!t || shown.length < raw.length
+  const words = piece === 'head' || piece === 'mid'
+  const work = useLeaving(t)
   return (
-    <Ev mark={<Mark seed={a.mark} size={16} active />} grouped={grouped} className="turn live">
-      {!grouped && <div className="who"><b className="name">{a.short}</b></div>}
-      {!quiet && <Rich text={shown} caret prior={prior} plan={plan} />}
-      <Acts acts={t.acts} live />
-      {working}
+    <Ev id={piece === 'mid' || piece === 'tail' ? undefined : e?.id} mark={<Mark seed={a.mark} size={16} active={!!t} />} grouped={grouped || piece === 'mid'} className={`turn${t ? ' live' : ''}`} still={still}>
+      {!grouped && piece !== 'mid' && <div className="who"><b className="name">{a.short}</b>{e && <span className="when">{clock(e.at)}</span>}</div>}
+      {raw.trim() && <Rich text={shown} caret={writing} flowing={flowing} prior={prior} plan={plan} />}
+      {!words && e?.error && <div className={`err${e.error === 'Stopped' ? ' soft' : ''}`}>{e.error === 'Stopped' ? 'Stopped' : e.error}{e.error !== 'Stopped' && <button className="reportbtn" onClick={() => openReport({ context: `${a.short}: ${e.error}` })}>Report this</button>}</div>}
+      {!words && <Acts acts={(t ?? e)?.acts ?? []} live={!!t} />}
+      {!words && work && <Working t={work} a={a} fallback={doing} waiting={helper} plan={plan} leaving={!t} />}
+      {!words && !work && e?.proof?.map((p) => (
+        <div key={p.claim} className={`proof${p.ok ? '' : ' bad'}`}><i />{p.ok ? 'Proved' : 'Not proved'}: {p.claim}<span>{p.text.replace(/`/g, '')}</span></div>
+      ))}
+      {!words && !work && e && <Tools e={e} actions={actions} />}
+    </Ev>
+  )
+}
+
+// One agent answering another: who answers whom, the question as it was asked, and what comes
+// back. The row is the same while the answer is written and once it is saved.
+function Hands({ e, t, doing = '', prior, plan, agents, actions }: Shared & { e?: Extract<Event, { kind: 'hands' }>; t?: LiveTurn; doing?: string; prior?: Step[] }) {
+  const to = agentOf(t ? t.who : e!.to, agents)
+  const from = agentOf(t ? t.from ?? '' : e!.from, agents)
+  const flowing = useRef(!!t).current
+  const raw = t ? t.text : e!.answer
+  const shown = useSmooth(raw, flowing)
+  const writing = !!t || shown.length < raw.length
+  const tool = e?.via === 'tool'
+  const work = useLeaving(t)
+  return (
+    <Ev id={e?.id} mark={<Mark seed={to.mark} size={16} active={!!t} />} className={`hands${t ? ' live' : ''}`}>
+      <div className="handhead">
+        <b className="name">{to.short}</b><span>{t ? 'is answering' : tool ? 'lent a hand to' : 'answered'}</span><Mark seed={from.mark} size={12} /><span>{from.short}</span>
+        {tool && <span className="tag" title={`${from.short} called ${to.short} through the room's tools and kept working with the answer`}>mid-turn</span>}
+        {e && <span className="when">{clock(e.at)}</span>}
+      </div>
+      <div className="exchange">
+        <p className="asked">{t ? t.ask : e!.ask}</p>
+        {raw.trim() ? <div className="got"><Rich text={shown} caret={writing} flowing={flowing} prior={prior} plan={plan} /></div> : e && <div className="got"><span className="err">{e.error ?? 'No answer'}</span></div>}
+        <Acts acts={(t ?? e)?.acts ?? []} live={!!t} />
+        {work && <Working t={work} a={to} fallback={doing} leaving={!t} />}
+      </div>
+      {!work && e && <Tools e={e} actions={actions} />}
+    </Ev>
+  )
+}
+
+// The turn a row was showing, kept for a moment after it ends: its working line fades where it
+// stands, and the outcome takes its place in one step, so the row changes height once.
+function useLeaving(t?: LiveTurn) {
+  const last = useRef(t)
+  if (t) last.current = t
+  const [gone, setGone] = useState(!t)
+  useEffect(() => {
+    if (t) { setGone(false); return }
+    const out = setTimeout(() => setGone(true), 200)
+    return () => clearTimeout(out)
+  }, [!!t])
+  return t ?? (gone ? undefined : last.current)
+}
+
+function Drawing({ t, agents }: { t: LiveTurn; agents: AgentInfo[] }) {
+  const a = agentOf(t.who, agents)
+  const from = agentOf(t.from ?? '', agents)
+  return (
+    <Ev mark={<Mark seed={a.mark} size={16} active />} className="hands live">
+      <div className="handhead"><b className="name">{a.short}</b><span>is drawing an image for</span><Mark seed={from.mark} size={12} /><span>{from.short}</span></div>
+      <Developing t={t} a={a} />
     </Ev>
   )
 }
@@ -690,28 +717,32 @@ function LiveRow({ t, agents, doing, grouped, helper, prior, plan }: { t: LiveTu
 // Text as it streams in, let out at an even reading pace. Agents send words in bursts; shown
 // as they come, the line stutters. This keeps a steady speed and only hurries when far behind,
 // so it never trails the agent by more than a moment.
-function useSmooth(text: string) {
+function useSmooth(text: string, on: boolean) {
   const target = useRef(text)
   target.current = text
-  const [n, setN] = useState(0)
+  const at = useRef(on ? 0 : text.length)
+  const [n, setN] = useState(at.current)
+  const raf = useRef(0)
   useEffect(() => {
-    let raf = 0
-    let shown = 0
+    if (!on) return
+    // Text that was cut back, a turn split around the help it asked for, starts from its new end.
+    if (at.current > text.length) at.current = text.length
+    if (raf.current || at.current >= text.length) return
     let last = performance.now()
     const tick = (now: number) => {
       const dt = Math.min(50, now - last)
       last = now
-      const left = target.current.length - shown
-      if (left > 0) {
-        shown = Math.min(target.current.length, shown + Math.max(70, left * 4.5) * dt / 1000)
-        setN(Math.floor(shown))
-      }
-      raf = requestAnimationFrame(tick)
+      const left = target.current.length - at.current
+      // Caught up: the loop rests until more arrives, so a finished turn costs nothing.
+      if (left <= 0) { raf.current = 0; return }
+      at.current = Math.min(target.current.length, at.current + Math.max(70, left * 4.5) * dt / 1000)
+      setN(Math.floor(at.current))
+      raf.current = requestAnimationFrame(tick)
     }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [])
-  return n >= text.length ? text : text.slice(0, n)
+    raf.current = requestAnimationFrame(tick)
+  }, [text, on])
+  useEffect(() => () => cancelAnimationFrame(raf.current), [])
+  return !on || n >= text.length ? text : text.slice(0, n)
 }
 
 // Seconds since a live turn started, ticking while it runs.
@@ -727,21 +758,22 @@ function useElapsed(since: number) {
 
 // What an agent is doing right now, in words: the verb, the command or tool, and how long it
 // has taken so far.
-function Working({ t, a, fallback, waiting, plan }: { t: LiveTurn; a: AgentInfo; fallback: string; waiting?: AgentInfo; plan?: Step[] }) {
+function Working({ t, a, fallback, waiting, plan, leaving = false }: { t: LiveTurn; a: AgentInfo; fallback: string; waiting?: AgentInfo; plan?: Step[]; leaving?: boolean }) {
   const elapsed = useElapsed(t.started)
   // With a plan, the line says which step the work is on, above what is happening this moment.
-  const at = plan ? plan.findIndex((s) => !s.done) : -1
-  if (plan && at >= 0 && !waiting && !planDrawing()) return (
-    <div className="workpair">
-      <div className="workstep" key={at}><span className="n">{at + 1}/{plan.length}</span><span className="t"><Inline text={plan[at].text} /></span></div>
-      <Now t={t} a={a} fallback={fallback} elapsed={elapsed} />
+  // The step line belongs to the agent leading the room; a crewmate answering shows only its work.
+  const at = plan && t.kind === 'say' ? plan.findIndex((s) => !s.done) : -1
+  const search = t.now ? searchOf(t.now) : null
+  const step = !!plan && at >= 0 && !waiting && !planDrawing()
+  return (
+    <div className={`workpair${leaving ? ' leaving' : ''}`} aria-hidden={leaving || undefined}>
+      {step && <div className="workstep" key={at}><span className="n">{at + 1}/{plan!.length}</span><span className="t"><Inline text={plan![at].text} /></span></div>}
+      {/* Mid-turn help: the crewmate's own row shows the work, this line says who has it. */}
+      {waiting ? <div className="workline"><Loader size={10} /><span className="shimmer">Waiting for {waiting.short}</span><time>{elapsed}</time></div>
+        : search && at < 0 ? <SearchLive search={search} elapsed={elapsed} />
+        : <Now t={t} a={a} fallback={fallback} elapsed={elapsed} />}
     </div>
   )
-  // Mid-turn help: the crewmate's own row below shows the work, this line says who has it.
-  if (waiting) return <div className="workline"><Loader size={10} /><span className="shimmer">Waiting for {waiting.short}</span><time>{elapsed}</time></div>
-  const search = t.now ? searchOf(t.now) : null
-  if (search) return <SearchLive search={search} elapsed={elapsed} />
-  return <Now t={t} a={a} fallback={fallback} elapsed={elapsed} />
 }
 
 function Now({ t, a, fallback, elapsed }: { t: LiveTurn; a: AgentInfo; fallback: string; elapsed: string }) {
@@ -749,7 +781,7 @@ function Now({ t, a, fallback, elapsed }: { t: LiveTurn; a: AgentInfo; fallback:
   return (
     <div className="workline">
       <Loader size={10} />
-      {step ? <><span className="shimmer">{step.verb}</span>{step.text && <code>{step.text}</code>}</> : <span className="shimmer">{fallback.startsWith(a.short + ' ') ? fallback : `${a.short} is thinking`}</span>}
+      {step ? <><span className="shimmer" key={step.verb}>{step.verb}</span>{step.text && <code key={step.text}>{step.text}</code>}</> : <span className="shimmer" key="idle">{fallback.startsWith(a.short + ' ') ? fallback : `${a.short} is thinking`}</span>}
       <time>{elapsed}</time>
       {!!t.tokens && <time className="tok">{tokensOf(t.tokens)}</time>}
     </div>

@@ -22,7 +22,8 @@ export function onHanded(f: () => void) {
   return () => { handed.delete(f) }
 }
 
-export function PlanCard({ items, live, plan, render }: { items: Item[]; live: boolean; plan: boolean; render: (text: string) => ReactNode }) {
+// live: the row was there while the turn ran. writing: the turn is still running.
+export function PlanCard({ items, live, writing = live, plan, render }: { items: Item[]; live: boolean; writing?: boolean; plan: boolean; render: (text: string) => ReactNode }) {
   const start = useRef(performance.now())
   const [stage, setStage] = useState<'here' | 'leaving' | 'gone'>('here')
   const count = items.length
@@ -52,7 +53,7 @@ export function PlanCard({ items, live, plan, render }: { items: Item[]; live: b
   }, [count, live, stage])
 
   if (stage === 'gone') return null
-  const active = live ? items.findIndex((i) => !i.check) : -1
+  const active = writing ? items.findIndex((i) => !i.check) : -1
   return (
     <div className={`plan${live && stage === 'here' ? ' drawing' : ''}${stage === 'leaving' ? ' leaving' : ''}`} onTransitionEnd={(e) => { if (stage === 'leaving' && e.target === e.currentTarget) setStage('gone') }}>
       <ol>

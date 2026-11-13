@@ -151,8 +151,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .roomhead button,.roomhead .stack{-webkit-app-region:no-drag}
 .roomhead h1{font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .roomhead .stack{margin:0 8px}
-.transcript{flex:1;overflow:auto;padding:36px 24px 48px;-webkit-mask:linear-gradient(transparent,#000 24px,#000 calc(100% - 32px),transparent)}
-.column{max-width:var(--col);margin:0 auto;display:flex;flex-direction:column}
+/* The scrollbar's room is kept on both sides from the start, so the column does not step sideways
+   when a room first grows past the window, and stays in line with the message box. */
+.transcript{flex:1;overflow:auto;scrollbar-gutter:stable both-edges;padding:36px 16px 48px;-webkit-mask:linear-gradient(transparent,#000 24px,#000 calc(100% - 32px),transparent)}
+.column{position:relative;max-width:var(--col);margin:0 auto;display:flex;flex-direction:column}
 .tail{scroll-margin-bottom:44px}
 .dock{padding:0 24px 20px;flex:none}
 .dock .composer{max-width:var(--col);margin:0 auto}
@@ -539,7 +541,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .rich li.todo.done>i{background:var(--ink);box-shadow:none}
 .rich li.todo.done>i::after{content:"";position:absolute;left:4.5px;top:2px;width:3.5px;height:7px;border:solid var(--ground);border-width:0 1.6px 1.6px 0;transform:rotate(42deg)}
 .rich li.todo.done>span{color:var(--dim)}
-.rich code{font:12.5px var(--mono);padding:1px 5px;border-radius:4px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
+.rich code{font:12.5px/1 var(--mono);padding:1px 5px;border-radius:4px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
 .rich a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px;transition:text-decoration-color 140ms var(--out)}
 .rich a:hover{text-decoration-color:var(--ink)}
 .codeblock{position:relative;padding:12px 14px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:12px/1.6 var(--mono);color:var(--dim);overflow-x:auto;white-space:pre}
@@ -983,7 +985,8 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 /* Handed to the panel: the rows close up and fade, the chat below glides up after them. */
 .plan{display:grid;grid-template-rows:1fr;transition:grid-template-rows 760ms cubic-bezier(.65,0,.35,1),opacity 480ms var(--out),margin 760ms cubic-bezier(.65,0,.35,1)}
 .plan>ol{min-height:0}
-.plan.leaving{grid-template-rows:0fr;opacity:0;margin:0}
+/* Closed, the card takes no room at all, the gap between blocks included, so removing it moves nothing. */
+.plan.leaving{grid-template-rows:0fr;opacity:0;margin:0 0 -10px}
 
 /* In the panel. */
 .planside h2 small{font-feature-settings:"tnum"}
@@ -996,10 +999,19 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .plannow .what{display:block;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* The chat's live line with a plan: the step it is on, then what is happening this moment. */
-.workpair{margin-top:6px}
+.workpair{position:relative;margin-top:6px;overflow:clip}
 .workstep{display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12.5px;line-height:18px;color:var(--dim);animation:planin 600ms var(--out) both}
 .workstep .n{flex:none;font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
 .workstep .t{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.workpair .workline{margin-top:2px}
+.workpair .workline{margin-top:0}
+.workpair .workstep+.workline{margin-top:2px}
+.workpair .xsearch{margin-top:2px}
+/* The turn has ended: the working line fades where it stands before the outcome takes its place. */
+.workpair.leaving{animation:fadeout 200ms var(--out) both}
+/* What the line says changes in place: the new words fade in where the old ones were. */
+.workline .shimmer{animation:shimmer 1.8s linear infinite,fadein 220ms var(--out) both}
+.workline code{animation:fadein 220ms var(--out) both}
+/* Blocks that form while an answer is written arrive the way everything else does. */
+.ev.live .rich>:is(pre,h4,ul,ol):last-child{animation:fadein 240ms var(--out) both}
 .ev.settled :is(.plan,.workstep){animation:none}
 .ev.settled .plan *{animation:none!important;transition:none!important}

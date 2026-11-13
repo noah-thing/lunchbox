@@ -1247,3 +1247,31 @@ test('expert: a direction is written before building, held against the result, a
   assert.match(studioChecks('Animate the page transition'), /Key poses first/)
   assert.match(studioChecks('Redesign the landing page'), /The project's own system and the person's direction replace any line here/)
 })
+
+test('a reply still arriving never shows markup it is about to lose', async () => {
+  const { steady } = await import('../shared/stream')
+  // Finished text is left alone.
+  assert.equal(steady('One line.\nAnother **bold** and `code`.'), 'One line.\nAnother **bold** and `code`.')
+  // A fence, a heading, a bullet or a number half typed waits until it is one.
+  for (const tail of ['`', '``', '#', '## ', '-', '- [', '- [x]', '1', '12.', '3) ']) assert.equal(steady(`Intro.\n\n${tail}`), 'Intro.\n\n', tail)
+  assert.equal(steady('Intro.\n\n```ts'), 'Intro.\n\n```ts')
+  assert.equal(steady('## What'), '## What')
+  assert.equal(steady('1. First'), '1. First')
+  // Bold, code and links left open read as they will once closed.
+  assert.equal(steady('This is **very'), 'This is **very**')
+  assert.equal(steady('This is **very*'), 'This is **very**')
+  assert.equal(steady('This is **'), 'This is ')
+  assert.equal(steady('Run `npm te'), 'Run `npm te`')
+  assert.equal(steady('Run `'), 'Run ')
+  assert.equal(steady('Open `a*b` and **go'), 'Open `a*b` and **go**')
+  assert.equal(steady('See [the docs](https://exa'), 'See the docs')
+  assert.equal(steady('See [the docs](https://example.com) for'), 'See [the docs](https://example.com) for')
+  assert.equal(steady('2 * 3 is six'), '2 * 3 is six')
+  // In an open fence, stars and backticks are code, the closing fence waits until it is whole,
+  // and the next line starts with its first character.
+  assert.equal(steady('```js\nconst a = `x'), '```js\nconst a = `x')
+  assert.equal(steady('```js\nconst a = 1\n'), '```js\nconst a = 1')
+  assert.equal(steady('```js\nconst a = 1\n``'), '```js\nconst a = 1')
+  assert.equal(steady('```js\nconst a = 1\n```'), '```js\nconst a = 1\n```')
+  assert.equal(steady('```js\na\n```\nThen **more'), '```js\na\n```\nThen **more**')
+})
