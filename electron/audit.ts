@@ -13,6 +13,8 @@ export type Measured = {
   spacings: number
   // Defaults nobody chose, the marks of a page made without a direction.
   tells: string[]
+  // How much of the first screen carries anything, in percent, whole and by half.
+  first?: { all: number; left: number; right: number; top: number; bottom: number }
 }
 export type Axe = { id: string; impact: string | null; help: string; nodes: number; at: string[] }
 
@@ -101,6 +103,47 @@ export const MEASURE = `(() => {
   const loose = [...document.images].filter((i) => shown(i) && !(i.getAttribute('width') && i.getAttribute('height')) && getComputedStyle(i).aspectRatio === 'auto')
   if (loose.length) findings.push({ kind: 'layout shift', text: loose.length + ' image(s) without width and height, so the page jumps as they load', at: loose.slice(0, 3).map(short) })
 
+  // The first screen as one frame, the way a visitor meets it: where it carries something and
+  // where it is bare. Text counts where its letters are, not across the width of its box; a band
+  // of plain colour across the page is ground, not content.
+  const H = innerHeight
+  const COLS = 24, ROWS = 16
+  const grid = new Uint8Array(COLS * ROWS)
+  const paint = (r) => {
+    if (r.width < 2 || r.height < 2 || r.bottom <= 0 || r.top >= H || r.right <= 0 || r.left >= W) return
+    const x0 = Math.max(0, Math.floor(r.left / W * COLS)), x1 = Math.min(COLS - 1, Math.floor((r.right - 1) / W * COLS))
+    const y0 = Math.max(0, Math.floor(r.top / H * ROWS)), y1 = Math.min(ROWS - 1, Math.floor((r.bottom - 1) / H * ROWS))
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) grid[y * COLS + x] = 1
+  }
+  for (const e of els) {
+    const r = e.getBoundingClientRect()
+    if (r.bottom <= 0 || r.top >= H) continue
+    const cs = getComputedStyle(e)
+    if (/^(img|svg|canvas|video|input|button|select|textarea|iframe)$/i.test(e.tagName) || /url\\(/.test(cs.backgroundImage)) { paint(r); continue }
+    if (ownText(e)) {
+      const range = document.createRange()
+      for (const n of e.childNodes) if (n.nodeType === 3 && n.textContent.trim()) { range.selectNodeContents(n); for (const q of range.getClientRects()) paint(q) }
+    }
+    const boxed = cs.backgroundImage !== 'none' || !/rgba\\(\\d+, \\d+, \\d+, 0\\)|transparent/.test(cs.backgroundColor) || parseFloat(cs.borderTopWidth) > 0
+    if (boxed && r.width < W * 0.85 && r.width * r.height < W * H * 0.5) paint(r)
+  }
+  const used = (x0, x1, y0, y1) => { let n = 0; for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) n += grid[y * COLS + x]; return Math.round(n / ((x1 - x0) * (y1 - y0)) * 100) }
+  // The halves are compared below the strip a navigation bar sits in, which spans both.
+  const first = { all: used(0, COLS, 0, ROWS), left: used(0, COLS / 2, 2, ROWS), right: used(COLS / 2, COLS, 2, ROWS), top: used(0, COLS, 0, ROWS / 2), bottom: used(0, COLS, ROWS / 2, ROWS) }
+  const frame = 'the first screen (' + W + ' by ' + H + ')'
+  const goesOn = document.documentElement.scrollHeight > H * 1.2
+  if (first.all < 10) findings.push({ kind: 'first screen', text: 'Only ' + first.all + '% of ' + frame + ' carries anything. A visitor meets a nearly bare frame: bring the main thing into it at a size that holds it', at: [] })
+  else if (!phone && Math.min(first.left, first.right) < 12 && Math.max(first.left, first.right) >= 28) {
+    const bare = first.left < first.right ? 'left' : 'right'
+    findings.push({ kind: 'first screen', text: 'The ' + bare + ' half of ' + frame + ' is bare (' + first[bare] + '% used, the other half ' + Math.max(first.left, first.right) + '%). Compose the frame on purpose: bring the one move or the strongest image into that half, or set the layout so the space is a margin something sits against', at: [] })
+  } else if (goesOn && first.bottom < 8 && first.top >= 20) findings.push({ kind: 'first screen', text: 'The lower half of ' + frame + ' is bare while the page goes on below it. Let the next thing show at the bottom edge, or fill the frame', at: [] })
+  const sized = texts.map((e) => [e, parseFloat(getComputedStyle(e).fontSize) || 0, e.getBoundingClientRect().top])
+  const inFrame = Math.max(0, ...sized.filter((x) => x[2] < H).map((x) => x[1]))
+  const under = sized.filter((x) => x[2] >= H).sort((a, b) => b[1] - a[1])[0]
+  if (under && under[1] >= 28 && under[1] > inFrame * 1.25) findings.push({ kind: 'first screen', text: 'The largest type on the page (' + Math.round(under[1]) + 'px) is below the first screen, where the largest is ' + Math.round(inFrame) + 'px. The strongest moment should not need a scroll to be seen', at: [short(under[0])] })
+  const actions = els.filter((e) => e.matches('a[href], button, [role=button], input[type=submit]'))
+  if (actions.length && !actions.some((e) => { const r = e.getBoundingClientRect(); return r.top >= 0 && r.bottom <= H })) findings.push({ kind: 'first screen', text: 'No link or button shows on the first screen. The main action should be there without scrolling', at: actions.slice(0, 1).map(short) })
+
   const families = [...new Set(texts.map((e) => getComputedStyle(e).fontFamily.split(',')[0].replace(/["']/g, '').trim()))]
   const sizes = [...new Set(texts.map((e) => Math.round(parseFloat(getComputedStyle(e).fontSize))))].sort((a, b) => a - b)
   const colours = new Set()
@@ -177,7 +220,7 @@ export const MEASURE = `(() => {
   if (blobs.length) tells.push(blobs.length + ' blurred decorative shape(s) (' + blobs.slice(0, 2).map(short).join('; ') + ')')
   const filler = (document.body.innerText.match(/unlock the (full )?(power|potential)|supercharge|seamless(ly)?|revolutioni[sz]e|next[- ]generation|elevate your|to the next level|game[- ]chang|in today.s fast[- ]paced|cutting[- ]edge|effortless(ly)?|all[- ]in[- ]one (platform|solution)/gi) || [])
   if (filler.length) tells.push('stock phrases: ' + [...new Set(filler.map((x) => x.toLowerCase()))].slice(0, 4).join(', '))
-  return { width: W, findings, families, sizes, colours: colours.size, offGrid: spacings ? Math.round((off / spacings) * 100) : 0, spacings, tells }
+  return { width: W, findings, families, sizes, colours: colours.size, offGrid: spacings ? Math.round((off / spacings) * 100) : 0, spacings, tells, first }
 })()`
 
 export const AXE_RUN = `axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'] }, resultTypes: ['violations'] })
@@ -198,6 +241,8 @@ export function report(target: string, views: Measured[], axe: Axe[] | null, err
     const counted = fresh.length ? `${fresh.length} problem${fresh.length > 1 ? 's' : ''}` : v.findings.length ? 'nothing new' : 'no layout problems found'
     lines.push('', `${label}: ${counted}${repeated ? ` (${repeated} more also seen above)` : ''}`)
     for (const f of fresh) { seen.add(key(f)); lines.push(`${++n}. [${f.kind}] ${f.text}${f.at.length ? `: ${f.at.join('; ')}` : ''}`) }
+    // Always stated, so the first screen is judged as a composition even when no rule trips.
+    if (v.first) lines.push(`First screen: ${v.first.all}% of the frame carries content (left ${v.first.left}%, right ${v.first.right}%, top ${v.first.top}%, bottom ${v.first.bottom}%). Open the capture and check that the one move is in it.`)
   }
   if (axe) {
     const list = [...axe].sort((a, b) => (ORDER[a.impact ?? 'minor'] ?? 4) - (ORDER[b.impact ?? 'minor'] ?? 4))

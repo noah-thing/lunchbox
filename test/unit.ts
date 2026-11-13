@@ -1238,7 +1238,9 @@ test('expert: a direction is written before building, held against the result, a
   for (const part of ['Their direction rules', 'three directions in one line each', `save it as ${DIRECTION}`, 'References', 'The one move', 'named before', `with ${DIRECTION} beside the image`, 'made by default', 'before and after', 'A one line fix stays a one line fix']) assert.ok(core.includes(part), part)
   assert.ok(core.indexOf('1. Their direction rules') < core.indexOf('2. Read the brief'), 'the person comes first')
   assert.ok(studioCore(['DESIGN.md']).includes('Where they conflict with anything below, they win'))
-  assert.ok(core.length < 5200, 'the method stays short enough to send with every room')
+  assert.ok(core.length < 5600, 'the method stays short enough to send with every room')
+  for (const part of ['First screen: what the opening frame holds', 'judged as a poster', 'the best thing under the fold']) assert.ok(core.includes(part), part)
+  assert.match(studioChecks('Redesign the landing page'), /Compose the first screen as one frame/)
   assert.deepEqual(crafts('Design a logo for a bakery'), ['brand', 'graphic'])
   assert.match(studioChecks('Design a logo for a bakery'), /Draw it in black on white/)
   assert.match(studioChecks('Model a chair in Blender'), /Silhouette and proportion before detail/)
@@ -1288,4 +1290,13 @@ test('a dialog keeps Tab inside it: past the last item comes the first, and back
   assert.equal(round(3, -1, true), 2)
   // Nothing to reach: focus stays on the dialog itself.
   assert.equal(round(0, -1, false), -1)
+})
+
+test('expert audit: the first screen is always stated, and a bare half is listed as a fault', async () => {
+  const { report } = await import('../electron/audit')
+  const view = { width: 1440, findings: [{ kind: 'first screen', text: 'The right half of the first screen (1440 by 900) is bare (6% used, the other half 44%)', at: [] }], families: ['Charter'], sizes: [18, 56], colours: 4, offGrid: 0, spacings: 10, tells: [], first: { all: 25, left: 44, right: 6, top: 30, bottom: 20 } }
+  const text = report('index.html', [view, { ...view, width: 390, findings: [], first: { all: 60, left: 60, right: 60, top: 70, bottom: 50 } }], [], [])
+  assert.match(text, /1\. \[first screen\] The right half/)
+  assert.match(text, /First screen: 25% of the frame carries content \(left 44%, right 6%, top 30%, bottom 20%\)/)
+  assert.match(text, /Phone, 390px: no layout problems found\nFirst screen: 60%/)
 })

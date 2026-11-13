@@ -658,7 +658,7 @@ ${crops.map((c) => `<div class="r"><b>${c.kind}</b><span>${esc(c.label)}</span><
       } finally {
         win.destroy()
       }
-      return `Saved ${saved.length > 2 ? `${saved.length} images, top to bottom: ` : ''}${saved.join(saved.length > 2 ? ', ' : ' and ')}.${full ? ' The last image of each width ends at the bottom of the page, so it can repeat part of the one before it.' : ''} Open them now and judge them as the person will see them: hierarchy, spacing, alignment, contrast, overflow and anything cut off or overlapping at phone width.`
+      return `Saved ${saved.length > 2 ? `${saved.length} images, top to bottom: ` : ''}${saved.join(saved.length > 2 ? ', ' : ' and ')}.${full ? ' The last image of each width ends at the bottom of the page, so it can repeat part of the one before it.' : ''} Open them now and judge them as the person will see them. First the opening screen as a composition: is the one move in it, and is the whole frame used on purpose? Then hierarchy, spacing, alignment, contrast, overflow and anything cut off or overlapping at phone width.`
     })
   }
 

@@ -8,7 +8,7 @@ import { join } from 'node:path'
 // with its smallest model, so the difference Expert makes can be seen. This one spends a little
 // of the plan on this computer, so it is run by hand: node test/expert-shot.mjs
 const root = new URL('..', import.meta.url).pathname
-const out = root + 'test/shots/expert-run-'
+const out = root + `test/shots/${process.env.EXPERT_OUT || 'expert-run'}-`
 mkdirSync(root + 'test/shots', { recursive: true })
 const temp = (name) => mkdtempSync(join(tmpdir(), `lunchbox-${name}-`))
 const ask = 'Make a one page website for Lera, a small ceramics studio in Gustavsberg that sells one kiln load of stoneware each month. A single index.html with inline CSS, no build step and no external images.'
