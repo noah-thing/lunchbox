@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { sentence } from '../../shared/steps'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import type { Access, AgentInfo, Block, DecideAction, Event, Flow, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
@@ -9,7 +10,8 @@ import { DESIGN_SOURCES, studioChecks } from '../../shared/studio'
 import { describe as schedule } from '../../shared/flow'
 import { detect, run, type Result } from '../agents'
 import { plain } from '../agents/parse'
-import type { Hands, Tool } from '../hands'
+import type { Hands, Tool, Watch } from '../hands'
+import { rates } from '../../shared/prices'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
 import { clearMemory, writeMemory } from './project'
@@ -59,6 +61,27 @@ const LOST_SESSION = /(session|conversation|thread|rollout)[^\n]{0,60}(not found
 // What "always" remembers for edits in Ask mode, in the place command prefixes are kept.
 const EDITS = '\u0000edits'
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
+
+// Whole command outputs, kept beside the shortened ones the agents were shown.
+const OUTPUTS = join(tmpdir(), 'lunchbox-output')
+const outputs = (room: string) => join(OUTPUTS, room)
+
+// Keeping a session's cache from running out. A ping reads the whole session at the cached
+// price, which is a fraction of writing it again, so a few are worth it against the chance the
+// person comes back: at most this share of what a cold start would cost goes on pings.
+const PING = 'This is a keep-alive from Lunchbox, not a message from the person. Reply with the single word: ok'
+const PING_SHARE = 0.2
+// A session smaller than this costs too little to pick up cold for a ping to matter.
+const WARM_MIN = 30000
+const SOON = (ttl: number) => (ttl >= 3600 ? 300e3 : 45e3)
+type Warmth = {
+  session: string; model?: string; access: Access; tools: Tool[]
+  // When the last real turn ended, how long its cache lives, and how big the session was.
+  at: number; ttl: number; size: number
+  // The session caches for five minutes by the room's choice, so a ping has to ask for the same.
+  short: boolean
+  pinged?: number; pings: number; timer?: NodeJS.Timeout
+}
 type Draft<E = Event> = E extends Event ? Omit<E, 'id' | 'at'> : never
 
 // The design files a project carries, each listed once even on a disk that ignores case.
@@ -80,6 +103,7 @@ export class Engine {
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
   private projectTimers = new Map<string, NodeJS.Timeout>()
+  private warmth = new Map<string, Warmth>()
 
   constructor(private store: Store, private hooks: Hooks, private hands?: Hands, private snaps?: Snapshots) {}
 
@@ -326,6 +350,8 @@ export class Engine {
 
   remove(room: string) {
     this.stop(room)
+    this.cool(room)
+    try { rmSync(outputs(room), { recursive: true, force: true }) } catch {}
     this.store.remove(room)
     this.undecided.delete(room)
     this.lives.delete(room)
@@ -342,6 +368,7 @@ export class Engine {
 
   setWorkspace(room: string, workspace: string) {
     // With Expert on, the new folder's own design files lead from now on.
+    this.cool(room)
     this.store.update(room, (m) => { m.workspace = workspace; m.sessions = {}; if (m.studio) m.design = designFiles(workspace) })
     this.hooks.emit('room:meta', this.store.room(room))
     this.list()
@@ -364,6 +391,87 @@ export class Engine {
   // Quitting the app stops every agent and command, so nothing keeps editing files afterwards.
   stopAll() {
     for (const room of this.lives.keys()) this.stop(room)
+    for (const w of this.warmth.values()) clearTimeout(w.timer)
+    this.warmth.clear()
+  }
+
+  // Outputs from rooms nobody has worked in for a few days are of no use to anyone.
+  sweep() {
+    try {
+      for (const name of readdirSync(OUTPUTS)) {
+        const dir = join(OUTPUTS, name)
+        if (Date.now() - statSync(dir).mtimeMs > 3 * 86400e3) rmSync(dir, { recursive: true, force: true })
+      }
+    } catch {}
+  }
+
+  private cool(room: string, who?: string) {
+    for (const [key, w] of this.warmth) {
+      if (key !== `${room}:${who}` && !(who === undefined && key.startsWith(`${room}:`))) continue
+      clearTimeout(w.timer)
+      this.warmth.delete(key)
+      const live = this.lives.get(room)
+      const agent = key.slice(room.length + 1)
+      if (live?.warm?.[agent]) { delete live.warm[agent]; this.changed(room) }
+    }
+  }
+
+  // After a turn, the room waits until the session's cache is about to run out and reads it once
+  // more, in a copy of the session that is thrown away, so the next message finds it cached.
+  private keepWarm(room: string, who: string, w: Omit<Warmth, 'pings' | 'timer'>) {
+    this.cool(room, who)
+    if (w.size < WARM_MIN) return
+    const state: Warmth = { ...w, pings: 0 }
+    this.warmth.set(`${room}:${who}`, state)
+    this.wait(room, who, state)
+  }
+
+  private wait(room: string, who: string, w: Warmth) {
+    const p = rates(who, w.model ?? '', w.ttl)
+    const most = Math.max(1, Math.min(w.ttl >= 3600 ? 2 : 6, p ? Math.floor(PING_SHARE / (p.read / p.write)) : 2))
+    if (w.pings >= most) return
+    const due = (w.pinged ?? w.at) + w.ttl * 1000 - SOON(w.ttl)
+    w.timer = setTimeout(() => { this.ping(room, who, w).catch(() => {}) }, Math.max(0, due - Date.now()))
+    w.timer.unref()
+  }
+
+  private async ping(room: string, who: string, w: Warmth) {
+    const meta = this.store.room(room)
+    const lapses = (w.pinged ?? w.at) + w.ttl * 1000
+    // A timer that fires late, after the computer slept, finds the cache gone: a ping would then
+    // pay to write it all again for nobody.
+    const gone = !meta || meta.archived || meta.sessions[who] !== w.session || this.store.settings.saving?.warm === false || Date.now() > lapses - 5000
+    if (gone || this.why(who)) return this.cool(room, who)
+    // A turn in the room is already reading the session, and sets its own timer when it ends.
+    if ((this.pending.get(room) ?? 0) > 0) return
+    const saving = this.store.settings.saving ?? {}
+    const grant = this.hands?.grant(w.tools, { kind: 'refuse' })
+    const running = run(who, {
+      prompt: PING, system: '', fresh: false, cwd: meta.workspace, access: w.access, model: w.model, session: w.session, fork: true,
+      hands: grant?.url || undefined, hook: grant?.hook || undefined, guarded: true, outputs: saving.trim !== false ? outputs(room) : undefined,
+      effort: this.store.settings.effort?.[who], lean: saving.lean, short: w.short,
+    }, this.store.keys(), () => {})
+    const procs = this.procs.get(room) ?? new Set()
+    this.procs.set(room, procs)
+    procs.add(running)
+    let r: Result
+    try { r = await running.done } finally { grant?.revoke(); procs.delete(running) }
+    if (this.warmth.get(`${room}:${who}`) !== w) return
+    if (r.usage.cost > 0 || r.usage.cached > 0) {
+      // A ping is spending, not work: it counts toward cost and nothing else, so the tokens it
+      // read never show up as tokens saved.
+      this.store.record(who, room, { input: 0, output: 0, cached: 0, cost: r.usage.cost, pings: r.usage.cost, v: 2 })
+      this.hooks.emit('ledger', this.ledger())
+      this.hooks.turned?.(who, r.usage)
+    }
+    // It only kept the cache alive if it found it alive.
+    if (r.error || !r.first || r.first.written > r.first.read) return this.cool(room, who)
+    w.pinged = Date.now()
+    w.pings++
+    const live = this.live(room)
+    live.warm = { ...live.warm, [who]: w.pinged }
+    this.changed(room)
+    this.wait(room, who, w)
   }
 
   // Stopping is instant from the user's side: what each agent wrote so far lands in the room now
@@ -730,6 +838,8 @@ export class Engine {
     // few lines of the room, so a follow-up makes sense; a job or a question does not need them.
     const recent = briefed && (task.kind === 'reply' || task.kind === 'continue') ? events.slice(-12).map((e) => line(e, this.name)).filter((l): l is string => !!l).slice(-8) : []
     const p = briefed ? briefing(meta, events, who, ask, resumed, recent) : prompt(meta, events, who, ask, this.name, resumed)
+    // What a briefing left out: the conversation this agent would otherwise have been sent.
+    const spared = briefed ? Math.max(0, prompt(meta, events, who, ask, this.name, resumed).text.length - p.text.length) : 0
 
     const live = this.live(room)
     const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now(), image: task.kind === 'answer' && task.quiet ? true : undefined, label: task.kind === 'answer' ? task.label : undefined, size: task.kind === 'answer' ? task.size : undefined }
@@ -753,11 +863,31 @@ export class Engine {
     // A resumed session already has the protocol; it goes again only when it changed. The mark
     // is kept with the room, so restarting Lunchbox does not send every session its rules twice.
     const sent = createHash('sha1').update(system).digest('hex').slice(0, 16)
+    const saving = this.store.settings.saving ?? {}
+    // Long test, build and install output is shortened on its way to Claude Code. Only where
+    // commands already run without asking: the person is never shown a command they did not see.
+    let cut = 0
+    const shorten = who === 'claude' && saving.trim !== false
+    const watch: Watch | undefined = shorten && (access === 'workspace' || access === 'full') ? { kind: 'shorten', dir: outputs(room), cut: (n) => { cut += n } } : undefined
+    // Whether this turn finds its session cached only because the room kept it so.
+    const warm = this.warmth.get(`${room}:${who}`)
+    const warmed = !!warm?.pinged && warm.session === session && Date.now() > warm.at + warm.ttl * 1000 && Date.now() < warm.pinged + warm.ttl * 1000
+    // Claude Code on a subscription caches for an hour, and writing an hour entry costs twice
+    // the input price against 1.25 times for five minutes. The hour pays for itself when a person
+    // may take a while to answer. Work nobody is waiting on, a flow or a crewmate called for one
+    // job, has its next step seconds away, so its session caches for five minutes. That is
+    // decided when a session starts and kept for its life: a request asking for one lifetime does
+    // not find entries written for the other, and would write the whole session again.
+    const natural = this.store.lifetimes[who]
+    const unattended = !!meta.flow || task.kind === 'answer' || task.kind === 'job'
+    const short = who === 'claude' && saving.warm !== false && (resumed ? meta.quick?.[who] === session : unattended)
+    this.cool(room, who)
     // Granted last, with nothing between it and the turn that could fail and leave it open.
-    const grant = tools.length ? this.hands!.grant(tools) : null
+    const grant = this.hands && (tools.length || watch) ? this.hands.grant(tools, watch) : null
     const running = run(who, {
       prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || meta.protos?.[who] !== sent, cwd: meta.workspace, access,
-      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url, bench,
+      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url || undefined, bench,
+      hook: grant?.hook || undefined, outputs: shorten ? outputs(room) : undefined, effort: this.store.settings.effort?.[who], lean: saving.lean, short,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
       if (u.acts) {
@@ -826,9 +956,24 @@ export class Engine {
     }
 
     if (r.usage.input + r.usage.output + r.usage.cached > 0) {
-      // Memory the agent already had and was not sent again, in tokens at about four characters each.
-      const kept = Math.round((p.full - p.sent) / 4)
-      this.store.record(who, room, kept > 0 ? { ...r.usage, kept } : r.usage)
+      // What Lunchbox kept out of this turn, in tokens at about four characters each: memory the
+      // agent already had, conversation a briefing stood in for, and command output it shortened.
+      const lean: Partial<Usage> = { kept: Math.round((p.full - p.sent + spared) / 4), cut: Math.round(cut / 4) }
+      // A session the room kept cached past its lifetime: what it read beyond the part every
+      // session shares would have been written again.
+      const base = meta.bases?.[who]
+      if (warmed && r.first && base !== undefined && r.first.read > r.first.written) lean.held = Math.max(0, r.first.read - base)
+      const price = rates(who, r.model ?? '', warm?.ttl)
+      if (price) {
+        lean.spared = (lean.kept ?? 0) * price.input
+        lean.trimmed = (lean.cut ?? 0) * price.input
+        lean.warmed = (lean.held ?? 0) * (price.write - price.read)
+      }
+      // Only where Claude Code is known to ask for the hour when left alone.
+      if (short && natural === 3600 && r.quick) lean.warmed = (lean.warmed ?? 0) + r.quick
+      for (const k of ['kept', 'cut', 'held', 'spared', 'trimmed', 'warmed'] as const) if (!lean[k]) delete lean[k]
+      Object.assign(r.usage, lean)
+      this.store.record(who, room, r.usage)
       this.hooks.emit('ledger', this.ledger())
       this.hooks.turned?.(who, r.usage)
     }
@@ -845,6 +990,19 @@ export class Engine {
       return null
     }
     if (r.session && me.via === 'cli') this.keep(room, who, r)
+    // A new session's first request reads the shared part from cache. Where even that had run
+    // out, everything it sent counts as shared, so a later saving can only be counted low.
+    if (who === 'claude' && r.session && r.first && !resumed) this.store.update(room, (m) => { (m.bases ??= {})[who] = r.first!.read || r.first!.written })
+    const ttl = r.usage.ttl ?? warm?.ttl
+    if (who === 'claude' && !short && r.usage.ttl && r.usage.ttl !== natural) {
+      this.store.lifetimes[who] = r.usage.ttl
+      this.store.saveState()
+    }
+    if (short && !resumed && r.session) this.store.update(room, (m) => { (m.quick ??= {})[who] = r.session! })
+    // Only a session the person is talking to is worth keeping warm for them.
+    if (who === 'claude' && r.session && r.last && ttl && !r.error && !r.limit && saving.warm !== false && !unattended) {
+      this.keepWarm(room, who, { session: r.session, model: r.model, access, tools, at: Date.now(), ttl, size: r.last.read + r.last.written, short })
+    }
 
     // A reply that got partway before the limit is kept, and the limit still counts.
     if (r.text && r.limit) {

@@ -39,7 +39,23 @@ export type AgentInfo = {
 // ttl: seconds the provider said it keeps what this turn cached, where it says.
 // premium: what storing the cache cost on top of the input price, in totals, where both the gross
 // and the net saving are known.
-export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; gross?: number; kept?: number; ttl?: number; premium?: number; v?: 2 }
+export type Usage = {
+  input: number; output: number; cached: number; cost: number; written?: number; saved?: number; gross?: number; kept?: number; ttl?: number; premium?: number; v?: 2
+  // What Lunchbox itself kept out of the agent's requests, in tokens: kept (above) is memory and
+  // conversation the agent did not need sending, cut is command output shortened before it
+  // reached the context, held is a session read from a cache Lunchbox kept warm past its lifetime.
+  cut?: number
+  held?: number
+  // Dollars at list price, where the agent has one. spared and trimmed are what the tokens never
+  // sent would have cost, kept and cut in that order. warmed is what managing the cache's
+  // lifetime saved: writes made at the five minute price where the agent would have paid the
+  // hour price, and sessions read from a cache that would otherwise have been written again (held).
+  spared?: number
+  trimmed?: number
+  warmed?: number
+  // Dollars spent keeping caches warm. Already part of cost.
+  pings?: number
+}
 
 // What a CLI session has reported in total so far: its cost, and token counts per model.
 export type Meter = { cost: number; rows: Record<string, number[]> }
@@ -105,6 +121,11 @@ export type RoomMeta = {
   meters?: Record<string, Meter & { session: string }>
   // A mark of the protocol each agent's session was last sent.
   protos?: Record<string, string>
+  // Tokens each agent reads from cache at the start of a brand new session: the part every
+  // session shares. A session picked up cold reads this much and writes the rest again.
+  bases?: Record<string, number>
+  // Sessions that cache for five minutes by the room's choice, by agent.
+  quick?: Record<string, string>
   seen: Record<string, Record<string, number>>
   heard: Record<string, number>
   blocks: Block[]
@@ -169,6 +190,8 @@ export type Live = {
   queued: { id: string; text: string; files?: string[] }[]
   // Queued text handed back to the message box, after a stop or when taken back. n changes each time.
   back?: { text: string; files?: string[]; n: number; merge: true }
+  // When the room last read each agent's session to keep its cache from running out.
+  warm?: Record<string, number>
 }
 
 export type Spent = { until: number; reason: string }
@@ -228,6 +251,12 @@ export type Settings = {
   habits?: string[]
   dismissed?: string[]
   autoUpdate?: boolean
+  // Saving, each on unless set to false, except lean which is off unless set: trim shortens long
+  // command output, warm keeps a room's cache from running out, lean starts Claude Code with the
+  // room's own tools only, leaving out the MCP servers set up outside Lunchbox.
+  saving?: { trim?: boolean; warm?: boolean; lean?: boolean }
+  // How hard each agent thinks, for the CLIs that take it. Unset leaves the agent's own default.
+  effort?: Record<string, string>
   feedIssued?: number
   // The anonymous install count, on unless turned off in Settings. countId is a random ID made on
   // this computer; countDay is the last day it was sent.
@@ -273,7 +302,7 @@ export type Flow = {
 export type FlowState = { flow: string; room: string; step: number; of: number }
 
 export type Ledger = { today: Record<string, Usage>; week: Record<string, Usage>; arena: Record<string, number>; ratings: Ratings; days: Day[]; rooms: Record<string, Usage> }
-export type Day = { day: string; cost: number; tokens: number; input: number; cached: number; saved: number; gross: number; kept: number }
+export type Day = { day: string; cost: number; tokens: number; input: number; cached: number; saved: number; gross: number; kept: number; cut?: number; held?: number; spared?: number; trimmed?: number; warmed?: number; pings?: number }
 
 export type Hit = { room: string; roomName: string; event?: string; text: string }
 

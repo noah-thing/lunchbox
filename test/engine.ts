@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, symlinkSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import type { Act, Event } from '../shared/types'
 
 // A whole room against stand-in CLIs: Codex is out of quota, Claude takes over, asks Grok,
 // carries on with the answer, and claims passing tests that nothing ran.
@@ -625,4 +626,144 @@ test('room: an Ollama agent reads, edits and runs in the folder, under the room\
     PROVIDERS.ollama.base = base
     server.close()
   }
+})
+
+// A noisy test run reaches Claude Code shortened, with its exit code, and the whole of it in a file.
+test('saving: long command output is shortened on its way to the agent', { skip: process.platform === 'win32' }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-trim-'))
+  const bin = join(root, 'bin')
+  const fs = require('node:fs')
+  fs.mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  process.env.FAKE_SCRIPT = 'saving'
+  const work = join(root, 'work')
+  fs.mkdirSync(work)
+  fs.writeFileSync(join(work, 'package.json'), JSON.stringify({ name: 'noisy', scripts: { test: 'node noisy.js' } }))
+  fs.writeFileSync(join(work, 'noisy.js'), "for (let i = 0; i < 400; i++) console.log('✔ case ' + i + ' passes (0.1ms)'); console.log('✖ totals are wrong'); console.error('  AssertionError: 5464 !== 5465'); for (let i = 0; i < 100; i++) console.log('✔ later ' + i); process.exit(1)")
+
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { Hands } = await import('../electron/hands')
+  const hands = new Hands()
+  await hands.start()
+  t.after(() => { hands.stop(); delete process.env.FAKE_SCRIPT })
+  const store = new Store(join(root, 'data'), { seal: (x: string) => x, open: (x: string) => x })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] }, hands)
+  await engine.refresh()
+  const room = engine.create({ crew: ['claude'], workspace: work })
+  const says = () => store.events(room.id).filter((e) => e.kind === 'say') as Extract<Event, { kind: 'say' }>[]
+
+  engine.send(room.id, 'Check the suite.\nRun: npm test', 'workspace')
+  await engine.idle(room.id)
+  const said = says()[0]
+  assert.match(said.text, /exit 1, rewritten true/)
+  const ran = said.acts.find((a) => a.t === 'cmd') as Extract<Act, { t: 'cmd' }>
+  assert.equal(ran.command, 'npm test', 'the room shows the command the agent asked for')
+  assert.equal(ran.exit, 1)
+  assert.match(ran.out ?? '', /Lunchbox shortened this output/)
+  assert.ok((said.usage?.cut ?? 0) > 1000, 'the tokens kept out are counted')
+  // Sonnet 5.5 reads fresh input at $2 a million.
+  assert.ok(Math.abs(said.usage!.trimmed! - said.usage!.cut! * 2e-6) < 1e-9)
+  const dir = join(tmpdir(), 'lunchbox-output', room.id)
+  const kept = fs.readdirSync(dir)
+  assert.equal(kept.length, 1)
+  const whole = fs.readFileSync(join(dir, kept[0]), 'utf8')
+  assert.match(whole, /✔ case 200 passes/, 'the file has every line')
+  assert.equal(store.totals().today.claude.cut, said.usage!.cut)
+
+  // In Ask the person approves each command, so the agent's own command is what runs.
+  engine.send(room.id, 'Check the suite.\nRun: npm test', 'ask')
+  await engine.idle(room.id)
+  assert.match(says()[1].text, /rewritten false/)
+  assert.equal(says()[1].usage?.cut, undefined)
+
+  // And never when it is switched off.
+  store.saveSettings({ saving: { trim: false } })
+  engine.send(room.id, 'Check the suite.\nRun: npm test', 'workspace')
+  await engine.idle(room.id)
+  assert.match(says()[2].text, /rewritten false/)
+
+  engine.remove(room.id)
+  assert.equal(existsSync(dir), false, 'the outputs go with the room')
+  store.flush()
+})
+
+// A session the person talks to caches for the hour and is kept warm; a flow caches for five minutes.
+test('saving: cache lifetime, kept warm for a person and short for a flow', { skip: process.platform === 'win32' }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'lunchbox-warm-'))
+  const bin = join(root, 'bin')
+  require('node:fs').mkdirSync(bin)
+  symlinkSync(join(process.cwd(), 'test', 'fake-agent.mjs'), join(bin, 'claude'))
+  process.env.LUNCHBOX_PATH = `${bin}:${process.env.PATH}`
+  process.env.FAKE_SCRIPT = 'saving'
+  process.env.FAKE_LOG = join(root, 'calls.jsonl')
+  const { Store } = await import('../electron/store')
+  const { Engine } = await import('../electron/room/engine')
+  const { Hands } = await import('../electron/hands')
+  const hands = new Hands()
+  await hands.start()
+  const store = new Store(join(root, 'data'), { seal: (x: string) => x, open: (x: string) => x })
+  const engine = new Engine(store, { emit: () => {}, notify: () => {}, packs: () => [] }, hands)
+  t.after(() => { engine.stopAll(); hands.stop(); delete process.env.FAKE_SCRIPT; delete process.env.FAKE_LOG })
+  await engine.refresh()
+  const calls = () => readFileSync(process.env.FAKE_LOG!, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.saving)
+  const says = (id: string) => store.events(id).filter((e) => e.kind === 'say') as Extract<Event, { kind: 'say' }>[]
+
+  const room = engine.create({ crew: ['claude'], workspace: root })
+  engine.send(room.id, 'Start on the page', 'workspace')
+  await engine.idle(room.id)
+  assert.deepEqual(calls().at(-1), { saving: true, resumed: false, short: false, fork: false }, 'a person may take a while, so the hour stands')
+  assert.equal(store.lifetimes.claude, 3600)
+  assert.equal(store.room(room.id)!.bases?.claude, 14000)
+
+  // The cache is about to run out: the room reads the session once, in a copy, with every tool refused.
+  const warmth = (engine as any).warmth.get(`${room.id}:claude`)
+  assert.ok(warmth, 'a timer is set')
+  warmth.at = Date.now() - 3600e3 + 20000
+  await (engine as any).ping(room.id, 'claude', warmth)
+  assert.deepEqual(calls().at(-1), { saving: true, resumed: true, short: false, fork: true })
+  assert.equal(store.events(room.id).length, 2, 'a ping leaves no trace in the room')
+  assert.equal(store.totals().today.claude.pings, 0.02)
+  assert.equal(store.totals().today.claude.cached, 14000, 'what a ping read is not counted as saved')
+  assert.ok(engine.live(room.id).warm?.claude)
+
+  // The person comes back after the hour: the session is still cached, and that is counted.
+  warmth.at = Date.now() - 3600e3 - 1000
+  engine.send(room.id, 'Carry on', 'workspace')
+  await engine.idle(room.id)
+  const back = says(room.id)[1].usage!
+  assert.equal(back.held, 30000, 'what it read beyond the part every session shares')
+  assert.ok(Math.abs(back.warmed! - 30000 * (4 - 0.1) / 1e6) < 1e-9, 'the gap between storing for an hour and reading')
+
+  // A ping that finds the cache gone stops: it would only pay to write it for nobody.
+  const again = (engine as any).warmth.get(`${room.id}:claude`)
+  again.at = Date.now() - 3600e3 - 60000
+  const before = calls().length
+  await (engine as any).ping(room.id, 'claude', again)
+  assert.equal(calls().length, before)
+  assert.equal((engine as any).warmth.has(`${room.id}:claude`), false)
+
+  // A flow has its next step seconds away, so it stores for five minutes, for the life of its session.
+  const flow = engine.create({ crew: ['claude'], workspace: root, flow: 'nightly' })
+  engine.send(flow.id, 'Step one', 'workspace')
+  await engine.idle(flow.id)
+  assert.equal(calls().at(-1).short, true)
+  const first = says(flow.id)[0].usage!
+  assert.equal(first.ttl, 300)
+  assert.ok(Math.abs(first.warmed! - (30000 * 2 * 0.75) / 1e6) < 1e-9, 'the hour would have cost 0.75 of the input price more')
+  assert.equal(store.room(flow.id)!.quick?.claude, 'saving-session')
+  assert.equal((engine as any).warmth.has(`${flow.id}:claude`), false, 'nobody is coming back to a flow')
+  engine.send(flow.id, 'Step two', 'workspace')
+  await engine.idle(flow.id)
+  assert.deepEqual(calls().at(-1), { saving: true, resumed: true, short: true, fork: false })
+
+  // Switched off, Claude Code is left to its own lifetime and nothing is kept warm.
+  store.saveSettings({ saving: { warm: false } })
+  const plain = engine.create({ crew: ['claude'], workspace: root, flow: 'nightly' })
+  engine.send(plain.id, 'Step one', 'workspace')
+  await engine.idle(plain.id)
+  assert.equal(calls().at(-1).short, false)
+  assert.equal((engine as any).warmth.size, 0)
+  store.flush()
 })

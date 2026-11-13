@@ -1,4 +1,4 @@
-import { cacheSaving, claudeCost, codexSaving, readSaving } from '../../shared/prices'
+import { cacheSaving, claudeCost, claudePrice, codexSaving, readSaving } from '../../shared/prices'
 import type { Act, Meter, Usage } from '../../shared/types'
 
 // Each CLI prints one JSON object per line. A parser folds those lines into a Turn and reports
@@ -15,6 +15,14 @@ export type Turn = {
   error?: string
   denied: string[]
   working?: string
+  // The model that answered, as the CLI names it.
+  model?: string
+  // What the first and the last request of the turn read from cache and wrote to it. The first
+  // says whether the session was still cached when the turn began; the last, how big it is now.
+  first?: { read: number; written: number }
+  last?: { read: number; written: number }
+  // What this turn's five minute cache writes would have cost on top at the hour price.
+  quick?: number
 }
 
 // agents carries subagents as they change; each replaces the one with the same id. working is the
@@ -28,6 +36,7 @@ export type Update = { delta?: string; acts?: Act[]; working?: string; agents?: 
 function claudeSaved(rows: Record<string, number[]>) {
   let net: number | undefined
   let gross: number | undefined
+  let quick = 0
   for (const [m, [input, output, read, all, hour, cost]] of Object.entries(rows)) {
     // Claude Code reports writes by lifetime; an hour entry costs twice the input price, not 1.25.
     const u = { input, output, read, short: Math.max(0, all - hour), hour }
@@ -39,8 +48,11 @@ function claudeSaved(rows: Record<string, number[]>) {
     const g = readSaving(m, read, prompt)
     if (n !== null) net = (net ?? 0) + n
     if (g !== null) gross = (gross ?? 0) + g
+    // An hour entry costs twice the input price to write, a five minute one 1.25 times.
+    const p = claudePrice(m, prompt)
+    if (p) quick += (u.short * p.input * 0.75) / 1e6
   }
-  return { saved: net, gross }
+  return { saved: net, gross, quick }
 }
 
 const sum = (rows: Record<string, number[]>, k: number) => Object.values(rows).reduce((n, r) => n + (r[k] ?? 0), 0)
@@ -169,7 +181,7 @@ export function claudeLike(base?: Meter, resumed = false) {
     switch (o.type) {
       case 'system':
         if (o.subtype === 'init' && o.session_id) turn.session = o.session_id
-        if (o.subtype === 'init' && typeof o.model === 'string') model = o.model
+        if (o.subtype === 'init' && typeof o.model === 'string') turn.model = model = o.model
         if (o.subtype === 'thinking_tokens' && typeof o.estimated_tokens_delta === 'number') {
           tokens += o.estimated_tokens_delta
           return { working: '~Thinking', tokens: count() }
@@ -213,6 +225,11 @@ export function claudeLike(base?: Meter, resumed = false) {
         return null
       }
       case 'assistant': {
+        const used = o.message?.usage
+        if (used && typeof used.cache_read_input_tokens === 'number') {
+          turn.last = { read: used.cache_read_input_tokens, written: used.cache_creation_input_tokens ?? 0 }
+          turn.first ??= turn.last
+        }
         let delta = ''
         for (const c of o.message?.content ?? []) {
           if (c.type === 'text' && !streamed && c.text) delta += c.text
@@ -270,7 +287,9 @@ export function claudeLike(base?: Meter, resumed = false) {
           rows: { [model ?? '']: own },
         }
         const written = sum(mine.rows, 3)
-        turn.usage = { input: sum(mine.rows, 0) + written, output: sum(mine.rows, 1), cached: sum(mine.rows, 2), cost: mine.cost, written, ...claudeSaved(mine.rows), v: 2 }
+        const { quick, ...saved } = claudeSaved(mine.rows)
+        turn.quick = quick
+        turn.usage = { input: sum(mine.rows, 0) + written, output: sum(mine.rows, 1), cached: sum(mine.rows, 2), cost: mine.cost, written, ...saved, v: 2 }
         // Claude Code says how long it asked for what it cached this turn to be kept.
         if (own[3] > 0 && u.cache_creation) turn.usage.ttl = own[3] > own[4] ? 300 : 3600
         if (typeof o.result === 'string') turn.final = o.result

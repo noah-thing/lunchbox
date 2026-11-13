@@ -24,6 +24,18 @@ export type Input = {
   meter?: Meter
   allow?: string[]
   hands?: string
+  // Where the agent sends each tool call before it runs, and the folder long outputs are kept in.
+  hook?: string
+  outputs?: string
+  // The hook answers for every tool, not only commands.
+  guarded?: boolean
+  effort?: string
+  // Start with the room's tools only, without the MCP servers set up outside Lunchbox.
+  lean?: boolean
+  // Answer from a copy of the session that is thrown away, leaving the session as it was.
+  fork?: boolean
+  // Ask for what this turn caches to be kept five minutes instead of Claude Code's own choice.
+  short?: boolean
   fresh?: boolean
   // For HTTP agents: the room's folder and its rules, which the model works in through tools.
   bench?: Bench
@@ -35,6 +47,10 @@ export type Result = {
   usage: Usage
   meter?: Meter
   session?: string
+  model?: string
+  first?: { read: number; written: number }
+  last?: { read: number; written: number }
+  quick?: number
   error?: string
   limit?: { until: number }
   denied: string[]
@@ -73,6 +89,15 @@ function claudeHands(i: Input, file: string): Pick<Spec, 'extra'> & { args: stri
   return { args: ['--mcp-config', path], extra: [{ path, text: JSON.stringify({ mcpServers: { lunchbox: { type: 'http', url: i.hands } } }) }] }
 }
 
+// Claude Code calls this address before each command, so the room can shorten what it prints.
+function claudeHook(i: Input, file: string): Pick<Spec, 'extra'> & { args: string[] } {
+  const dirs = i.outputs ? ['--add-dir', i.outputs] : []
+  if (!i.hook) return { args: dirs }
+  const path = file.replace(/\.txt$/, '.settings.json')
+  const settings = { hooks: { PreToolUse: [{ matcher: i.guarded ? '*' : 'Bash', hooks: [{ type: 'http', url: i.hook, timeout: 10 }] }] } }
+  return { args: ['--settings', path, ...dirs], extra: [{ path, text: JSON.stringify(settings) }] }
+}
+
 // Codex takes servers on the command line only, so the token travels in the environment, which
 // other accounts on the computer cannot read, and the URL on the command line carries none.
 const HANDS_ENV = 'LUNCHBOX_HANDS_TOKEN'
@@ -100,17 +125,22 @@ export const CATALOG: Def[] = [
     spawn: (i, file) => {
       const allowed = ['Task', 'Agent', ...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
       const hands = claudeHands(i, file)
+      const hook = claudeHook(i, file)
       return {
-        extra: hands.extra,
+        extra: [...(hands.extra ?? []), ...(hook.extra ?? [])],
         args: [
           '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
           ...{ plan: ['--permission-mode', 'plan'], ask: ['--permission-mode', 'default'], workspace: ['--permission-mode', 'acceptEdits'], full: ['--dangerously-skip-permissions'] }[i.access],
           ...(allowed.length && i.access !== 'full' ? ['--allowedTools', allowed.join(',')] : []),
           ...hands.args,
+          ...hook.args,
+          ...(i.lean ? ['--strict-mcp-config'] : []),
+          ...(i.effort ? ['--effort', i.effort] : []),
           ...(i.model ? ['--model', i.model] : []),
           ...(i.session ? ['--resume', i.session] : []),
+          ...(i.session && i.fork ? ['--fork-session', '--no-session-persistence'] : []),
         ],
-        env: i.hands ? { MCP_TOOL_TIMEOUT: String(HANDS_TIMEOUT * 1000) } : undefined,
+        env: { ...(i.hands ? { MCP_TOOL_TIMEOUT: String(HANDS_TIMEOUT * 1000) } : {}), ...(i.short ? { FORCE_PROMPT_CACHING_5M: '1' } : {}) },
         stdin: prompt(i),
         parser: claudeLike(i.meter, !!i.session),
       }
@@ -121,7 +151,7 @@ export const CATALOG: Def[] = [
     good: 'Building, running and fixing tests', alphabet: '.-01',
     spawn: (i) => {
       const sandbox = { plan: ['-s', 'read-only'], ask: ['-s', 'read-only'], workspace: ['-s', 'workspace-write'], full: ['--dangerously-bypass-approvals-and-sandbox'] }[i.access]
-      const tail = [...codexHands(i), ...(i.model ? ['-m', i.model] : [])]
+      const tail = [...codexHands(i), ...(i.effort ? ['-c', `model_reasoning_effort="${i.effort}"`] : []), ...(i.model ? ['-m', i.model] : [])]
       // `exec resume` takes neither -C nor -s: the folder comes from the working directory and the
       // sandbox from config, or every resumed turn fails and silently starts a new session.
       const resumeSandbox = i.access === 'full' ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-c', `sandbox_mode="${i.access === 'workspace' ? 'workspace-write' : 'read-only'}"`]
@@ -405,7 +435,7 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     // A crash partway through keeps what was written, but it is not a finished answer.
     else if (code !== 0 && !error) error = reason(stderr) || `${name} exited with code ${code}`
     const limit = (error && limitOf(error)) || (code !== 0 && !text ? limitOf(stderr) : null)
-    return { text, acts: turn.acts, usage: turn.usage, meter: turn.meter, session: turn.session, error, limit: limit ?? undefined, denied: turn.denied, ms: Date.now() - t0 }
+    return { text, acts: turn.acts, usage: turn.usage, meter: turn.meter, session: turn.session, model: turn.model ?? input.model, first: turn.first, last: turn.last, quick: turn.quick, error, limit: limit ?? undefined, denied: turn.denied, ms: Date.now() - t0 }
   }
   return { done, stop: () => { stopped = true; if (child) stop(child) } }
 }

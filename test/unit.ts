@@ -7,7 +7,12 @@ import { wallWhy } from '../shared/wall'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
 import { chat, listModels, parseHeaders, PROVIDERS } from '../electron/agents/http'
-import { cacheSaving, claudeCost, codexSaving, costSaving, readSaving } from '../shared/prices'
+import { cacheSaving, claudeCost, codexSaving, costSaving, rates, readSaving } from '../shared/prices'
+import { clean, logs, NATIVE, trim } from '../electron/room/trim'
+import { wrap } from '../electron/hands'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
@@ -1318,4 +1323,90 @@ test('savings: the cost of storing the cache is counted only where the net is kn
   assert.equal(week.openrouter.premium ?? 0, 0)
   assert.ok((week.openrouter.gross ?? 0) > 0)
   assert.equal(week.codex.premium ?? 0, 0)
+})
+
+// Saving: long command output is shortened to what an agent needs, and only for commands that log.
+test('trim: short output passes untouched, colour and progress bars are dropped', () => {
+  assert.deepEqual(trim('all good\n'), { text: 'all good\n', cut: 0 })
+  assert.equal(clean('\x1b[32m✔ passed\x1b[0m'), '✔ passed')
+  assert.equal(clean('10%\r50%\r100% done\nnext'), '100% done\nnext')
+})
+
+test('trim: a long log keeps its start, its end and the lines that look like problems', () => {
+  const lines = ['> app@1.0.0 test', ...Array.from({ length: 600 }, (_, i) => `✔ case ${i} passes (0.1ms)`)]
+  lines.splice(300, 0, '✖ totals with a fixed amount off (1.2ms)', '  AssertionError: 5464 !== 5465', '      at Test.run (node:internal/test_runner/test:1372:12)')
+  lines.push('ℹ pass 600', 'ℹ fail 1')
+  const raw = lines.join('\n')
+  const r = trim(raw, '/tmp/out/1.txt')
+  assert.ok(r.text.length < raw.length / 2, 'much shorter')
+  assert.ok(r.text.startsWith('> app@1.0.0 test'), 'the start')
+  assert.match(r.text, /✖ totals with a fixed amount off/)
+  assert.match(r.text, /5464 !== 5465/)
+  assert.doesNotMatch(r.text, /node:internal/, 'frames inside the runtime are left in the file')
+  assert.match(r.text, /ℹ fail 1/)
+  assert.match(r.text, /lines not shown/)
+  assert.match(r.text, /The whole output is in \/tmp\/out\/1\.txt/)
+  assert.equal(r.cut, raw.length - r.text.length)
+})
+
+test('trim: nothing is counted for output Claude Code would have moved to a file itself', () => {
+  const raw = Array.from({ length: 2000 }, (_, i) => `✔ case ${i} passes (0.1ms)`).join('\n')
+  assert.ok(raw.length > NATIVE)
+  const r = trim(raw)
+  assert.ok(r.text.length < 12000)
+  assert.equal(r.cut, 0)
+})
+
+test('trim: output that would barely shrink is left whole', () => {
+  const raw = Array.from({ length: 300 }, (_, i) => `src/file${i}.ts(12,4): error TS2345: argument ${i} is not assignable`).join('\n')
+  assert.equal(trim(raw).text, raw)
+})
+
+test('logs: tests, builds and installs are shortened, content never is', () => {
+  for (const c of ['npm test', 'cd app && npm run build', 'CI=1 pnpm install', 'npx tsc --noEmit && npm test', 'pytest -x tests/', 'cargo test --workspace', 'node --test', 'go test ./...', 'make -j8']) assert.equal(logs(c), true, c)
+  for (const c of ['cat src/app.ts', 'git diff', 'npm test 2>&1 | tail -20', 'npm test | grep fail', 'npm test; cat out.log', 'npm ls', 'node build.js', 'npm run dev &', 'npm test || exit 1', 'ls -la', 'curl -s localhost:3000', 'npm test > out.txt; echo $(wc -l < out.txt)']) assert.equal(logs(c), false, c)
+})
+
+test('wrap: the command keeps its exit code and its place in the shell', { skip: process.platform === 'win32' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lunchbox-wrap-'))
+  const file = join(dir, 'out.txt')
+  // No room is listening on this address, so the whole output is printed, as without Lunchbox.
+  const run = (command: string) => spawnSync('/bin/sh', ['-c', wrap(command, file, 'http://127.0.0.1:9/output/none/1')], { encoding: 'utf8', cwd: dir })
+  const ok = run('echo one; echo two >&2')
+  assert.equal(ok.status, 0)
+  assert.equal(ok.stdout, 'one\ntwo\n')
+  const bad = run('echo before; false')
+  assert.equal(bad.status, 1)
+  assert.equal(bad.stdout, 'before\n')
+  // cd inside the command still moves the shell that runs what comes after it.
+  assert.equal(spawnSync('/bin/sh', ['-c', `${wrap('cd /', file, 'http://127.0.0.1:9/x')}; pwd`], { encoding: 'utf8', cwd: dir }).stdout.trim(), '/')
+  // A file that cannot be written runs the command as it was.
+  assert.equal(spawnSync('/bin/sh', ['-c', wrap('echo plain', join(dir, 'missing', 'out.txt'), 'http://127.0.0.1:9/x')], { encoding: 'utf8' }).stdout, 'plain\n')
+})
+
+test('rates: list prices per token for what Lunchbox kept out', () => {
+  const fable = rates('claude', 'claude-fable-5-2', 3600)!
+  assert.equal(fable.input, 8 / 1e6)
+  assert.equal(fable.read, 0.2 / 1e6)
+  assert.equal(fable.write, 16 / 1e6)
+  assert.equal(rates('claude', 'claude-sonnet-5-5', 300)!.write, 2.5 / 1e6)
+  assert.equal(rates('codex', 'gpt-6.1-terra')!.input, (25 * 0.04) / 1e6)
+  assert.equal(rates('claude', 'some-new-model'), null)
+  assert.equal(rates('gemini', 'gemini-3.5-flash'), null)
+})
+
+test('claude: a turn reports its model, and what its first and last request read and wrote', () => {
+  const p = claudeLike()
+  const usage = (read: number, written: number) => ({ input_tokens: 2, output_tokens: 5, cache_read_input_tokens: read, cache_creation_input_tokens: written })
+  p.line({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-sonnet-5-5' })
+  p.line({ type: 'assistant', message: { usage: usage(14000, 30000), content: [{ type: 'tool_use', id: 't', name: 'Read', input: { file_path: 'a' } }] } })
+  p.line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'x' }] } })
+  p.line({ type: 'assistant', message: { usage: usage(44000, 900), content: [{ type: 'text', text: 'done' }] } })
+  p.line({ type: 'result', subtype: 'success', result: 'done', session_id: 's', usage: { ...usage(58000, 30900), cache_creation: { ephemeral_5m_input_tokens: 30900, ephemeral_1h_input_tokens: 0 } }, modelUsage: { 'claude-sonnet-5-5': { inputTokens: 4, outputTokens: 10, cacheReadInputTokens: 58000, cacheCreationInputTokens: 30900, cacheCreationEphemeral1hInputTokens: 0, costUSD: 0.08 } } })
+  assert.equal(p.turn.model, 'claude-sonnet-5-5')
+  assert.deepEqual(p.turn.first, { read: 14000, written: 30000 })
+  assert.deepEqual(p.turn.last, { read: 44000, written: 900 })
+  assert.equal(p.turn.usage.ttl, 300)
+  // Five minute entries: 0.75 of the $2 input price less than the hour would have cost.
+  assert.ok(Math.abs(p.turn.quick! - (30900 * 2 * 0.75) / 1e6) < 1e-9)
 })

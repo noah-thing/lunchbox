@@ -1,6 +1,9 @@
 import { randomBytes } from 'node:crypto'
+import { mkdirSync, rmSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { join } from 'node:path'
+import { logs, trim } from './room/trim'
 
 export type Tool = {
   name: string
@@ -14,14 +17,33 @@ export type Tool = {
 
 type Rpc = { jsonrpc: '2.0'; id?: string | number | null; method?: string; params?: any }
 
+// What a turn lets Lunchbox do to the agent's own tool calls, through the agent's hooks.
+// shorten: commands that only log run with their output sent here first, and what is kept goes
+// back to the agent; dir is where the whole output stays, cut is told how much never reached it.
+// refuse: every tool call is turned down, for a turn that must not change anything.
+export type Watch =
+  | { kind: 'shorten'; dir: string; cut(chars: number): void }
+  | { kind: 'refuse' }
+
+const MAX_RPC = 1_000_000
+const MAX_OUTPUT = 16_000_000
+
+// The command an agent asked for, run with everything it prints going to a file. The room
+// shortens the file and prints what is kept; without curl or the room, the file is printed whole.
+// The braces keep `cd` and variables in the agent's shell, and the exit code is the command's own.
+export function wrap(command: string, file: string, url: string) {
+  return `if : > '${file}' 2>/dev/null; then { ${command}\n} > '${file}' 2>&1; lb_status=$?; curl -sf --max-time 30 --data-binary @'${file}' '${url}' 2>/dev/null || cat '${file}'; (exit $lb_status); else ${command}\nfi`
+}
+
 const VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // One MCP server for every agent the room starts. Each turn gets its own URL, and the URL is the
 // credential: it names the tools that turn may use and stops working when the turn ends.
 export class Hands {
   private server: Server | null = null
-  private grants = new Map<string, Tool[]>()
+  private grants = new Map<string, { tools: Tool[]; watch?: Watch }>()
   private port = 0
+  private outputs = 0
 
   async start() {
     if (this.server) return
@@ -44,12 +66,13 @@ export class Hands {
     this.port = 0
   }
 
-  grant(tools: Tool[]) {
+  grant(tools: Tool[], watch?: Watch) {
     // Without a server the agents run without the room's tools rather than call a dead address.
-    if (!this.port) return { url: '', revoke: () => {} }
+    if (!this.port) return { url: '', hook: '', revoke: () => {} }
     const token = randomBytes(18).toString('base64url')
-    this.grants.set(token, tools)
-    return { url: `http://127.0.0.1:${this.port}/mcp/${token}`, revoke: () => this.grants.delete(token) }
+    this.grants.set(token, { tools, watch })
+    const base = `http://127.0.0.1:${this.port}`
+    return { url: tools.length ? `${base}/mcp/${token}` : '', hook: watch ? `${base}/hook/${token}` : '', revoke: () => this.grants.delete(token) }
   }
 
   private send(res: ServerResponse, status: number, body?: unknown) {
@@ -63,17 +86,25 @@ export class Hands {
 
   private async handle(req: IncomingMessage, res: ServerResponse) {
     // The token is the last part of the URL, or a bearer header for a CLI that takes it that way.
-    const token = req.url?.match(/^\/mcp\/([\w-]+)/)?.[1] ?? req.headers.authorization?.match(/^Bearer\s+([\w-]+)$/i)?.[1]
-    const tools = token ? this.grants.get(token) : undefined
-    if (!tools) return this.send(res, 404, { error: 'This turn has ended' })
+    const [, route, named, rest] = req.url?.match(/^\/(mcp|hook|output)\/([\w-]+)(?:\/([\w-]+))?/) ?? []
+    const token = named ?? req.headers.authorization?.match(/^Bearer\s+([\w-]+)$/i)?.[1]
+    const granted = token ? this.grants.get(token) : undefined
+    if (!granted) return this.send(res, 404, { error: 'This turn has ended' })
     if (req.method === 'DELETE') return this.send(res, 200)
     if (req.method !== 'POST') return this.send(res, 405)
 
-    let raw = ''
+    const max = route === 'output' ? MAX_OUTPUT : MAX_RPC
+    const chunks: Buffer[] = []
+    let size = 0
     for await (const chunk of req) {
-      raw += chunk
-      if (raw.length > 1_000_000) return this.send(res, 413)
+      size += chunk.length
+      if (size > max) return this.send(res, 413)
+      chunks.push(chunk)
     }
+    const raw = Buffer.concat(chunks).toString('utf8')
+    if (route === 'hook') return this.send(res, 200, this.hook(raw, granted.watch, token!))
+    if (route === 'output') return this.output(res, raw, granted.watch, rest ?? '')
+    const tools = granted.tools
     let body: Rpc | Rpc[]
     try { body = JSON.parse(raw) } catch { return this.send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) }
 
@@ -81,6 +112,33 @@ export class Hands {
     const replies = (await Promise.all(batch.map((m) => this.reply(m, tools)))).filter((r) => r !== null)
     if (!replies.length) return this.send(res, 202)
     this.send(res, 200, Array.isArray(body) ? replies : replies[0])
+  }
+
+  // Called by the agent before each of its tool calls.
+  private hook(raw: string, watch: Watch | undefined, token: string) {
+    let o: { tool_name?: string; tool_input?: Record<string, unknown> }
+    try { o = JSON.parse(raw) } catch { return {} }
+    if (watch?.kind === 'refuse') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'No tools in this turn. Reply in words only.' } }
+    const command = o.tool_input?.command
+    if (watch?.kind !== 'shorten' || o.tool_name !== 'Bash' || typeof command !== 'string' || o.tool_input?.run_in_background || !logs(command)) return {}
+    // Forward slashes work in every shell the agents use, Git Bash on Windows included.
+    const dir = watch.dir.replace(/\\/g, '/')
+    if (/['\n]/.test(dir)) return {}
+    try { mkdirSync(watch.dir, { recursive: true }) } catch { return {} }
+    const id = `${Date.now().toString(36)}-${++this.outputs}`
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...o.tool_input, command: wrap(command, `${dir}/${id}.txt`, `http://127.0.0.1:${this.port}/output/${token}/${id}`) } } }
+  }
+
+  // What a command printed, sent back shortened. A short output is passed on as it was and its
+  // file removed; a long one keeps its file, which the shortened text points to.
+  private output(res: ServerResponse, raw: string, watch: Watch | undefined, id: string) {
+    if (watch?.kind !== 'shorten' || !id) return this.send(res, 404)
+    const file = join(watch.dir, `${id}.txt`)
+    const r = trim(raw, file)
+    if (r.text.length >= raw.length - 200) {
+      try { rmSync(file, { force: true }) } catch {}
+    } else watch.cut(r.cut)
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(r.text.endsWith('\n') || !r.text ? r.text : r.text + '\n')
   }
 
   private async reply(m: Rpc, tools: Tool[]) {

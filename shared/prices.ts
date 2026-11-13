@@ -97,3 +97,15 @@ export function codexSaving(model: string, cached: number) {
 export function claudeValue(model: string, u: { input: number; read: number; output: number; short: number; hour?: number }) {
   return claudeCost(model, u) ?? claudeCost('claude-sonnet-5', u)!
 }
+
+// Dollars per token at list price, for pricing what Lunchbox itself kept out of a request: a fresh
+// read, a cached read, and a write to the cache for the lifetime given in seconds. Null for an
+// agent with no price here, whose savings are then counted in tokens only.
+export function rates(agent: string, model: string, ttl = 300): { input: number; read: number; write: number } | null {
+  if (agent === 'codex') {
+    const [, i, c] = CODEX.find(([re]) => re.test(model)) ?? [null, 50, 5, 250]
+    return { input: (i * CREDIT) / 1e6, read: (c * CREDIT) / 1e6, write: (i * CREDIT) / 1e6 }
+  }
+  const p = agent === 'claude' || agent === 'claude-api' ? claudePrice(model) : null
+  return p && { input: p.input / 1e6, read: p.read / 1e6, write: (p.input * (ttl >= 3600 ? 2 : 1.25)) / 1e6 }
+}

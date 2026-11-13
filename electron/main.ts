@@ -416,6 +416,7 @@ app.whenReady().then(async () => {
   updates = new Updates(store, emit)
   updates.start()
   flush(store.dir).catch(() => {})
+  engine.sweep()
   await engine.refresh()
   limits.start()
   flows.start()

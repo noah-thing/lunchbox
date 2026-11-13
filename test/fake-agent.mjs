@@ -97,6 +97,39 @@ if (process.env.FAKE_SCRIPT === 'prose' && name === 'claude') {
   process.exit(0)
 }
 
+// FAKE_SCRIPT=saving: Claude Code as the saving code meets it. A new session writes its whole
+// start to the cache, for five minutes when asked to and an hour otherwise; a resumed one reads
+// it back. A line starting "Run:" in the request runs that command the way Claude Code does, through the hook
+// the room registered. A ping, which is a resume into a copy of the session, only reads.
+if (process.env.FAKE_SCRIPT === 'saving' && name === 'claude') {
+  const { execSync } = await import('node:child_process')
+  const resumed = args.includes('--resume')
+  const short = process.env.FORCE_PROMPT_CACHING_5M === '1'
+  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ saving: true, resumed, short, fork: args.includes('--fork-session') }) + '\n')
+  const read = resumed ? 44000 : 14000
+  const written = resumed ? 500 : 30000
+  const usage = { input_tokens: 6, output_tokens: 20, cache_read_input_tokens: read, cache_creation_input_tokens: written, cache_creation: { ephemeral_5m_input_tokens: short ? written : 0, ephemeral_1h_input_tokens: short ? 0 : written } }
+  say({ type: 'system', subtype: 'init', session_id: 'saving-session', model: 'claude-sonnet-5-5' })
+  const command = input.match(/^Run: (.+)$/m)?.[1]
+  let text = 'ok'
+  if (command) {
+    const hook = args.includes('--settings') ? JSON.parse(readFileSync(args[args.indexOf('--settings') + 1], 'utf8')).hooks.PreToolUse[0].hooks[0].url : null
+    const asked = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }
+    const answer = hook ? await (await fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(asked) })).json() : {}
+    const real = answer.hookSpecificOutput?.updatedInput?.command ?? command
+    say({ type: 'assistant', message: { usage, content: [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command } }] } })
+    let out = ''
+    let code = 0
+    try { out = execSync(real, { encoding: 'utf8', shell: '/bin/sh', stdio: ['ignore', 'pipe', 'pipe'] }) } catch (e) { out = `${e.stdout ?? ''}${e.stderr ?? ''}`; code = e.status ?? 1 }
+    say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'b1', content: code ? `Exit code ${code}\n${out}` : out, is_error: code !== 0 }] } })
+    text = `Ran it: ${out.length} characters, exit ${code}, rewritten ${real !== command}.`
+  }
+  say({ type: 'assistant', message: { usage, content: [{ type: 'text', text }] } })
+  const row = { inputTokens: 6, outputTokens: 20, cacheReadInputTokens: read, cacheCreationInputTokens: written, cacheCreationEphemeral1hInputTokens: short ? 0 : written, costUSD: 0.02 }
+  say({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: 'saving-session', usage, modelUsage: { 'claude-sonnet-5-5': row } })
+  process.exit(0)
+}
+
 // FAKE_SCRIPT=subagents: Claude splits the work across three subagents and reports back.
 if (process.env.FAKE_SCRIPT === 'subagents' && name === 'claude') {
   const tasks = [['a', 'Map where auth tokens are checked', 'Explore', 'haiku'], ['b', 'Write tests for the token parser', 'general-purpose', 'sonnet'], ['c', 'Review the session middleware', 'code-reviewer', 'opus']]

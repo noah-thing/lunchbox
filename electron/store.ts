@@ -111,6 +111,12 @@ export function addUsage(a: Usage, b: Partial<Usage>) {
   if (b.gross) a.gross = (a.gross ?? 0) + b.gross
   if (b.kept) a.kept = (a.kept ?? 0) + b.kept
   if (b.premium) a.premium = (a.premium ?? 0) + b.premium
+  if (b.cut) a.cut = (a.cut ?? 0) + b.cut
+  if (b.held) a.held = (a.held ?? 0) + b.held
+  if (b.spared) a.spared = (a.spared ?? 0) + b.spared
+  if (b.trimmed) a.trimmed = (a.trimmed ?? 0) + b.trimmed
+  if (b.warmed) a.warmed = (a.warmed ?? 0) + b.warmed
+  if (b.pings) a.pings = (a.pings ?? 0) + b.pings
   return a
 }
 
@@ -126,6 +132,8 @@ export class Store {
   spent: Record<string, Spent>
   calib: Record<string, { at: number; pct: number; units: number; start: number }[]>
   health: Record<string, string>
+  // How long each agent asks for its cache to be kept when Lunchbox leaves it alone, in seconds.
+  lifetimes: Record<string, number>
   skills: Skill[]
   flows: Flow[]
   private ledger: { at: number; agent: string; room: string; usage: Usage }[] = []
@@ -137,11 +145,12 @@ export class Store {
     mkdirSync(join(dir, 'packs'), { recursive: true })
     for (const meta of readRooms(dir)) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
-    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
+    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings; lifetimes?: Record<string, number> }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
     // Older builds stored a different shape here; only lists are kept.
     this.calib = Object.fromEntries(Object.entries(state.calib ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.filter((r) => r && 'start' in r) : []]))
     this.health = state.health ?? {}
+    this.lifetimes = state.lifetimes ?? {}
     this.arena = state.arena ?? {}
     this.ratings = state.ratings ?? {}
     this.skills = readJson<Skill[]>(join(dir, 'skills.json'), [])
@@ -288,7 +297,7 @@ export class Store {
   }
 
   saveState() {
-    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings, calib: this.calib })
+    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings, calib: this.calib, lifetimes: this.lifetimes })
   }
 
   saveSkills() {
@@ -333,7 +342,7 @@ export class Store {
     const week = Date.now() - 7 * 86400e3
     const days = Array.from({ length: DAYS }, (_, i) => {
       const d = new Date(day.getTime() - (DAYS - 1 - i) * 86400e3)
-      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, gross: 0, kept: 0 }
+      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, gross: 0, kept: 0, cut: 0, held: 0, spared: 0, trimmed: 0, warmed: 0, pings: 0 }
     })
     const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
     for (const raw of this.ledger) {
@@ -357,6 +366,12 @@ export class Store {
         slot.saved += row.usage.saved ?? 0
         slot.gross += row.usage.gross ?? Math.max(0, row.usage.saved ?? 0)
         slot.kept += row.usage.kept ?? 0
+        slot.cut += row.usage.cut ?? 0
+        slot.held += row.usage.held ?? 0
+        slot.spared += row.usage.spared ?? 0
+        slot.trimmed += row.usage.trimmed ?? 0
+        slot.warmed += row.usage.warmed ?? 0
+        slot.pings += row.usage.pings ?? 0
       }
     }
     out.days = days.map(({ start: _, ...d }) => d)
