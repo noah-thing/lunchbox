@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useModal } from '../lib/modal'
 import { createPortal } from 'react-dom'
 import { Loader } from '../ui/bits'
 import { IconClose, IconRewind } from '../ui/icons'
@@ -43,6 +44,7 @@ export function Changes({ room, event, title, close, rewind }: {
   const [error, setError] = useState('')
   const [open, setOpen] = useState(0)
 
+  useModal()
   useEffect(() => {
     desk.call('room:changes', room, event).then((f: FileChange[]) => setFiles(f ?? []), (e: unknown) => setError(reason(e)))
   }, [room, event])

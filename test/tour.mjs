@@ -84,6 +84,19 @@ await shot('20-light-room', 1200)
 await page.keyboard.press('Meta+n')
 await shot('21-light-new', 1200)
 
+// A dialog keeps the keyboard: Tab never leaves it, and closing it puts focus back on its button.
+await page.focus('.sbbeta')
+await page.keyboard.press('Enter')
+await page.waitForSelector('[role=dialog]')
+const inside = []
+for (let i = 0; i < 14; i++) { await page.keyboard.press(i % 5 === 4 ? 'Shift+Tab' : 'Tab'); inside.push(await page.evaluate(() => !!document.activeElement?.closest('[role=dialog]'))) }
+await page.keyboard.press('Escape')
+await page.waitForSelector('[role=dialog]', { state: 'detached' })
+await page.waitForTimeout(120)
+const back = await page.evaluate(() => document.activeElement?.className)
+if (!inside.every(Boolean) || back !== 'sbbeta') errors.push(`dialog focus: stayed inside ${inside.filter(Boolean).length}/14, came back to ${back}`)
+
 console.log('errors', errors.length ? errors.join('\n') : 'none')
+if (errors.length) process.exitCode = 1
 clearTimeout(kill)
 await app.close()

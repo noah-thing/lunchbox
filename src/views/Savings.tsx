@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { useModal } from '../lib/modal'
 import type { Day, Usage } from '../../shared/types'
 import { Mark } from '../ui/bits'
 import { desk, money, tokens, useApp } from '../lib/desk'
@@ -241,6 +242,7 @@ function nice(n: number) {
 // The card, shown before it goes anywhere. Copy and save keep the image; Post on X copies it first,
 // so it is one paste away in the composer X opens.
 function ShareCard({ image, close }: { image: string; close: () => void }) {
+  useModal()
   const [said, setSaid] = useState('')
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }

@@ -1275,3 +1275,17 @@ test('a reply still arriving never shows markup it is about to lose', async () =
   assert.equal(steady('```js\nconst a = 1\n```'), '```js\nconst a = 1\n```')
   assert.equal(steady('```js\na\n```\nThen **more'), '```js\na\n```\nThen **more**')
 })
+
+test('a dialog keeps Tab inside it: past the last item comes the first, and back again', async () => {
+  const { round } = await import('../src/lib/modal')
+  assert.equal(round(3, 2, false), 0)
+  assert.equal(round(3, 0, true), 2)
+  // In the middle the browser moves focus as usual.
+  assert.equal(round(3, 1, false), null)
+  assert.equal(round(3, 1, true), null)
+  // Focus that got outside comes back in at the near end.
+  assert.equal(round(3, -1, false), 0)
+  assert.equal(round(3, -1, true), 2)
+  // Nothing to reach: focus stays on the dialog itself.
+  assert.equal(round(0, -1, false), -1)
+})

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useModal } from '../lib/modal'
 import type { Notice, UpdateState } from '../../shared/types'
 import { IconClose } from './icons'
 import { desk, useApp } from '../lib/desk'
@@ -53,6 +54,7 @@ export function Notices() {
 
   const card = list.find((n) => n.kind === 'card')
   const showUpdate = !!ready1 && !card && clear
+  useModal(showUpdate || !!card)
   useEffect(() => {
     if (!showUpdate) return
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') closeCard() }

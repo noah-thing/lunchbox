@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useModal } from '../lib/modal'
 import type { Report } from '../../shared/types'
 import { Loader } from '../ui/bits'
 import { IconClose } from '../ui/icons'
@@ -16,6 +17,7 @@ const KINDS: { id: Report['kind']; name: string; ask: string; icon: ReactNode }[
 // recent errors attached, so nobody has to ask for them. Closes on the X, Cancel, a click outside
 // or Escape; ⌘Enter sends.
 export function ReportSheet({ open, close, say }: { open: ReportOpen; close: () => void; say: (t: string) => void }) {
+  useModal()
   const [kind, setKind] = useState<Report['kind']>(open.kind ?? 'bug')
   const [text, setText] = useState('')
   const [contact, setContact] = useState('')

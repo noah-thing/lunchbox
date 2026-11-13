@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useModal } from '../lib/modal'
 import type { Connector } from '../../shared/types'
 import { Loader, Mark } from '../ui/bits'
 import { logoOf } from '../../shared/logos'
@@ -73,6 +74,7 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 
 // Add or change a connector. Closes on Escape, on a click outside and with the close button.
 export function ConnectorSheet({ edit, close, say }: { edit?: Connector; close: () => void; say: (t: string) => void }) {
+  useModal()
   const settings = useApp((s) => s.settings)
   const [c, setC] = useState<Connector>(edit ?? { id: '', name: '', kind: 'openai', base: '', model: '', command: '', args: '{prompt}', output: 'text' })
   const [key, setKey] = useState('')
