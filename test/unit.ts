@@ -1300,3 +1300,22 @@ test('expert audit: the first screen is always stated, and a bare half is listed
   assert.match(text, /First screen: 25% of the frame carries content \(left 44%, right 6%, top 30%, bottom 20%\)/)
   assert.match(text, /Phone, 390px: no layout problems found\nFirst screen: 60%/)
 })
+
+test('savings: the cost of storing the cache is counted only where the net is known', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const store = new Store(mkdtempSync(join(tmpdir(), 'lb-premium-')), { seal: (t: string) => t, open: (t: string) => t })
+  // Claude reports both: reads saved 10 cents, storing cost 4, so 6 net.
+  store.record('claude', 'r1', { input: 1000, output: 50, cached: 9000, cost: 0.01, written: 1000, saved: 0.06, gross: 0.1, v: 2 })
+  // A gateway reports only a cost. Its saving is worked back and has no storing cost on record,
+  // which must not be read as the whole saving having been spent on storing.
+  store.record('openrouter', 'r1', { input: 700, output: 10, cached: 3000, cost: 0.002 })
+  // Codex has no charge for storing.
+  store.record('codex', 'r1', { input: 500, output: 10, cached: 4000, cost: 0, saved: 0.007, gross: 0.007, v: 2 })
+  const week = store.totals().week
+  assert.ok(Math.abs((week.claude.premium ?? 0) - 0.04) < 1e-12)
+  assert.equal(week.openrouter.premium ?? 0, 0)
+  assert.ok((week.openrouter.gross ?? 0) > 0)
+  assert.equal(week.codex.premium ?? 0, 0)
+})

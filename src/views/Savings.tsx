@@ -8,10 +8,10 @@ import { drawSavingsCard } from '../ui/shareCard'
 import { IconClose } from '../ui/icons'
 import type { View } from '../App'
 
-const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0, saved: 0, gross: 0, kept: 0 })
+const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0, saved: 0, gross: 0, kept: 0, premium: 0 })
 const add = (a: Usage, u: Usage): Usage => ({
   input: a.input + u.input, output: a.output + u.output, cached: a.cached + u.cached, cost: a.cost + u.cost,
-  saved: (a.saved ?? 0) + (u.saved ?? 0), gross: gross(a) + gross(u), kept: (a.kept ?? 0) + (u.kept ?? 0),
+  saved: (a.saved ?? 0) + (u.saved ?? 0), gross: gross(a) + gross(u), kept: (a.kept ?? 0) + (u.kept ?? 0), premium: (a.premium ?? 0) + (u.premium ?? 0),
 })
 const total = (r: Record<string, Usage> | undefined) => Object.values(r ?? {}).reduce(add, zero())
 // Everything an agent read: billed in full, read from the provider's cache, or never sent
@@ -34,6 +34,8 @@ export function Savings({ go }: { go: (v: View) => void }) {
   const days = ledger?.days ?? []
   const last7 = days.slice(-7)
   const [card, setCard] = useState<string | null>(null)
+  // What storing the cache cost on top of the input price, where the agent reported it.
+  const stored = week.premium ?? 0
 
   const crew = Object.entries(ledger?.week ?? {})
     .map(([id, u]) => ({ a: agents.find((x) => x.id === id), id, u }))
@@ -59,7 +61,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
             const money = gross(week) > 0
             setCard(await drawSavingsCard({
               headline: money ? cash(gross(week)) : tokens(reused(week)),
-              line: money ? 'saved with prompt caching' : 'tokens read from cache instead of paid in full',
+              line: money ? 'saved by cached reads, at API list prices' : 'tokens read from cache instead of paid in full',
               stats: [
                 { value: tokens(reused(week)), label: 'tokens from cache' },
                 { value: pct(ratio(week)), label: 'of every read' },
@@ -77,7 +79,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
           <Kpi label="Saved with prompt caching" value={gross(week) > 0 ? cash(gross(week)) : reused(week) > 0 ? `${tokens(reused(week))} tokens` : '$0.00'}
             series={last7.map((d) => d.gross ?? Math.max(0, d.saved))}
             note={gross(week) <= 0 && reused(week) > 0 ? 'Counted in tokens for agents that report no cost' : undefined}
-            info={`At API list prices: a cached read on Claude costs a tenth of a fresh one, or less on the newest models. Writing the cache costs a little extra on the first turn of a room${gross(week) > 0 ? `, ${cash(Math.max(0, gross(week) - (week.saved ?? 0)))} this week, so the net saving is ${cash(Math.max(0, week.saved ?? 0))}` : ''}. Claude is priced per model; other agents are worked out from the cost they report, with a cached read counted at a quarter of a fresh one, so their saving is if anything higher. Agents that report no cost are counted in tokens. On a plan this means more room before your limit.`} />
+            info={`What cached reads saved at API list prices. On Claude a cached read costs a tenth of a fresh one, or less on the newest models. Storing the cache costs extra, ${cash(stored)} this week, which leaves ${cash(Math.max(0, gross(week) - stored))} net. A subscription pays nothing per token, so this is what the same work would have cost on an API key.`} />
           <Kpi label="Tokens saved" value={tokens(reused(week))} series={last7.map(reused)}
             info="Tokens your agents read without paying full price: either the provider had them cached and charged a fraction of the price, or the agent already had them and Lunchbox skipped sending them." />
           <Kpi label="Savings rate" value={pct(ratio(week))} series={last7.map(ratio)} unit
@@ -122,6 +124,23 @@ export function Savings({ go }: { go: (v: View) => void }) {
             </Table>
           </Card>
         )}
+
+        <Card title="How this is counted" info="The rules behind every number on this page." className="rise sv-notes" style={{ '--i': 5 } as CSSProperties}>
+          <dl>
+            <dt>Each turn once</dt>
+            <dd>Claude Code and Codex report running totals when a session is resumed. Lunchbox takes away what was already counted, so a long room is never counted twice.</dd>
+            <dt>Reads and writes</dt>
+            <dd>A cached read is billed at a fraction of a fresh one. Storing the cache is billed on top of the input price: a quarter more for an entry kept five minutes, twice the price for one kept an hour.{gross(week) > 0 && ` This week cached reads saved ${cash(gross(week))}, storing cost ${cash(stored)}, and ${cash(Math.max(0, gross(week) - stored))} is left.`}</dd>
+            <dt>Five minutes or an hour</dt>
+            <dd>Each use starts the time again. A message sent while the cache is warm pays only for what is new; after it cools, the next one reads the whole room at full price. The room panel shows the time each agent reported.</dd>
+            <dt>Claude</dt>
+            <dd>Priced per model at Anthropic's list prices, from the reads and writes Claude Code reports for each turn.</dd>
+            <dt>Codex</dt>
+            <dd>Counted in Codex credits at $40 for 1,000: the gap between the input rate and the cached input rate. Codex has no charge for storing.</dd>
+            <dt>Other agents</dt>
+            <dd>Worked back from the cost the agent reports, with a cached read counted at a quarter of a fresh one, so the figure can only be low. Agents that report no cost show tokens only, and local models are free.</dd>
+          </dl>
+        </Card>
       </div>
     </div>
   )

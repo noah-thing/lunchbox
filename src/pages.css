@@ -387,6 +387,10 @@ input[type=number].select{width:64px}
 .savings .sv-ratio i::after{content:"";position:absolute;inset:0;background:var(--reuse);transform-origin:left;transform:scaleX(var(--w));transition:transform 600ms var(--out)}
 .savings .sv-ratio b{font:500 12.5px var(--sans);width:44px;text-align:right;font-feature-settings:"tnum"}
 .savings .sv-gap{width:16px;flex:none}
+.savings .sv-notes dl{display:grid;grid-template-columns:minmax(120px,max-content) minmax(0,1fr);column-gap:24px;row-gap:10px;margin:0;font-size:12.5px;line-height:1.55}
+.savings .sv-notes dt{color:var(--ink);font-weight:500}
+.savings .sv-notes dd{margin:0;color:var(--dim);max-width:640px}
+@media (max-width:720px){.savings .sv-notes dl{grid-template-columns:1fr;row-gap:2px}.savings .sv-notes dd{margin-bottom:8px}}
 .savings .sv-empty{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12.5px;color:var(--dim);padding:6px 4px}
 [data-look=neyra] .savings .sv-kpi,[data-look=neyra] .savings .sv-card{border-radius:2px}
 

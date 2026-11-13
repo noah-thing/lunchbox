@@ -37,7 +37,9 @@ export type AgentInfo = {
 // v 2 marks a turn counted on its own. Claude Code and Codex rows without it may hold a resumed
 // session's running totals, and are corrected when read.
 // ttl: seconds the provider said it keeps what this turn cached, where it says.
-export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; gross?: number; kept?: number; ttl?: number; v?: 2 }
+// premium: what storing the cache cost on top of the input price, in totals, where both the gross
+// and the net saving are known.
+export type Usage = { input: number; output: number; cached: number; cost: number; written?: number; saved?: number; gross?: number; kept?: number; ttl?: number; premium?: number; v?: 2 }
 
 // What a CLI session has reported in total so far: its cost, and token counts per model.
 export type Meter = { cost: number; rows: Record<string, number[]> }

@@ -110,6 +110,7 @@ export function addUsage(a: Usage, b: Partial<Usage>) {
   if (b.saved) a.saved = (a.saved ?? 0) + b.saved
   if (b.gross) a.gross = (a.gross ?? 0) + b.gross
   if (b.kept) a.kept = (a.kept ?? 0) + b.kept
+  if (b.premium) a.premium = (a.premium ?? 0) + b.premium
   return a
 }
 
@@ -337,7 +338,11 @@ export class Store {
     const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
     for (const raw of this.ledger) {
       // Rows from before Lunchbox priced a saving get one from what the agent reported.
-      const row = raw.usage.gross === undefined ? { ...raw, usage: { ...raw.usage, gross: (raw.agent === 'codex' ? codexSaving('', raw.usage.cached) : costSaving(raw.agent, raw.usage)) ?? undefined } } : raw
+      const priced = raw.usage.gross === undefined ? { ...raw, usage: { ...raw.usage, gross: (raw.agent === 'codex' ? codexSaving('', raw.usage.cached) : costSaving(raw.agent, raw.usage)) ?? undefined } } : raw
+      // The cost of storing the cache is the gap between what the reads saved and the net, and is
+      // only known where the agent reported both. A saving worked back from a cost has no net.
+      const u = priced.usage
+      const row = u.gross !== undefined && u.saved !== undefined && u.gross > u.saved ? { ...priced, usage: { ...u, premium: u.gross - u.saved } } : priced
       if (row.at >= week) {
         addUsage((out.week[row.agent] ??= zero()), row.usage)
         addUsage((out.rooms[row.room] ??= zero()), row.usage)
