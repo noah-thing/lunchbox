@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 // Counts what jumps in a room while a turn plays. A jump is anything already on screen that moves
 // or changes height in a single frame and then stays there; a glide keeps moving the next frame.
-// node test/flow-shot.mjs [prose|progress|consult|handoff|subagents] [--shots] [--strict]
+// node test/flow-shot.mjs [prose|progress|consult|handoff|subagents|showcase] [--shots] [--strict]
 const root = new URL('..', import.meta.url).pathname
 const scene = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'prose'
 const shots = process.argv.includes('--shots')
@@ -15,6 +15,7 @@ const scenes = {
   progress: { say: 'Build the pricing page and test it', script: 'progress', delay: '0', agents: ['claude'], ms: 27000 },
   consult: { say: 'Consult: check the island renders', script: '', delay: '120', agents: ['claude', 'codex', 'grok'], ms: 22000 },
   handoff: { say: 'What do people say about agent limits?', script: '', delay: '60', agents: ['claude', 'grok'], ms: 16000 },
+  showcase: { say: 'Our hackathon Build Night is in three weeks. Find out what people on X want from hackathons, write the announcement, design the banner and put up the event page.', script: 'showcase', delay: '12', agents: ['claude', 'codex', 'grok'], ms: 80000, env: { SHOWCASE_PACE: 'real', SHOWCASE_HOLD: '1500' } },
   subagents: { say: 'Audit the auth code', script: 'subagents', delay: '0', agents: ['claude'], ms: 12000 },
 }
 const s = scenes[scene]
@@ -29,10 +30,10 @@ for (const n of s.agents) symlinkSync(root + 'test/fake-agent.mjs', `${bin}/${n}
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${temp('profile')}`], cwd: root,
-  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.execPath.replace(/\/[^/]+$/, '')}:/usr/bin:/bin`, LUNCHBOX_PATH_ONLY: '1', FAKE_DELAY: s.delay, FAKE_SCRIPT: s.script },
+  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.execPath.replace(/\/[^/]+$/, '')}:/usr/bin:/bin`, LUNCHBOX_PATH_ONLY: '1', FAKE_DELAY: s.delay, FAKE_SCRIPT: s.script, ...(s.env ?? {}) },
   timeout: 30000,
 })
-const kill = setTimeout(() => { console.log('timed out'); app.close().finally(() => process.exit(1)) }, 110000)
+const kill = setTimeout(() => { console.log('timed out'); app.close().finally(() => process.exit(1)) }, 110000 + s.ms)
 const page = await app.firstWindow()
 const errors = []
 page.on('pageerror', (e) => errors.push(String(e)))
@@ -67,6 +68,10 @@ await page.evaluate(() => {
     lastTop = top
     const cur = new Map()
     const moved = new Map()
+    if (window.__trace === 'scroll' && t >= window.__from && t < window.__to) {
+      const col = box.firstElementChild
+      flow.trace.push(`${t} top=${top.toFixed(1)} scroll=${box.scrollHeight} client=${box.clientHeight} column=${col.offsetHeight}x${col.offsetWidth} held=${col.style.minHeight}`)
+    }
     for (const el of document.querySelectorAll(WATCH)) {
       const r = el.getBoundingClientRect()
       const inside = el.closest('.transcript')
@@ -80,7 +85,7 @@ await page.evaluate(() => {
       cur.set(el, at)
       const was = prev.get(el)
       if (was && at.seen) moved.set(el, { moved: at.y - was.y, resized: at.h - was.h })
-      if (window.__trace && t >= window.__from && t < window.__to && el.matches(window.__trace)) flow.trace.push(`${t} ${name(el).slice(0, 30)} y=${at.y.toFixed(1)} h=${at.h.toFixed(1)} lay=${el.offsetTop} tr=${el.style.translate}`)
+      if (window.__trace && window.__trace !== 'scroll' && t >= window.__from && t < window.__to && el.matches(window.__trace)) flow.trace.push(`${t} ${name(el).slice(0, 30)} y=${at.y.toFixed(1)} h=${at.h.toFixed(1)} lay=${el.offsetTop} tr=${el.style.translate} ${JSON.stringify(el.textContent.slice(0, 24))}`)
     }
     open = open.filter((o) => {
       const d = moved.get(o.el)?.[o.kind] ?? 0

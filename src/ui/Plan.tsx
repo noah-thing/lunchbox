@@ -41,16 +41,18 @@ export function PlanCard({ items, live, writing = live, plan, render }: { items:
   // panel opens and draws it while the rows here close up.
   useEffect(() => {
     if (!live || stage !== 'here') return
-    const due = start.current + (count - 1) * PACE + 1300 + HOLD - performance.now()
+    // A turn that has ended has nothing more to add, so its plan goes as soon as it is drawn.
+    const hold = writing ? HOLD : 0
+    const due = start.current + (count - 1) * PACE + 1300 + hold - performance.now()
     const t = setTimeout(() => {
       if (latest.current.count !== count || !latest.current.plan) return
       handing = true
       dispatchEvent(new Event('lunchbox:plan'))
       setStage('leaving')
       requestAnimationFrame(() => { handing = false; for (const f of [...handed]) f() })
-    }, Math.max(HOLD, due))
+    }, Math.max(hold, due))
     return () => clearTimeout(t)
-  }, [count, live, stage])
+  }, [count, live, stage, writing, plan])
 
   if (stage === 'gone') return null
   const active = writing ? items.findIndex((i) => !i.check) : -1

@@ -334,7 +334,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // nothing in the room moves in one step.
   const flow = useRef<Glide | null>(null)
   useEffect(() => {
-    const g = glide(box.current!, column.current!, { stuck: () => stick.current, busy: () => holding.current, scrolled: (top) => { ours.current = top } })
+    const g = glide(box.current!, column.current!, { stuck: () => stick.current, busy: holding, scrolled: (top) => { ours.current = top } })
     flow.current = g
     return () => g.stop()
   }, [])
@@ -345,8 +345,13 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   // lets go when the width changes and text reflows, and when a rewind or a fork removes events.
   const column = useRef<HTMLDivElement>(null)
   const tallest = useRef({ h: 0, n: 0, w: 0 })
-  const holding = useRef(working)
-  holding.current = working
+  // A row goes on settling for a while after its turn ends: text catches up, a plan leaves for
+  // the panel. The hold covers that too.
+  const worked = useRef(0)
+  if (working) worked.current = performance.now()
+  const live_ = useRef(working)
+  live_.current = working
+  const holding = useRef(() => live_.current || performance.now() - worked.current < 15000).current
   const release = () => { tallest.current.h = 0; if (column.current) column.current.style.minHeight = '' }
   useEffect(() => {
     const el = column.current
@@ -354,7 +359,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
     const ro = new ResizeObserver(() => {
       // The panel opening or closing keeps the hold: letting go there would drop the view.
       if (el.offsetWidth !== tallest.current.w) { tallest.current.w = el.offsetWidth; if (!reflowing()) release() }
-      if (!holding.current) return
+      if (!holding()) return
       const h = el.offsetHeight
       if (h > tallest.current.h) { tallest.current.h = h; el.style.minHeight = `${h}px` }
     })
