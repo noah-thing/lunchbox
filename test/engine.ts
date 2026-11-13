@@ -532,9 +532,9 @@ test('room: resumed turns are counted once each, across a restart', { skip: proc
 
     const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
     assert.equal(calls.length, 3)
-    assert.ok(calls[0].input.includes('one of several AI agents'), 'a new session gets the protocol')
+    assert.ok(calls[0].input.includes('How the room works'), 'a new session gets the protocol')
     assert.ok(calls[2].args.includes('--resume'), 'the session survives the restart')
-    assert.ok(!calls[1].input.includes('one of several AI agents') && !calls[2].input.includes('one of several AI agents'), 'and is not sent its rules again')
+    assert.ok(!calls[1].input.includes('How the room works') && !calls[2].input.includes('How the room works'), 'and is not sent its rules again')
 
     const turns = store.events(room.id).flatMap((e) => (e.kind === 'say' && e.usage ? [e.usage] : []))
     assert.deepEqual(turns.map((u) => Math.round(u.cost * 100)), [1, 1, 1], 'each turn costs what it cost')

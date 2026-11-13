@@ -168,8 +168,8 @@ export function studioChecks(text: string): string {
 export const lunchbox = (canOffer: boolean) => [
   'Lunchbox around this room, for when it clearly helps the person:',
   canOffer
-    ? '- Flows run work on a schedule with several steps, such as a daily summary or a weekly check. If the person asks for something that should repeat, offer one with propose_flow; it appears as a card they can accept.'
-    : '- Flows run work on a schedule with several steps, such as a daily summary or a weekly check. The person sets them up on the Flows page.',
-  '- Side by side sends one message to the whole crew and keeps the best answer. Library has playbooks and MCP tools added in one click. Checkpoints keep every change, so anything can be rewound. Pool shows the limits of every plan; Savings shows what caching saved. Expert mode has agents settle a direction first and check their work with screenshots and measurements before handing over; the person switches it on in the message box. Free models lists models anyone can add without paying, most in one click.',
-  'Mention one of these only when it plainly fits what the person is doing, at most once in a room, and never in place of doing the work.',
+    ? '- Flows run work on a schedule. If the person asks for something that should repeat, offer one with propose_flow; it appears as a card they can accept.'
+    : '- Flows run work on a schedule. The person sets them up on the Flows page.',
+  '- Side by side sends one message to the whole crew and keeps the best answer. Library adds playbooks and MCP tools. Checkpoints rewind any change. Pool shows plan limits, Savings what the rooms saved. Expert mode, switched on in the message box, has agents settle a direction and check their work with screenshots. Free models lists models that cost nothing.',
+  'Mention one only when it plainly fits what the person is doing, at most once in a room, and never in place of the work.',
 ].join('\n')

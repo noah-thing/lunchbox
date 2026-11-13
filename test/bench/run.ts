@@ -86,6 +86,12 @@ const TASKS: Task[] = [
       return { ok: !notes.length, notes }
     },
   },
+  // One step and nothing to do: what is left is what each side sends before any work starts.
+  {
+    name: 'idle', fixed: true,
+    messages: ['Reply with the single word ok. Do not use any tools.'],
+    check: (_dir, answers) => ({ ok: /\bok\b/i.test(answers[0] ?? ''), notes: [] }),
+  },
 ]
 
 type Row = { input: number; written: number; cached: number; output: number; cost: number; steps: number; ms: number; cut: number; commands: string[] }

@@ -945,6 +945,22 @@ test('studio: instructions change only when Studio is on, and stay the same turn
   assert.ok(!protocol(meta, crew[1], crew, 'workspace', undefined, ['propose_flow'], [], 'claude', null).includes('Lunchbox around this room'))
 })
 
+test('saving: a room with one agent is told nothing about a crew', async () => {
+  const { protocol } = await import('../electron/room/context')
+  const { kit } = await import('../electron/room/kit')
+  const meta = { id: 'r', name: 'Room', created: 0, updated: 0, crew: ['claude'], workspace: '/w', sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 } } as RoomMeta
+  const agent = (id: string) => ({ id, short: id, name: id, maker: 'x', via: 'cli', good: 'good', tools: true, ready: true, mark: id }) as never
+  const me = agent('claude')
+  const alone = protocol(meta, me, [me], 'workspace', undefined, ['propose_flow'], [], 'claude', null)
+  const crewed = protocol({ ...meta, crew: ['claude', 'codex'] }, me, [me, agent('codex')], 'workspace', undefined, ['propose_flow', 'room_memory', 'remember'], [], 'claude', null)
+  assert.ok(!/crewmate|several AI agents|@handle|what others/.test(alone))
+  assert.ok(alone.includes('- [ ] step') && alone.includes('Run the check before claiming it') && alone.includes('offer one with propose_flow'))
+  assert.ok(alone.length < 1700 && alone.length < crewed.length * 0.7)
+  const host = (crew: never[]) => ({ me, crew, ready: crew, nested: false, canWrite: true, lead: true }) as never
+  assert.deepEqual(kit(host([me])).map((t) => t.name), ['propose_flow'])
+  assert.ok(kit(host([me, agent('codex')])).some((t) => t.name === 'remember'))
+})
+
 // Free models answer in their own ways: some think in a separate stream and can run out before
 // the answer, some gateways refuse the usage option. Each case must end in text or a clear error.
 test('openai style: free model quirks end in text or a sentence, never an empty bubble', async () => {
