@@ -9,7 +9,7 @@ import { prompt } from '../electron/room/context'
 import { chat, listModels, parseHeaders, PROVIDERS } from '../electron/agents/http'
 import { cacheSaving, claudeCost, codexSaving, costSaving, rates, readSaving } from '../shared/prices'
 import { clean, logs, NATIVE, trim } from '../electron/room/trim'
-import { wrap } from '../electron/hands'
+import { Hands, wrap } from '../electron/hands'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -1409,4 +1409,37 @@ test('claude: a turn reports its model, and what its first and last request read
   assert.equal(p.turn.usage.ttl, 300)
   // Five minute entries: 0.75 of the $2 input price less than the hour would have cost.
   assert.ok(Math.abs(p.turn.quick! - (30900 * 2 * 0.75) / 1e6) < 1e-9)
+})
+
+test('hands: a shortened command posts its output with a token that opens nothing else', async (t) => {
+  const hands = new Hands()
+  await hands.start()
+  t.after(() => hands.stop())
+  const dir = mkdtempSync(join(tmpdir(), 'lunchbox-drop-'))
+  let cut = 0
+  const tool = { name: 'remember', description: '', input: {}, run: async () => 'kept' }
+  const grant = hands.grant([tool], { kind: 'shorten', dir, cut: (n) => { cut += n } })
+  const post = (url: string, body: string) => fetch(url, { method: 'POST', body })
+  const ask = (command: string, more = {}) => post(grant.hook, JSON.stringify({ tool_name: 'Bash', tool_input: { command, ...more } })).then((r) => r.json())
+
+  assert.deepEqual(await ask('git diff'), {}, 'content is left alone')
+  assert.deepEqual(await ask('npm test', { run_in_background: true }), {}, 'and so is anything in the background')
+  const wrapped: string = (await ask('npm test', { timeout: 60000 })).hookSpecificOutput.updatedInput.command
+  assert.equal((await ask('npm test', { timeout: 60000 })).hookSpecificOutput.updatedInput.timeout, 60000, 'the rest of the call is kept')
+  const secret = grant.hook.split('/').pop()!
+  assert.ok(!wrapped.includes(secret), 'the turn\'s own token never reaches a command line')
+  const drop = wrapped.match(/http:\/\/127\.0\.0\.1:\d+\/output\/[\w-]+\/[\w-]+/)![0]
+  const token = drop.split('/').at(-2)!
+  assert.equal((await post(grant.url.replace(secret, token), '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')).status, 404, 'the output token lists no tools')
+  assert.equal((await post(grant.hook.replace(secret, token), '{}')).status, 404)
+
+  const long = Array.from({ length: 900 }, (_, i) => `✔ case ${i} passes (0.1ms)`).join('\n') + '\n✖ one fails\nℹ fail 1\n'
+  const short = await (await post(drop, long)).text()
+  assert.match(short, /✖ one fails/)
+  assert.ok(short.length < long.length / 3)
+  assert.equal(cut, long.length - short.trimEnd().length)
+  assert.equal(await (await post(drop, 'ok\n')).text(), 'ok\n')
+
+  grant.revoke()
+  assert.equal((await post(drop, long)).status, 404, 'and it ends with the turn')
 })

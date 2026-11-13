@@ -41,7 +41,10 @@ const VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']
 // credential: it names the tools that turn may use and stops working when the turn ends.
 export class Hands {
   private server: Server | null = null
-  private grants = new Map<string, { tools: Tool[]; watch?: Watch }>()
+  private grants = new Map<string, { tools: Tool[]; watch?: Watch; drop: string }>()
+  // Where a shortened command sends its output. That address ends up on a command line, which
+  // other programs on the computer can read, so it has a token of its own that opens nothing else.
+  private drops = new Map<string, Watch>()
   private port = 0
   private outputs = 0
 
@@ -70,9 +73,11 @@ export class Hands {
     // Without a server the agents run without the room's tools rather than call a dead address.
     if (!this.port) return { url: '', hook: '', revoke: () => {} }
     const token = randomBytes(18).toString('base64url')
-    this.grants.set(token, { tools, watch })
+    const drop = randomBytes(18).toString('base64url')
+    this.grants.set(token, { tools, watch, drop })
+    if (watch) this.drops.set(drop, watch)
     const base = `http://127.0.0.1:${this.port}`
-    return { url: tools.length ? `${base}/mcp/${token}` : '', hook: watch ? `${base}/hook/${token}` : '', revoke: () => this.grants.delete(token) }
+    return { url: tools.length ? `${base}/mcp/${token}` : '', hook: watch ? `${base}/hook/${token}` : '', revoke: () => { this.grants.delete(token); this.drops.delete(drop) } }
   }
 
   private send(res: ServerResponse, status: number, body?: unknown) {
@@ -88,8 +93,9 @@ export class Hands {
     // The token is the last part of the URL, or a bearer header for a CLI that takes it that way.
     const [, route, named, rest] = req.url?.match(/^\/(mcp|hook|output)\/([\w-]+)(?:\/([\w-]+))?/) ?? []
     const token = named ?? req.headers.authorization?.match(/^Bearer\s+([\w-]+)$/i)?.[1]
-    const granted = token ? this.grants.get(token) : undefined
-    if (!granted) return this.send(res, 404, { error: 'This turn has ended' })
+    const granted = token && route !== 'output' ? this.grants.get(token) : undefined
+    const drop = token && route === 'output' ? this.drops.get(token) : undefined
+    if (!granted && !drop) return this.send(res, 404, { error: 'This turn has ended' })
     if (req.method === 'DELETE') return this.send(res, 200)
     if (req.method !== 'POST') return this.send(res, 405)
 
@@ -102,9 +108,9 @@ export class Hands {
       chunks.push(chunk)
     }
     const raw = Buffer.concat(chunks).toString('utf8')
-    if (route === 'hook') return this.send(res, 200, this.hook(raw, granted.watch, token!))
-    if (route === 'output') return this.output(res, raw, granted.watch, rest ?? '')
-    const tools = granted.tools
+    if (drop) return this.output(res, raw, drop, rest ?? '')
+    if (route === 'hook') return this.send(res, 200, this.hook(raw, granted!.watch, granted!.drop))
+    const tools = granted!.tools
     let body: Rpc | Rpc[]
     try { body = JSON.parse(raw) } catch { return this.send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) }
 
@@ -115,7 +121,7 @@ export class Hands {
   }
 
   // Called by the agent before each of its tool calls.
-  private hook(raw: string, watch: Watch | undefined, token: string) {
+  private hook(raw: string, watch: Watch | undefined, drop: string) {
     let o: { tool_name?: string; tool_input?: Record<string, unknown> }
     try { o = JSON.parse(raw) } catch { return {} }
     if (watch?.kind === 'refuse') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'No tools in this turn. Reply in words only.' } }
@@ -126,13 +132,13 @@ export class Hands {
     if (/['\n]/.test(dir)) return {}
     try { mkdirSync(watch.dir, { recursive: true }) } catch { return {} }
     const id = `${Date.now().toString(36)}-${++this.outputs}`
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...o.tool_input, command: wrap(command, `${dir}/${id}.txt`, `http://127.0.0.1:${this.port}/output/${token}/${id}`) } } }
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...o.tool_input, command: wrap(command, `${dir}/${id}.txt`, `http://127.0.0.1:${this.port}/output/${drop}/${id}`) } } }
   }
 
   // What a command printed, sent back shortened. A short output is passed on as it was and its
   // file removed; a long one keeps its file, which the shortened text points to.
-  private output(res: ServerResponse, raw: string, watch: Watch | undefined, id: string) {
-    if (watch?.kind !== 'shorten' || !id) return this.send(res, 404)
+  private output(res: ServerResponse, raw: string, watch: Watch, id: string) {
+    if (watch.kind !== 'shorten' || !id) return this.send(res, 404)
     const file = join(watch.dir, `${id}.txt`)
     const r = trim(raw, file)
     if (r.text.length >= raw.length - 200) {
