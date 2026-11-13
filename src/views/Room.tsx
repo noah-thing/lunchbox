@@ -1194,7 +1194,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
       </section>
 
       <Memory meta={meta} crew={crew} />
-      <Receipt meta={meta} events={events} agents={agents} />
+      <Receipt meta={meta} events={events} agents={agents} kept={live.warm} />
     </aside>
   )
 }
@@ -1257,7 +1257,7 @@ function PlanNow({ t }: { t: LiveTurn }) {
 // kept, five minutes or an hour, and each use starts that time again. Where an agent does not
 // say, the clock counts five minutes.
 const CACHE_MS = 5 * 60e3
-function CacheClock({ events, agents }: { events: Event[]; agents: AgentInfo[] }) {
+function CacheClock({ events, agents, kept }: { events: Event[]; agents: AgentInfo[]; kept?: Record<string, number> }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   const last = new Map<string, { at: number; life: number }>()
@@ -1269,19 +1269,20 @@ function CacheClock({ events, agents }: { events: Event[]; agents: AgentInfo[] }
     // A turn that only read keeps the time of the entries it read.
     last.set(who, { at: e.at, life: u.ttl ? u.ttl * 1000 : last.get(who)?.life ?? CACHE_MS })
   }
-  const warm = [...last.entries()].map(([who, { at, life }]) => ({ who, life, left: at + life - now })).filter((x) => x.left > -60e3)
+  // The room reads a session again just before its cache runs out, which starts the time again.
+  const warm = [...last.entries()].map(([who, { at, life }]) => ({ who, life, held: (kept?.[who] ?? 0) > at, left: Math.max(at, kept?.[who] ?? 0) + life - now })).filter((x) => x.left > -60e3)
   if (!warm.length) return null
   const fmt = (ms: number) => `${Math.floor(ms / 60e3)}:${String(Math.floor((ms % 60e3) / 1000)).padStart(2, '0')}`
   return (
-    <div className="cacheclock" title="A message while the cache is warm only pays for what is new. After it cools, the next message reads the whole room again. The time is the one the agent reported; where it reports none, five minutes.">
-      {warm.map(({ who, life, left }) => {
+    <div className="cacheclock" title="A message while the cache is warm only pays for what is new. After it cools, the next message reads the whole room again. The time is the one the agent reported; where it reports none, five minutes. Lunchbox keeps a room warm for a while after its last turn.">
+      {warm.map(({ who, life, left, held }) => {
         const a = agentOf(who, agents)
         return (
           <div key={who} className={`cclock${left <= 0 ? ' cold' : left < 60e3 ? ' soon' : ''}`}>
             <Mark seed={a.mark} size={12} />
             <span className="grow">{a.short} cache</span>
             <i style={{ '--k': Math.max(0, Math.min(1, left / life)) } as CSSProperties} />
-            <span className="mono">{left > 0 ? `warm ${fmt(left)}` : 'cooled'}</span>
+            <span className="mono">{left > 0 ? `${held ? 'kept warm' : 'warm'} ${fmt(left)}` : 'cooled'}</span>
           </div>
         )
       })}
@@ -1289,7 +1290,7 @@ function CacheClock({ events, agents }: { events: Event[]; agents: AgentInfo[] }
   )
 }
 
-function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; agents: AgentInfo[] }) {
+function Receipt({ meta, events, agents, kept }: { meta: RoomMeta; events: Event[]; agents: AgentInfo[]; kept?: Record<string, number> }) {
   const rows = useMemo(() => {
     const by = new Map<string, { cost: number; tokens: number; turns: number; ms: number }>()
     for (const e of events) {
@@ -1307,6 +1308,7 @@ function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; ag
   if (!rows.length) return null
   const total = rows.reduce((n, [, r]) => n + r.cost, 0)
   const saved = Math.max(0, meta.saved.full - meta.saved.sent) / 4
+  const cut = events.reduce((n, e) => n + ((e.kind === 'say' || e.kind === 'hands') && e.usage?.cut || 0), 0)
   const checks = meta.checkpoints?.length ?? 0
   return (
     <section>
@@ -1322,9 +1324,10 @@ function Receipt({ meta, events, agents }: { meta: RoomMeta; events: Event[]; ag
           </div>
         )
       })}
-      <CacheClock events={events} agents={agents} />
+      <CacheClock events={events} agents={agents} kept={kept} />
       <div className="memfoot">
         {saved > 0 && `Shared memory kept ${tokens(saved)} tokens from being sent again. `}
+        {cut > 0 && `Long command output was shortened by ${tokens(cut)} tokens. `}
         {checks > 0 ? `${checks} checkpoint${checks > 1 ? 's' : ''} of the folder; hover your message to rewind.` : ''}
       </div>
     </section>
