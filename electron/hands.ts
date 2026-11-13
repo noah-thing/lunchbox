@@ -32,7 +32,7 @@ const MAX_OUTPUT = 16_000_000
 // shortens the file and prints what is kept; without curl or the room, the file is printed whole.
 // The braces keep `cd` and variables in the agent's shell, and the exit code is the command's own.
 export function wrap(command: string, file: string, url: string) {
-  return `if : > '${file}' 2>/dev/null; then { ${command}\n} > '${file}' 2>&1; lb_status=$?; curl -sf --max-time 30 --data-binary @'${file}' '${url}' 2>/dev/null || cat '${file}'; (exit $lb_status); else ${command}\nfi`
+  return `if ( : > '${file}' ) 2>/dev/null; then { ${command}\n} > '${file}' 2>&1; lb_status=$?; curl -sf --max-time 30 --data-binary @'${file}' '${url}' 2>/dev/null || cat '${file}'; (exit $lb_status); else ${command}\nfi`
 }
 
 const VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']

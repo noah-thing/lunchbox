@@ -28,11 +28,16 @@ const OUT_MAX = 6000
 export function inside(root: string, path: string) {
   const base = realpathSync(resolve(root))
   const abs = resolve(base, String(path || '.').replace(/^~[\\/]/, ''))
+  // A link counts as there even when what it points at is not: following it to write would
+  // create a file wherever it points.
+  const there = (p: string) => { try { lstatSync(p); return true } catch { return false } }
   let at = abs
-  while (!existsSync(at) && dirname(at) !== at) at = dirname(at)
-  const real = join(realpathSync(at), relative(at, abs))
+  while (!there(at) && dirname(at) !== at) at = dirname(at)
+  let resolved: string
+  try { resolved = realpathSync(at) } catch { throw new Error(`${path} links to a place that is not in the room's folder.`) }
+  const real = join(resolved, relative(at, abs))
   if (real !== base && !real.startsWith(base + sep)) throw new Error(`${path} is outside the room's folder. Paths are relative to the folder.`)
-  if (existsSync(abs) && lstatSync(abs).isSymbolicLink() && !realpathSync(abs).startsWith(base + sep)) throw new Error(`${path} links to a place outside the room's folder.`)
+  if (there(abs) && lstatSync(abs).isSymbolicLink() && !realpathSync(abs).startsWith(base + sep)) throw new Error(`${path} links to a place outside the room's folder.`)
   return real
 }
 

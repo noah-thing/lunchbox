@@ -69,7 +69,10 @@ test('bench: paths stay inside the folder, through links too', () => {
   symlinkSync(tmpdir(), join(root, 'away'))
   assert.throws(() => inside(root, 'away/x.txt'), /outside the room/)
   symlinkSync('/etc/hosts', join(root, 'hosts'))
-  assert.throws(() => inside(root, 'hosts'), /outside the room/)
+  assert.throws(() => inside(root, 'hosts'), /room's folder/)
+  // A link to something that does not exist yet would create it outside on a write.
+  symlinkSync(join(tmpdir(), `lunchbox-nowhere-${Date.now()}`), join(root, 'ghost'))
+  assert.throws(() => inside(root, 'ghost'), /room's folder/)
 })
 
 test('bench: an edit replaces exactly one place, and says how to fix a miss', () => {
