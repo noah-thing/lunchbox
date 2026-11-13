@@ -132,8 +132,11 @@ export class Store {
   spent: Record<string, Spent>
   calib: Record<string, { at: number; pct: number; units: number; start: number }[]>
   health: Record<string, string>
-  // How long each agent asks for its cache to be kept when Lunchbox leaves it alone, in seconds.
+  // What Lunchbox has seen of each agent's caching when it leaves it alone: how long it asks for
+  // its cache to be kept, in seconds, and the most tokens a new session has read from cache,
+  // which is the part every session shares.
   lifetimes: Record<string, number>
+  shared: Record<string, number>
   skills: Skill[]
   flows: Flow[]
   private ledger: { at: number; agent: string; room: string; usage: Usage }[] = []
@@ -145,12 +148,13 @@ export class Store {
     mkdirSync(join(dir, 'packs'), { recursive: true })
     for (const meta of readRooms(dir)) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
-    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings; lifetimes?: Record<string, number> }>(join(dir, 'state.json'), {})
+    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings; lifetimes?: Record<string, number>; shared?: Record<string, number> }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
     // Older builds stored a different shape here; only lists are kept.
     this.calib = Object.fromEntries(Object.entries(state.calib ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.filter((r) => r && 'start' in r) : []]))
     this.health = state.health ?? {}
     this.lifetimes = state.lifetimes ?? {}
+    this.shared = state.shared ?? {}
     this.arena = state.arena ?? {}
     this.ratings = state.ratings ?? {}
     this.skills = readJson<Skill[]>(join(dir, 'skills.json'), [])
@@ -297,7 +301,7 @@ export class Store {
   }
 
   saveState() {
-    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings, calib: this.calib, lifetimes: this.lifetimes })
+    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings, calib: this.calib, lifetimes: this.lifetimes, shared: this.shared })
   }
 
   saveSkills() {

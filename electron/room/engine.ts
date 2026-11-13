@@ -880,7 +880,7 @@ export class Engine {
     // not find entries written for the other, and would write the whole session again.
     const natural = this.store.lifetimes[who]
     const unattended = !!meta.flow || task.kind === 'answer' || task.kind === 'job'
-    const short = who === 'claude' && saving.warm !== false && (resumed ? meta.quick?.[who] === session : unattended)
+    const short = who === 'claude' && (resumed ? meta.quick?.[who] === session : unattended && saving.warm !== false)
     this.cool(room, who)
     // Granted last, with nothing between it and the turn that could fail and leave it open.
     const grant = this.hands && (tools.length || watch) ? this.hands.grant(tools, watch) : null
@@ -961,8 +961,9 @@ export class Engine {
       const lean: Partial<Usage> = { kept: Math.round((p.full - p.sent + spared) / 4), cut: Math.round(cut / 4) }
       // A session the room kept cached past its lifetime: what it read beyond the part every
       // session shares would have been written again.
+      // The shared part is taken at the most any new session has read of it, so this counts low.
       const base = meta.bases?.[who]
-      if (warmed && r.first && base !== undefined && r.first.read > r.first.written) lean.held = Math.max(0, r.first.read - base)
+      if (warmed && r.first && base !== undefined && r.first.read > r.first.written) lean.held = Math.max(0, r.first.read - Math.max(base, this.store.shared[who] ?? 0))
       const price = rates(who, r.model ?? '', warm?.ttl)
       if (price) {
         lean.spared = (lean.kept ?? 0) * price.input
@@ -992,7 +993,14 @@ export class Engine {
     if (r.session && me.via === 'cli') this.keep(room, who, r)
     // A new session's first request reads the shared part from cache. Where even that had run
     // out, everything it sent counts as shared, so a later saving can only be counted low.
-    if (who === 'claude' && r.session && r.first && !resumed) this.store.update(room, (m) => { (m.bases ??= {})[who] = r.first!.read || r.first!.written })
+    if (who === 'claude' && r.session && r.first && !resumed) {
+      const shared = r.first.read || r.first.written
+      this.store.update(room, (m) => { (m.bases ??= {})[who] = shared })
+      if (r.first.read > (this.store.shared[who] ?? 0)) {
+        this.store.shared[who] = r.first.read
+        this.store.saveState()
+      }
+    }
     const ttl = r.usage.ttl ?? warm?.ttl
     if (who === 'claude' && !short && r.usage.ttl && r.usage.ttl !== natural) {
       this.store.lifetimes[who] = r.usage.ttl
