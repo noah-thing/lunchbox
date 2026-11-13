@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { cash, savedIn, savedLine } from '../lib/saved'
 import type { Act, AgentInfo, Event, Live, LiveRun, LiveTurn, RoomMeta, Verdict } from '../../shared/types'
 import { wallWhy } from '../../shared/wall'
 import { plan, planOn, plansBefore, type Step } from '../../shared/plan'
@@ -1014,6 +1015,7 @@ function Tools({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; a
       {e.ms ? <span>{(e.ms / 1000).toFixed(1)} s</span> : null}
       {u && u.input + u.output > 0 ? <span>{tokens(u.input + u.output + u.cached)} tokens{u.cached ? `, ${Math.round((u.cached / (u.input + u.cached)) * 100)}% cached` : ''}</span> : null}
       {u && u.cost > 0 ? <span>{money(u.cost)}</span> : null}
+      {u && savedIn(u) >= 0.005 ? <span title={`Saved on this message at API list prices: ${savedLine(u)}.`}>saved {cash(savedIn(u))}</span> : null}
       <span className="spacer" />
       {text && <button onClick={() => navigator.clipboard.writeText(text)} title="Copy"><IconCopy /></button>}
       {text && <button onClick={() => actions.pin(e.id)} title="Pin to shared memory"><IconPin /></button>}

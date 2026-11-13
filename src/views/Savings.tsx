@@ -6,6 +6,7 @@ import { desk, money, tokens, useApp } from '../lib/desk'
 import { place } from '../lib/fit'
 import { drawSavingsCard } from '../ui/shareCard'
 import { IconClose } from '../ui/icons'
+import { cash, cached as gross, savedBy, savedIn } from '../lib/saved'
 import type { View } from '../App'
 
 const zero = (): Usage => ({ input: 0, output: 0, cached: 0, cost: 0, saved: 0, gross: 0, kept: 0, premium: 0, cut: 0, held: 0, spared: 0, trimmed: 0, warmed: 0, pings: 0 })
@@ -23,14 +24,8 @@ const unsent = (u: { kept?: number; cut?: number }) => (u.kept ?? 0) + (u.cut ??
 const read = (u: Counts) => u.input + u.cached + unsent(u)
 const reused = (u: Counts) => u.cached + unsent(u)
 const ratio = (u: Counts) => (read(u) ? reused(u) / read(u) : 0)
-// What Lunchbox itself saved at list price, after what keeping rooms warm cost. Can go below
-// zero in a week of rooms kept warm that nobody came back to, and is shown as it is.
-const own = (u: { spared?: number; trimmed?: number; warmed?: number; pings?: number }) => (u.spared ?? 0) + (u.trimmed ?? 0) + (u.warmed ?? 0) - (u.pings ?? 0)
-// What the cached reads saved at list price. Rows from before it was recorded fall back to the net.
-const gross = (u: Usage) => u.gross ?? Math.max(0, u.saved ?? 0)
 // Agents that report no cost and have no price here are counted in tokens, never guessed.
 const priced = (u: Usage) => u.gross !== undefined || u.saved !== undefined
-const cash = (n: number) => (n <= -0.005 ? `-$${(-n).toFixed(2)}` : n >= 0.01 ? `$${n.toFixed(2)}` : n > 0 ? '<$0.01' : '$0.00')
 const pct = (n: number) => (n > 0 && n < 0.005 ? '<1%' : `${(n * 100).toFixed(n >= 0.995 || n === 0 ? 0 : 1)}%`)
 
 export function Savings({ go }: { go: (v: View) => void }) {
@@ -43,18 +38,16 @@ export function Savings({ go }: { go: (v: View) => void }) {
   const [card, setCard] = useState<string | null>(null)
   // What storing the cache cost on top of the input price, where the agent reported it.
   const stored = week.premium ?? 0
-  const mine = own(week)
-  // The share card adds the two, never below what caching alone saved.
-  const both = gross(week) + Math.max(0, mine)
+  const both = savedIn(week)
 
   const crew = Object.entries(ledger?.week ?? {})
     .map(([id, u]) => ({ a: agents.find((x) => x.id === id), id, u }))
     .filter((x) => read(x.u) > 0)
-    .sort((x, y) => gross(y.u) + own(y.u) - gross(x.u) - own(x.u) || reused(y.u) - reused(x.u))
+    .sort((x, y) => savedIn(y.u) - savedIn(x.u) || reused(y.u) - reused(x.u))
   const top = Object.entries(ledger?.rooms ?? {})
     .map(([id, u]) => ({ room: rooms.find((r) => r.id === id), id, u }))
     .filter((x) => x.room && read(x.u) > 0)
-    .sort((x, y) => gross(y.u) + own(y.u) - gross(x.u) - own(x.u) || reused(y.u) - reused(x.u))
+    .sort((x, y) => savedIn(y.u) - savedIn(x.u) || reused(y.u) - reused(x.u))
     .slice(0, 6)
 
   return (
@@ -63,7 +56,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
         <header className="pagehead row rise">
           <div className="grow">
             <h1>Savings</h1>
-            <p>What Lunchbox saved in your rooms, and what your agents' own prompt caching saved. The two are counted apart.</p>
+            <p>What working in Lunchbox saved, at API list prices. Each room and agent shows where its saving came from.</p>
           </div>
           <div className="sv-actions">
           <span className="sv-range">Last 7 days</span>
@@ -71,13 +64,13 @@ export function Savings({ go }: { go: (v: View) => void }) {
             const money = both > 0
             setCard(await drawSavingsCard({
               headline: money ? cash(both) : tokens(reused(week)),
-              line: money ? 'saved by Lunchbox and prompt caching, at API list prices' : 'tokens never sent or read from cache',
+              line: money ? 'saved in Lunchbox, at API list prices' : 'tokens never sent or read from cache',
               stats: [
                 { value: tokens(reused(week)), label: 'tokens not paid in full' },
                 { value: pct(ratio(week)), label: 'of every read' },
                 { value: String(crew.length), label: crew.length === 1 ? 'agent' : 'agents in the crew' },
               ],
-              series: last7.map((d) => (money ? Math.max(0, (d.gross ?? Math.max(0, d.saved)) + own(d)) : reused(d))),
+              series: last7.map((d) => (money ? Math.max(0, savedIn(d)) : reused(d))),
               range: 'Last 7 days',
             }))
           }}>Share</button>}
@@ -86,57 +79,33 @@ export function Savings({ go }: { go: (v: View) => void }) {
         {card && <ShareCard image={card} close={() => setCard(null)} />}
 
         <div className="sv-kpis rise" style={{ '--i': 1 } as CSSProperties}>
-          <Kpi label="Saved by Lunchbox" value={mine !== 0 ? cash(mine) : unsent(week) > 0 ? `${tokens(unsent(week))} tokens` : '$0.00'}
-            series={last7.map((d) => Math.max(0, own(d)))}
-            note={mine === 0 && unsent(week) > 0 ? 'Counted in tokens for agents with no price' : undefined}
-            info="What Lunchbox itself saved at API list prices: tokens it never sent, and what it saved by managing how long caches live, with the cost of keeping rooms warm taken off. The same agents outside Lunchbox would not have saved this." />
-          <Kpi label="Saved by prompt caching" value={gross(week) > 0 ? cash(gross(week)) : week.cached > 0 ? `${tokens(week.cached)} tokens` : '$0.00'}
-            series={last7.map((d) => d.gross ?? Math.max(0, d.saved))}
-            note={gross(week) <= 0 && week.cached > 0 ? 'Counted in tokens for agents that report no cost' : undefined}
-            info={`What cached reads saved at API list prices. This is your agents' own saving, and they make it outside Lunchbox too. On Claude a cached read costs a tenth of a fresh one, or less on the newest models. Storing the cache costs extra, ${cash(stored)} this week, which leaves ${cash(Math.max(0, gross(week) - stored))} net. A subscription pays nothing per token, so this is what the same work would have cost on an API key.`} />
+          <Kpi label="Saved" value={both !== 0 ? cash(both) : reused(week) > 0 ? `${tokens(reused(week))} tokens` : '$0.00'}
+            series={last7.map((d) => Math.max(0, savedIn(d)))}
+            note={both === 0 && reused(week) > 0 ? 'Counted in tokens for agents with no price' : undefined}
+            info={`Everything saved in your rooms this week at API list prices, one figure. Cached reads are what your agents' prompt caching saved, before the ${cash(stored)} that storing the cache cost. The rest is what Lunchbox did on top: context it did not send twice, command output it shortened, and how long it kept caches alive, with the cost of keeping rooms warm taken off. A subscription pays nothing per token, so this is what the same work would have cost on an API key.`} />
           <Kpi label="Tokens never sent" value={tokens(unsent(week))} series={last7.map(unsent)}
             info="Tokens Lunchbox kept out of your agents' requests: shared memory and conversation an agent did not need sending again, and long command output shortened to what matters." />
+          <Kpi label="Read from cache" value={tokens(week.cached)} series={last7.map((d) => d.cached)}
+            info="Tokens your agents read from their provider's cache at a fraction of the full price. On Claude a cached read costs a tenth of a fresh one, or less on the newest models." />
           <Kpi label="Savings rate" value={pct(ratio(week))} series={last7.map(ratio)} unit
             info="The share of everything your agents would have read that was never sent or was read from cache. Long rooms push this up." />
         </div>
 
-        <Card title="What Lunchbox saved" info="Last 7 days. Each line is one thing Lunchbox does that the same agents do not do on their own." className="rise sv-own" style={{ '--i': 2 } as CSSProperties}>
-          <div className="sv-table">
-            <div className="sv-thead"><span>How</span><span>Tokens</span><span>Saved</span></div>
-            <div className="sv-row">
-              <span className="sv-how"><b>Not sent twice</b><small>Shared memory an agent already had, and the conversation a crewmate was briefed on instead of reading.</small></span>
-              <span className="sv-num">{tokens(week.kept ?? 0)}</span>
-              <span className="sv-num">{(week.spared ?? 0) > 0 ? cash(week.spared ?? 0) : <em>{(week.kept ?? 0) > 0 ? 'tokens only' : 'none yet'}</em>}</span>
-            </div>
-            <div className="sv-row">
-              <span className="sv-how"><b>Command output shortened</b><small>Long test, build and install logs cut to their start, their end and the lines that look like problems. The whole output stays in a file.</small></span>
-              <span className="sv-num">{tokens(week.cut ?? 0)}</span>
-              <span className="sv-num">{(week.trimmed ?? 0) > 0 ? cash(week.trimmed ?? 0) : <em>{(week.cut ?? 0) > 0 ? 'tokens only' : 'none yet'}</em>}</span>
-            </div>
-            <div className="sv-row">
-              <span className="sv-how"><b>Cache lifetime</b><small>Flows and crewmates cache for five minutes at the lower price, and a room you come back to is read from a cache Lunchbox kept alive.{(week.pings ?? 0) > 0 && ` Keeping rooms warm cost ${cash(week.pings ?? 0)}, taken off here.`}</small></span>
-              <span className="sv-num">{tokens(week.held ?? 0)}</span>
-              <span className="sv-num">{(week.warmed ?? 0) > 0 || (week.pings ?? 0) > 0 ? cash((week.warmed ?? 0) - (week.pings ?? 0)) : <em>none yet</em>}</span>
-            </div>
-          </div>
-        </Card>
-
-        <Card title="Tokens per day" info="Each bar is one day of everything your agents would have read: the part Lunchbox never sent, the part caching saved, and the part paid in full." className="rise" style={{ '--i': 3 } as CSSProperties}
+        <Card title="Tokens per day" info="Each bar is one day of everything your agents would have read: the part Lunchbox never sent, the part caching saved, and the part paid in full." className="rise" style={{ '--i': 2 } as CSSProperties}
           right={<Legend items={[['lean', 'Never sent'], ['reuse', 'Saved by caching'], ['fresh', 'Paid in full']]} />}>
           <Chart days={days} />
         </Card>
 
-        <Card title="By agent" info="Last 7 days. The savings rate is the share of what each agent would have read that was never sent or was read from cache." className="rise sv-split" style={{ '--i': 4 } as CSSProperties}>
+        <Card title="By agent" info="Last 7 days. Under each agent is where its saving came from. The savings rate is the share of what it would have read that was never sent or was read from cache." className="rise sv-split" style={{ '--i': 3 } as CSSProperties}>
           {crew.length ? (
-            <Table head={['Agent', 'Never sent', 'From cache', 'Savings rate', 'Lunchbox', 'Caching']}>
+            <Table head={['Agent', 'Never sent', 'From cache', 'Savings rate', 'Saved']}>
               {crew.map(({ a, id, u }) => (
                 <div className="sv-row" key={id}>
-                  <span className="sv-who">{a ? <Mark seed={a.mark} size={16} /> : <i className="sv-gap" />}{a?.name ?? id}</span>
+                  <span className="sv-who">{a ? <Mark seed={a.mark} size={16} /> : <i className="sv-gap" />}<How name={a?.name ?? id} u={u} /></span>
                   <span className="sv-num">{tokens(unsent(u))}</span>
                   <span className="sv-num sv-dim">{tokens(u.cached)}</span>
                   <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="sv-num">{own(u) !== 0 ? cash(own(u)) : <em>{a?.via === 'local' ? 'free' : unsent(u) > 0 ? 'tokens only' : 'none yet'}</em>}</span>
-                  <span className="sv-num">{gross(u) > 0 ? cash(gross(u)) : <em>{a?.via === 'local' ? 'free' : u.cached > 0 && !priced(u) ? 'tokens only' : 'none yet'}</em>}</span>
+                  <span className="sv-num">{savedIn(u) !== 0 ? cash(savedIn(u)) : <em>{a?.via === 'local' ? 'free' : reused(u) > 0 && !priced(u) ? 'tokens only' : 'none yet'}</em>}</span>
                 </div>
               ))}
             </Table>
@@ -144,26 +113,27 @@ export function Savings({ go }: { go: (v: View) => void }) {
         </Card>
 
         {top.length > 0 && (
-          <Card title="By room" info="Rooms that saved the most. Long rooms save more, because every turn rereads everything before it." className="rise sv-split" style={{ '--i': 5 } as CSSProperties}>
-            <Table head={['Room', 'Never sent', 'From cache', 'Savings rate', 'Lunchbox', 'Caching']}>
+          <Card title="By room" info="Rooms that saved the most, with where each saving came from. Long rooms save more, because every turn rereads everything before it. Each message in a room shows its own saving under it." className="rise sv-split" style={{ '--i': 4 } as CSSProperties}>
+            <Table head={['Room', 'Never sent', 'From cache', 'Savings rate', 'Saved']}>
               {top.map(({ room, id, u }) => (
                 <button className="sv-row sv-link" key={id} onClick={() => go({ name: 'room', id })}>
-                  <span className="sv-who">{room!.name}</span>
+                  <span className="sv-who"><How name={room!.name} u={u} tag={room!.flow ? 'Flow' : undefined} /></span>
                   <span className="sv-num">{tokens(unsent(u))}</span>
                   <span className="sv-num sv-dim">{tokens(u.cached)}</span>
                   <span className="sv-ratio"><i style={{ '--w': ratio(u) } as CSSProperties} /><b>{pct(ratio(u))}</b></span>
-                  <span className="sv-num">{own(u) !== 0 ? cash(own(u)) : <em>{unsent(u) > 0 ? 'tokens only' : 'none yet'}</em>}</span>
-                  <span className="sv-num">{gross(u) > 0 ? cash(gross(u)) : <em>{u.cached > 0 && !priced(u) ? 'tokens only' : 'none yet'}</em>}</span>
+                  <span className="sv-num">{savedIn(u) !== 0 ? cash(savedIn(u)) : <em>{reused(u) > 0 && !priced(u) ? 'tokens only' : 'none yet'}</em>}</span>
                 </button>
               ))}
             </Table>
           </Card>
         )}
 
-        <Card title="How this is counted" info="The rules behind every number on this page." className="rise sv-notes" style={{ '--i': 6 } as CSSProperties}>
+        <Card title="How this is counted" info="The rules behind every number on this page." className="rise sv-notes" style={{ '--i': 5 } as CSSProperties}>
           <dl>
-            <dt>Lunchbox and caching</dt>
-            <dd>Prompt caching is your agents' own saving, and they make it without Lunchbox. What Lunchbox adds is counted on its own and never inside the caching figure.</dd>
+            <dt>One total</dt>
+            <dd>Saved is cached reads plus what Lunchbox did on top, and each part is named beside the room, agent or message it belongs to. Cached reads are your agents' own prompt caching, which they also do outside Lunchbox. The other parts are counted separately and never twice.</dd>
+            <dt>Not sent twice</dt>
+            <dd>Shared memory an agent already had, and the conversation a crewmate was briefed on instead of reading.</dd>
             <dt>Never sent</dt>
             <dd>Counted from the text itself, at about four characters a token, and priced as fresh input at list price. That is the least it would have cost: sent, it would also have been stored and read again on later steps.</dd>
             <dt>Shortened output</dt>
@@ -250,6 +220,17 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
   )
 }
 
+// A name with where its saving came from under it.
+function How({ name, u, tag }: { name: string; u: Usage; tag?: string }) {
+  const parts = savedBy(u)
+  return (
+    <span className="sv-how">
+      <b>{name}</b>
+      {(tag || parts.length > 0) && <small>{[tag, ...parts.map((p) => `${cash(p.amount)} ${p.how}`)].filter(Boolean).join(' · ')}</small>}
+    </span>
+  )
+}
+
 function Empty({ go }: { go: (v: View) => void }) {
   return (
     <div className="sv-empty">
@@ -286,8 +267,7 @@ function Chart({ days }: { days: Day[] }) {
                   <span><i className="sv-lean" />Never sent<em>{tokens(unsent(d))}</em></span>
                   <span><i className="sv-reuse" />Saved by caching<em>{tokens(d.cached)}</em></span>
                   <span><i className="sv-fresh" />Paid in full<em>{tokens(d.input)}</em></span>
-                  {own(d) >= 0.01 && <span className="sv-saved">Lunchbox saved<em>{money(own(d))}</em></span>}
-                  {(d.gross ?? d.saved) >= 0.01 && <span className={own(d) >= 0.01 ? undefined : 'sv-saved'}>Caching saved<em>{money(d.gross ?? d.saved)}</em></span>}
+                  {savedIn(d) >= 0.01 && <span className="sv-saved">Saved<em>{money(savedIn(d))}</em></span>}
                 </span>
               </div>
               <small>{i === days.length - 1 ? 'Today' : i % 2 ? '' : label}</small>

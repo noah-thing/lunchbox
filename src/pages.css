@@ -388,13 +388,12 @@ input[type=number].select{width:64px}
 .savings .sv-ratio i::after{content:"";position:absolute;inset:0;background:var(--reuse);transform-origin:left;transform:scaleX(var(--w));transition:transform 600ms var(--out)}
 .savings .sv-ratio b{font:500 12.5px var(--sans);width:44px;text-align:right;font-feature-settings:"tnum"}
 .savings .sv-gap{width:16px;flex:none}
-.savings .sv-split .sv-thead,.savings .sv-split .sv-row{grid-template-columns:minmax(0,2fr) 1fr 1fr 1.5fr .9fr .9fr}
-.savings .sv-own .sv-thead,.savings .sv-own .sv-row{grid-template-columns:minmax(0,1fr) 110px 110px}
-.savings .sv-own .sv-row{height:auto;padding:12px 4px;align-items:start}
-.savings .sv-how{display:flex;flex-direction:column;gap:3px;min-width:0}
-.savings .sv-how b{font-weight:500}
-.savings .sv-how small{font-size:12.5px;line-height:1.5;color:var(--dim);max-width:560px}
-@media (max-width:820px){.savings .sv-split .sv-thead span:nth-child(3),.savings .sv-split .sv-row>:nth-child(3){display:none}.savings .sv-split .sv-thead,.savings .sv-split .sv-row{grid-template-columns:minmax(0,2fr) 1fr 1.5fr .9fr .9fr}}
+.savings .sv-split .sv-thead,.savings .sv-split .sv-row{grid-template-columns:minmax(0,2.6fr) 1fr 1fr 1.5fr .9fr}
+.savings .sv-split .sv-row{height:auto;min-height:44px;padding:8px 4px}
+.savings .sv-how{display:flex;flex-direction:column;gap:2px;min-width:0}
+.savings .sv-how b{font-weight:inherit;overflow:hidden;text-overflow:ellipsis}
+.savings .sv-how small{font-size:12px;line-height:1.45;color:var(--dim);white-space:normal}
+@media (max-width:820px){.savings .sv-split .sv-thead span:nth-child(3),.savings .sv-split .sv-row>:nth-child(3){display:none}.savings .sv-split .sv-thead,.savings .sv-split .sv-row{grid-template-columns:minmax(0,2.4fr) 1fr 1.5fr .9fr}}
 .savings .sv-notes dl{display:grid;grid-template-columns:minmax(120px,max-content) minmax(0,1fr);column-gap:24px;row-gap:10px;margin:0;font-size:12.5px;line-height:1.55}
 .savings .sv-notes dt{color:var(--ink);font-weight:500}
 .savings .sv-notes dd{margin:0;color:var(--dim);max-width:640px}
