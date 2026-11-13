@@ -137,6 +137,11 @@ export const MEASURE = `(() => {
     const bare = first.left < first.right ? 'left' : 'right'
     findings.push({ kind: 'first screen', text: 'The ' + bare + ' half of ' + frame + ' is bare (' + first[bare] + '% used, the other half ' + Math.max(first.left, first.right) + '%). Compose the frame on purpose: bring the one move or the strongest image into that half, or set the layout so the space is a margin something sits against', at: [] })
   } else if (goesOn && first.bottom < 8 && first.top >= 20) findings.push({ kind: 'first screen', text: 'The lower half of ' + frame + ' is bare while the page goes on below it. Let the next thing show at the bottom edge, or fill the frame', at: [] })
+  // A wide empty band between what sits above it and below it splits the frame in two.
+  const bare = Array.from({ length: ROWS }, (_, y) => used(0, COLS, y, y + 1) === 0)
+  let gap = 0, run = 0
+  for (let y = bare.indexOf(false); y >= 0 && y <= bare.lastIndexOf(false); y++) { run = bare[y] ? run + 1 : 0; gap = Math.max(gap, run) }
+  if (gap / ROWS >= 0.3) findings.push({ kind: 'first screen', text: 'A band about ' + Math.round(gap / ROWS * H) + 'px tall across ' + frame + ' is empty, with content above and below it, so the frame reads as two loose parts. Bring the groups together or let one of them grow into the space, unless the direction names that space as the point', at: [] })
   const sized = texts.map((e) => [e, parseFloat(getComputedStyle(e).fontSize) || 0, e.getBoundingClientRect().top])
   const inFrame = Math.max(0, ...sized.filter((x) => x[2] < H).map((x) => x[1]))
   const under = sized.filter((x) => x[2] >= H).sort((a, b) => b[1] - a[1])[0]

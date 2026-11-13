@@ -32,6 +32,10 @@ for (const text of ['Write a short note on agent limits', 'Now add a line about 
 }
 await page.click('.sbitem:has-text("Savings")')
 await page.waitForTimeout(1200)
+// The whole page, with the notes on how each number is counted, before the card covers it.
+await page.evaluate(() => document.querySelector('.savings .sv-notes')?.scrollIntoView({ block: 'end' }))
+await page.waitForTimeout(500)
+await page.screenshot({ path: out + '0-page.png', scale: 'css' })
 const share = page.locator('.savings button:has-text("Share")')
 console.log('share button:', await share.count())
 if (await share.count()) {

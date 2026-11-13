@@ -130,7 +130,7 @@ export function Savings({ go }: { go: (v: View) => void }) {
             <dt>Each turn once</dt>
             <dd>Claude Code and Codex report running totals when a session is resumed. Lunchbox takes away what was already counted, so a long room is never counted twice.</dd>
             <dt>Reads and writes</dt>
-            <dd>A cached read is billed at a fraction of a fresh one. Storing the cache is billed on top of the input price: a quarter more for an entry kept five minutes, twice the price for one kept an hour.{gross(week) > 0 && ` This week cached reads saved ${cash(gross(week))}, storing cost ${cash(stored)}, and ${cash(Math.max(0, gross(week) - stored))} is left.`}</dd>
+            <dd>A cached read is billed at a fraction of a fresh one. Storing the cache costs more than a fresh read: 1.25 times the input price for an entry kept five minutes, twice for one kept an hour.{gross(week) > 0 && ` This week cached reads saved ${cash(gross(week))}, storing cost ${cash(stored)}, and ${cash(Math.max(0, gross(week) - stored))} is left.`}</dd>
             <dt>Five minutes or an hour</dt>
             <dd>Each use starts the time again. A message sent while the cache is warm pays only for what is new; after it cools, the next one reads the whole room at full price. The room panel shows the time each agent reported.</dd>
             <dt>Claude</dt>

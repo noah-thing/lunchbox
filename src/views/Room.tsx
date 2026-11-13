@@ -441,7 +441,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
       arenas.add(e.arena)
       const done = events.filter((x): x is Say => x.kind === 'say' && x.arena === e.arena)
       const going = turns.filter((t) => t.arena === e.arena)
-      rows.push(<Arena key={e.id} id={e.arena} done={done} going={going} picked={picks.get(e.arena)} agents={agents} pick={actions.pick} />)
+      rows.push(<Arena key={`arena:${e.arena}`} id={e.arena} done={done} going={going} picked={picks.get(e.arena)} agents={agents} pick={actions.pick} />)
       last = ''
       continue
     }
@@ -463,7 +463,7 @@ function Transcript({ events, live, agents, actions, focus, empty }: { events: E
   for (const t of turns) {
     if (landed(t) || nested.has(t.id)) continue
     if (t.arena) {
-      if (!arenas.has(t.arena)) { arenas.add(t.arena); rows.push(<Arena key={t.id} id={t.arena} done={[]} going={turns.filter((x) => x.arena === t.arena)} agents={agents} pick={actions.pick} />) }
+      if (!arenas.has(t.arena)) { arenas.add(t.arena); rows.push(<Arena key={`arena:${t.arena}`} id={t.arena} done={[]} going={turns.filter((x) => x.arena === t.arena)} agents={agents} pick={actions.pick} />) }
       continue
     }
     if (t.image) { rows.push(<Drawing key={t.id} t={t} agents={agents} />); last = t.who; continue }
@@ -1050,10 +1050,17 @@ function Review({ e, actions }: { e: Extract<Event, { kind: 'say' | 'hands' }>; 
 }
 
 function Arena({ id, done, going, picked, agents, pick }: { id: string; done: Say[]; going: LiveTurn[]; picked?: string; agents: AgentInfo[]; pick: Actions['pick'] }) {
+  // An answer is saved a moment before its live turn is taken away; for that moment it must not
+  // show as two columns, which would squeeze the others and wrap their text.
+  going = going.filter((t) => !done.some((e) => e.who === t.who))
   const cols = [
     ...done.map((e) => ({ who: e.who, text: e.text, acts: e.acts, live: false, error: e.error, ms: e.ms, usage: e.usage })),
     ...going.map((t) => ({ who: t.who, text: t.text, acts: t.acts, live: true, error: undefined, ms: undefined, usage: undefined })),
   ]
+  // Columns keep the place they started in, whoever finishes first.
+  const order = useRef<string[]>([])
+  for (const c of [...going, ...done]) if (!order.current.includes(c.who)) order.current.push(c.who)
+  cols.sort((a, b) => order.current.indexOf(a.who) - order.current.indexOf(b.who))
   const settled = !going.length
   return (
     <div className="arena">

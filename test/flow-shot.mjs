@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 // Counts what jumps in a room while a turn plays. A jump is anything already on screen that moves
 // or changes height in a single frame and then stays there; a glide keeps moving the next frame.
-// node test/flow-shot.mjs [prose|progress|consult|handoff|subagents|showcase] [--shots] [--strict]
+// node test/flow-shot.mjs [prose|progress|consult|handoff|arena|subagents|showcase] [--shots] [--strict]
 const root = new URL('..', import.meta.url).pathname
 const scene = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'prose'
 const shots = process.argv.includes('--shots')
@@ -16,6 +16,7 @@ const scenes = {
   consult: { say: 'Consult: check the island renders', script: '', delay: '120', agents: ['claude', 'codex', 'grok'], ms: 22000 },
   handoff: { say: 'What do people say about agent limits?', script: '', delay: '60', agents: ['claude', 'grok'], ms: 16000 },
   showcase: { say: 'Our hackathon Build Night is in three weeks. Find out what people on X want from hackathons, write the announcement, design the banner and put up the event page.', script: 'showcase', delay: '12', agents: ['claude', 'codex', 'grok'], ms: 80000, env: { SHOWCASE_PACE: 'real', SHOWCASE_HOLD: '1500' } },
+  arena: { say: 'Write a short note on agent limits', script: '', delay: '60', agents: ['claude', 'grok'], ms: 9000, click: '.pill.split' },
   subagents: { say: 'Audit the auth code', script: 'subagents', delay: '0', agents: ['claude'], ms: 12000 },
 }
 const s = scenes[scene]
@@ -42,12 +43,13 @@ await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[
 await page.waitForSelector('.onboard')
 for (let i = 0; i < 30 && !(await page.locator('.newroom').count()); i++) { await page.keyboard.press('Enter'); await page.waitForTimeout(700) }
 await page.waitForSelector('.newroom')
+if (s.click) await page.click(s.click)
 await page.click('.composer textarea')
 await page.keyboard.type(s.say)
 await page.evaluate(() => {
   const flow = window.__flow = { jumps: [], gaps: [], trace: [] }
   window.__trace = new URLSearchParams(location.hash.slice(1)).get('trace')
-  const WATCH = '.column > :not(.tail), .column > .ev > .evbody > *, .column .rich > *, .column .exchange > *, .convo .dock'
+  const WATCH = '.column > :not(.tail), .arenacol > *, .column > .ev > .evbody > *, .column .rich > *, .column .exchange > *, .convo .dock'
   const name = (el) => `${el.tagName.toLowerCase()}${el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).join('.') : ''}`
   const sig = (el) => (el.matches('.rich > *') ? el.textContent.slice(0, 32) : '')
   let prev = new Map()

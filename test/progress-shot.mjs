@@ -36,7 +36,7 @@ const t0 = Date.now()
 const at = process.env.FAST ? Array.from({ length: 24 }, (_, i) => 1000 + i * 250) : [9000, 17500, 26000]
 for (const [k, ms] of at.entries()) {
   await page.waitForTimeout(Math.max(0, t0 + ms - Date.now()))
-  const line = await page.locator('.workpair, .workline').last().innerText({ timeout: 50 }).catch(() => '(none)')
+  const line = await page.locator('.workpair').last().innerText({ timeout: 50 }).catch(() => '(none)')
   const side = await page.locator('.planside').innerText({ timeout: 50 }).catch(() => '(no panel plan)')
   console.log(`${ms}ms`, JSON.stringify(line.replace(/\s+/g, ' ')), '| panel:', JSON.stringify(side.replace(/\s+/g, ' ').slice(0, 140)))
   await page.screenshot({ path: `${out}${String(k).padStart(2, '0')}-${ms}.png`, scale: 'css' })
