@@ -25,6 +25,7 @@ import { markdown, replay } from '../electron/export'
 import { cmdLine, firstPath } from '../electron/system'
 import { sentence, stepOf } from '../shared/steps'
 import { cut, weave } from '../shared/weave'
+import { addressed } from '../shared/address'
 import { testConnector } from '../electron/agents'
 import type { Event, RoomMeta } from '../shared/types'
 import { shift, side } from '../src/lib/fit'
@@ -123,6 +124,21 @@ test('prices: Sonnet 5.5 reads from cache at $0.10, Sonnet 5 at $0.20', () => {
   // A million cached tokens saved the input price minus the read price.
   assert.equal(readSaving('claude-sonnet-5-5', 1_000_000), 1.9)
   assert.equal(readSaving('claude-sonnet-5', 1_000_000), 1.8)
+})
+
+test('addressing: a name at the start reaches that agent, with or without @', () => {
+  const crew = [{ id: 'claude', short: 'Claude' }, { id: 'codex', short: 'Codex' }, { id: 'ollama', short: 'Ollama' }, { id: 'my-kilo', short: 'Kilo Free' }]
+  const to = (t: string) => addressed(t, crew)
+  assert.deepEqual(to('@claude look at this'), ['claude'])
+  assert.deepEqual(to('Claude, could you look into this?'), ['claude'])
+  assert.deepEqual(to('Ollama: rename the file'), ['ollama'])
+  assert.deepEqual(to('hey codex, run the tests'), ['codex'])
+  assert.deepEqual(to('Claude could you check the build'), ['claude'])
+  assert.deepEqual(to('Claude and Codex, compare these two'), ['claude', 'codex'])
+  assert.deepEqual(to('Kilo Free, summarise this'), ['my-kilo'])
+  assert.deepEqual(to('Claude is slow today'), [], 'talking about an agent is not asking it')
+  assert.deepEqual(to('Fix the build, then tell Claude'), [])
+  assert.deepEqual(to('The plan, step two'), [])
 })
 
 test('grok: same shape as claude without partial deltas', () => {

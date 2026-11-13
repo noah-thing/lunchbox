@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { addressed } from '../../shared/address'
 import { sentence } from '../../shared/steps'
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -525,10 +526,8 @@ export class Engine {
       if (command) this.enqueue(room, () => this.shell(room, 'you', command, access))
       return
     }
-    const head = text.match(/^\s*((?:@[\w-]+[\s,]*)+)/)?.[1] ?? ''
-    // @ reaches any agent that is set up, by id or by name. One from outside the crew joins it.
-    const named = (a: AgentInfo) => [a.id, a.short.toLowerCase().replace(/[^a-z0-9]+/g, '-')]
-    const mentioned = this.agents.filter((a) => a.ready && named(a).some((h) => new RegExp(`@${h}(?![\\w-])`, 'i').test(head))).map((a) => a.id)
+    // An agent is reached by @ or by name, any that is set up. One from outside the crew joins it.
+    const mentioned = addressed(text, this.agents.filter((a) => a.ready))
     const joining = mentioned.filter((id) => !meta.crew.includes(id))
     if (joining.length) this.setCrew(room, [...meta.crew, ...joining])
     const cat = classify(text)
