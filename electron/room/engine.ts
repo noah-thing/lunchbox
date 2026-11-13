@@ -69,7 +69,7 @@ const outputs = (room: string) => join(OUTPUTS, room)
 // Keeping a session's cache from running out. A ping reads the whole session at the cached
 // price, which is a fraction of writing it again, so a few are worth it against the chance the
 // person comes back: at most this share of what a cold start would cost goes on pings.
-const PING = 'This is a keep-alive from Lunchbox, not a message from the person. Reply with the single word: ok'
+const PING = 'Lunchbox sent this to keep the session cached. The person did not write it. Reply with the single word: ok'
 const PING_SHARE = 0.2
 // A session smaller than this costs too little to pick up cold for a ping to matter.
 const WARM_MIN = 30000
@@ -442,8 +442,6 @@ export class Engine {
     // pay to write it all again for nobody.
     const gone = !meta || meta.archived || meta.sessions[who] !== w.session || this.store.settings.saving?.warm === false || Date.now() > lapses - 5000
     if (gone || this.why(who)) return this.cool(room, who)
-    // A turn in the room is already reading the session, and sets its own timer when it ends.
-    if ((this.pending.get(room) ?? 0) > 0) return
     const saving = this.store.settings.saving ?? {}
     const grant = this.hands?.grant(w.tools, { kind: 'refuse' })
     const running = run(who, {
@@ -456,14 +454,14 @@ export class Engine {
     procs.add(running)
     let r: Result
     try { r = await running.done } finally { grant?.revoke(); procs.delete(running) }
-    if (this.warmth.get(`${room}:${who}`) !== w) return
     if (r.usage.cost > 0 || r.usage.cached > 0) {
-      // A ping is spending, not work: it counts toward cost and nothing else, so the tokens it
-      // read never show up as tokens saved.
+      // A ping counts toward cost and nothing else, so the tokens it read never show up as saved.
       this.store.record(who, room, { input: 0, output: 0, cached: 0, cost: r.usage.cost, pings: r.usage.cost, v: 2 })
       this.hooks.emit('ledger', this.ledger())
       this.hooks.turned?.(who, r.usage)
     }
+    // The agent's own turn began meanwhile, and that turn sets a timer of its own when it ends.
+    if (this.warmth.get(`${room}:${who}`) !== w) return
     // It only kept the cache alive if it found it alive.
     if (r.error || !r.first || r.first.written > r.first.read) return this.cool(room, who)
     w.pinged = Date.now()
