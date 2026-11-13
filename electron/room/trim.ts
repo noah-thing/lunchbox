@@ -25,24 +25,32 @@ export function clean(text: string) {
   return plain.split('\n').map((l) => { const end = l.endsWith('\r') ? l.slice(0, -1) : l; return end.slice(end.lastIndexOf('\r') + 1) }).join('\n')
 }
 
-// Commands whose output is a log: tests, builds, installs and linters. Anything that prints
-// content an agent asked to see, a file or a diff or a search, is never one of these.
+// Commands whose output is a log and that end by themselves: tests, builds, installs and linters.
+// Anything that prints content an agent asked to see, a file or a diff or a search, is never one
+// of these. Neither is anything that keeps running, a dev server or a watcher: its output is
+// read while it runs, and held in a file it would never be seen.
+const SCRIPT = '(test|tests|t|build|lint|typecheck|type-check|check|compile|bundle|ci|coverage|e2e|unit|format|fmt|types|tsc|verify|validate)'
+const CHECKER = '(tsc|eslint|jest|vitest\\s+run|mocha|ava|biome|prettier|stylelint|playwright\\s+test|cypress\\s+run)'
 const LOGS = [
-  /^(npm|pnpm|yarn|bun)\s+(?!(ls|list|view|info|show|pkg|config|why|bin|root|prefix|whoami|get)\b)/,
-  /^(npx|bunx|pnpx)\s/, /^(pnpm|yarn)\s+dlx\s/,
-  /^node\s+(--test|.*\s--test)\b/, /^deno\s+(test|lint|check|task)\b/,
-  /^(pytest|tox|nox|jest|vitest|mocha|ava|tsc|eslint|biome|prettier|ruff|mypy|pyright|rubocop|rspec|phpunit|phpstan|make|gmake|cmake|ninja|xcodebuild|gradle|mvn|ant|webpack|rollup|vite|turbo|nx|lerna|bazel|ctest|stylelint)\b/,
-  /^\.\/(gradlew|mvnw)\b/,
+  new RegExp(`^(npm|pnpm|yarn|bun)\\s+(${SCRIPT}|install|i|ci|add|update|upgrade|audit|outdated|dedupe|prune|rebuild|pack)\\b`),
+  new RegExp(`^(npm|pnpm|yarn|bun)\\s+run\\s+${SCRIPT}(:[\\w:-]+)?(\\s|$)`),
+  new RegExp(`^(npx|bunx|pnpx|pnpm\\s+exec|yarn\\s+exec|pnpm\\s+dlx|yarn\\s+dlx)\\s+(--\\S+\\s+)*${CHECKER}\\b`),
+  new RegExp(`^${CHECKER}\\b`),
+  /^node\s+(--test|.*\s--test)\b/, /^deno\s+(test|lint|check)\b/,
+  /^(pytest|tox|nox|ruff|mypy|pyright|rubocop|rspec|phpunit|phpstan|make|gmake|cmake|ninja|xcodebuild|ant|bazel\s+(build|test)|ctest)\b/,
+  /^(gradle|\.\/gradlew|mvn|\.\/mvnw)\s+(?!.*\b(bootRun|run|exec:java|spring-boot:run)\b)/,
+  /^(vite|next|nuxt|astro|webpack|rollup|turbo|nx|lerna)\s+(run\s+)?(build|lint|test|typecheck)\b/,
   /^python3?\s+-m\s+(pytest|unittest|pip|build|tox|mypy|ruff)\b/,
   /^(pip3?|uv|poetry|pipenv|conda)\s+(install|sync|add|update|lock|build)\b/, /^uv\s+(run\s+pytest|pip)\b/,
   /^cargo\s+(build|test|check|clippy|bench|doc|install|update|nextest)\b/,
   /^go\s+(test|build|vet|install|mod|generate)\b/,
-  /^(dotnet|swift|flutter|dart|mix|stack|cabal|zig)\s+(build|test|restore|publish|pub|analyze|compile|deps)\b/,
+  /^(dotnet|swift|flutter|dart|mix|stack|cabal|zig)\s+(build|test|restore|publish|pub\s+get|analyze|compile|deps)\b/,
   /^(bundle|composer|gem)\s+(install|update|exec\s+(rspec|rake|rubocop))\b/, /^rake\b/,
-  /^docker\s+(build|pull|push|compose\s+(build|pull|up))\b/, /^docker-compose\s+(build|pull|up)\b/,
-  /^terraform\s+(init|plan|apply|validate)\b/,
+  /^docker\s+(build|pull|push|compose\s+(build|pull))\b/, /^docker-compose\s+(build|pull)\b/,
+  /^terraform\s+(init|plan|validate)\b/,
   /^(brew|apt|apt-get|dnf|yum|pacman|choco|winget|scoop)\s+(install|upgrade|update|-S)\b/,
 ]
+const RUNS_ON = /(^|\s)(--watch|--watchAll|-w|--serve|--ui|--headed|--debug|--inspect\S*|watch|serve|dev|start|preview)(\s|=|$)/
 const CONTENT = /^(cat|head|tail|sed|awk|grep|rg|ag|git|gh|ls|find|fd|tree|jq|yq|curl|wget|diff|less|more|bat|wc|sort|uniq|cut|tr|xxd|hexdump|strings|printenv|env|echo|printf|sqlite3|psql|mysql)\b/
 
 // What a part of a command line really runs, past `cd x`, `FOO=1`, `time` and the like.
@@ -66,7 +74,7 @@ export function logs(command: string) {
     // A pipeline is judged by what starts it, unless what follows picks lines out of it.
     const [first, ...rest] = p.split(/\|(?!\|)/).map((x) => x.trim())
     if (rest.some((r) => /^(grep|rg|tail|head|sed|awk|wc|jq|cut|sort|uniq|tee)\b/.test(r))) return false
-    if (CONTENT.test(first)) return false
+    if (CONTENT.test(first) || RUNS_ON.test(first)) return false
     if (LOGS.some((re) => re.test(first))) found = true
     else return false
   }

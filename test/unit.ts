@@ -1363,8 +1363,10 @@ test('trim: output that would barely shrink is left whole', () => {
 })
 
 test('logs: tests, builds and installs are shortened, content never is', () => {
-  for (const c of ['npm test', 'cd app && npm run build', 'CI=1 pnpm install', 'npx tsc --noEmit && npm test', 'pytest -x tests/', 'cargo test --workspace', 'node --test', 'go test ./...', 'make -j8']) assert.equal(logs(c), true, c)
+  for (const c of ['npm test', 'cd app && npm run build', 'CI=1 pnpm install', 'npx tsc --noEmit && npm test', 'pytest -x tests/', 'cargo test --workspace', 'node --test', 'go test ./...', 'make -j8', 'npm run test:unit -- --coverage', 'yarn lint', 'npx vitest run', 'next build', './gradlew test']) assert.equal(logs(c), true, c)
   for (const c of ['cat src/app.ts', 'git diff', 'npm test 2>&1 | tail -20', 'npm test | grep fail', 'npm test; cat out.log', 'npm ls', 'node build.js', 'npm run dev &', 'npm test || exit 1', 'ls -la', 'curl -s localhost:3000', 'npm test > out.txt; echo $(wc -l < out.txt)']) assert.equal(logs(c), false, c)
+  // Whatever keeps running is read while it runs, so its output is never held back in a file.
+  for (const c of ['npm run dev', 'npm start', 'yarn dev', 'npx vite', 'next dev', 'npm test -- --watch', 'npx jest --watch', 'vitest', 'npx serve dist', 'docker compose up', 'npm run storybook', 'tsc -w', './gradlew bootRun', 'npx playwright test --ui']) assert.equal(logs(c), false, c)
 })
 
 test('wrap: the command keeps its exit code and its place in the shell', { skip: process.platform === 'win32' }, () => {
