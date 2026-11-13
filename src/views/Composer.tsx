@@ -4,6 +4,7 @@ import { Menu, ModePicker } from '../ui/Access'
 import { CrewMenu } from '../ui/ModelPicker'
 import { IconClip, IconClose, IconSplit, IconStudio, IconStop, IconUp } from '../ui/icons'
 import { agentOf, desk, machine, unavailable, useApp, type Access } from '../lib/desk'
+import { follow } from '../lib/fit'
 import { PLAYBOOKS, fillPlaybook } from '../../shared/skills'
 import { addOpenCode, hasOpenCode, openCodeFound } from './Connect'
 
@@ -36,6 +37,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   const [at, setAt] = useState(0)
   const [caret, setCaret] = useState(0)
   const area = useRef<HTMLTextAreaElement>(null)
+  const list = useRef<HTMLDivElement>(null)
   // The crew as it is now, for a menu action that finishes after an await.
   const crewNow = useRef(crew)
   crewNow.current = crew
@@ -71,7 +73,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   }, [])
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key === '/' && (e.target as HTMLElement)?.tagName !== 'TEXTAREA' && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); area.current?.focus() }
+      if (e.key === '/' && !document.querySelector('.scrim') && !(e.target as HTMLElement)?.isContentEditable && (e.target as HTMLElement)?.tagName !== 'TEXTAREA' && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); area.current?.focus() }
     }
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
@@ -104,6 +106,13 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
     requestAnimationFrame(() => { area.current?.setSelectionRange(pos, pos); setCaret(pos) })
   }
 
+  // The list opens above the box, or below it when there is no room, and keeps the chosen row in view.
+  const listing = suggestions.length
+  useLayoutEffect(() => {
+    if (list.current) return follow(list.current, list.current.parentElement!)
+  }, [listing > 0])
+  useLayoutEffect(() => { list.current?.querySelector('.on')?.scrollIntoView({ block: 'nearest' }) }, [at, listing])
+
   const shell = text.startsWith('!')
   const submit = () => {
     if (!text.trim() && !files.length) return
@@ -133,7 +142,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
         </div>
       )}
       {suggestions.length > 0 && (
-        <div className="suggest" role="listbox">
+        <div className="suggest" role="listbox" ref={list}>
           {suggestions.map((s, i) => (
             <button key={s.key} role="option" aria-selected={i === at % suggestions.length} className={i === at % suggestions.length ? 'on' : ''}
               onMouseEnter={() => setAt(i)} onMouseDown={(e) => { e.preventDefault(); pickSuggestion(s) }}>
@@ -151,7 +160,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           if (suggestions.length) {
             if (e.key === 'ArrowDown') { e.preventDefault(); return setAt(at + 1) }
             if (e.key === 'ArrowUp') { e.preventDefault(); return setAt(at - 1 + suggestions.length) }
-            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); return pickSuggestion(suggestions[at % suggestions.length]) }
+            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing)) { e.preventDefault(); return pickSuggestion(suggestions[at % suggestions.length]) }
           }
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
         }} />

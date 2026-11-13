@@ -1,11 +1,12 @@
 import { createInterface } from 'node:readline'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import type { Access, AgentInfo, Act, Connector, Usage } from '../../shared/types'
-import { capture, env, launch, stop, version, which } from '../system'
+import type { Access, AgentInfo, Act, Connector, Meter, Usage } from '../../shared/types'
+import { capture, env, launch, probe, runnable, stop, version, which } from '../system'
 import { claudeLike, codex, gemini, limitOf, reason, textOut, type Turn, type Update } from './parse'
-import { chat, listModels, PROVIDERS } from './http'
+import { chat, listModels, parseHeaders, PROVIDERS } from './http'
+import type { Bench } from './bench'
 import { logoOf } from '../../shared/logos'
 import { localSetup } from '../local'
 
@@ -19,16 +20,41 @@ export type Input = {
   access: Access
   model?: string
   session?: string
+  // What that session had reported in total before this turn.
+  meter?: Meter
   allow?: string[]
   hands?: string
+  // Where the agent sends each tool call before it runs, and the folder long outputs are kept in.
+  hook?: string
+  outputs?: string
+  // The hook answers for every tool, not only commands.
+  guarded?: boolean
+  effort?: string
+  // Start with the room's tools only, without the MCP servers set up outside Lunchbox.
+  lean?: boolean
+  // Answer from a copy of the session that is thrown away, leaving the session as it was.
+  fork?: boolean
+  // Ask for what this turn caches to be kept five minutes instead of Claude Code's own choice.
+  short?: boolean
   fresh?: boolean
+  // For HTTP agents: the room's folder and its rules, which the model works in through tools.
+  bench?: Bench
+  // Hands over a message the person sent while this turn runs, once, between the agent's steps.
+  inbox?: () => string | null
+  // Local models: free the model from memory when it has answered.
+  unload?: boolean
 }
 
 export type Result = {
   text: string
   acts: Act[]
   usage: Usage
+  meter?: Meter
   session?: string
+  model?: string
+  first?: { read: number; written: number }
+  last?: { read: number; written: number }
+  quick?: number
   error?: string
   limit?: { until: number }
   denied: string[]
@@ -67,6 +93,19 @@ function claudeHands(i: Input, file: string): Pick<Spec, 'extra'> & { args: stri
   return { args: ['--mcp-config', path], extra: [{ path, text: JSON.stringify({ mcpServers: { lunchbox: { type: 'http', url: i.hands } } }) }] }
 }
 
+// Claude Code calls this address before each command, so the room can shorten what it prints.
+function claudeHook(i: Input, file: string): Pick<Spec, 'extra'> & { args: string[] } {
+  const dirs = i.outputs ? ['--add-dir', i.outputs] : []
+  if (!i.hook) return { args: dirs }
+  const path = file.replace(/\.txt$/, '.settings.json')
+  const settings = { hooks: {
+    PreToolUse: [{ matcher: i.guarded ? '*' : 'Bash', hooks: [{ type: 'http', url: i.hook, timeout: 10 }] }],
+    // After each step, so a message sent mid-turn reaches the agent without stopping it.
+    ...(i.inbox ? { PostToolUse: [{ matcher: '*', hooks: [{ type: 'http', url: i.hook, timeout: 10 }] }] } : {}),
+  } }
+  return { args: ['--settings', path, ...dirs], extra: [{ path, text: JSON.stringify(settings) }] }
+}
+
 // Codex takes servers on the command line only, so the token travels in the environment, which
 // other accounts on the computer cannot read, and the URL on the command line carries none.
 const HANDS_ENV = 'LUNCHBOX_HANDS_TOKEN'
@@ -94,19 +133,24 @@ export const CATALOG: Def[] = [
     spawn: (i, file) => {
       const allowed = ['Task', 'Agent', ...(i.access === 'workspace' ? ['Bash'] : []), ...(i.hands ? ['mcp__lunchbox'] : []), ...(i.allow ?? [])]
       const hands = claudeHands(i, file)
+      const hook = claudeHook(i, file)
       return {
-        extra: hands.extra,
+        extra: [...(hands.extra ?? []), ...(hook.extra ?? [])],
         args: [
           '-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
           ...{ plan: ['--permission-mode', 'plan'], ask: ['--permission-mode', 'default'], workspace: ['--permission-mode', 'acceptEdits'], full: ['--dangerously-skip-permissions'] }[i.access],
           ...(allowed.length && i.access !== 'full' ? ['--allowedTools', allowed.join(',')] : []),
           ...hands.args,
+          ...hook.args,
+          ...(i.lean ? ['--strict-mcp-config'] : []),
+          ...(i.effort ? ['--effort', i.effort] : []),
           ...(i.model ? ['--model', i.model] : []),
           ...(i.session ? ['--resume', i.session] : []),
+          ...(i.session && i.fork ? ['--fork-session', '--no-session-persistence'] : []),
         ],
-        env: i.hands ? { MCP_TOOL_TIMEOUT: String(HANDS_TIMEOUT * 1000) } : undefined,
+        env: { ...(i.hands ? { MCP_TOOL_TIMEOUT: String(HANDS_TIMEOUT * 1000) } : {}), ...(i.short ? { FORCE_PROMPT_CACHING_5M: '1' } : {}) },
         stdin: prompt(i),
-        parser: claudeLike(),
+        parser: claudeLike(i.meter, !!i.session),
       }
     },
   },
@@ -115,7 +159,7 @@ export const CATALOG: Def[] = [
     good: 'Building, running and fixing tests', alphabet: '.-01',
     spawn: (i) => {
       const sandbox = { plan: ['-s', 'read-only'], ask: ['-s', 'read-only'], workspace: ['-s', 'workspace-write'], full: ['--dangerously-bypass-approvals-and-sandbox'] }[i.access]
-      const tail = [...codexHands(i), ...(i.model ? ['-m', i.model] : [])]
+      const tail = [...codexHands(i), ...(i.effort ? ['-c', `model_reasoning_effort="${i.effort}"`] : []), ...(i.model ? ['-m', i.model] : [])]
       // `exec resume` takes neither -C nor -s: the folder comes from the working directory and the
       // sandbox from config, or every resumed turn fails and silently starts a new session.
       const resumeSandbox = i.access === 'full' ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-c', `sandbox_mode="${i.access === 'workspace' ? 'workspace-write' : 'read-only'}"`]
@@ -125,7 +169,7 @@ export const CATALOG: Def[] = [
           : ['exec', '--json', '--skip-git-repo-check', '-C', i.cwd, ...sandbox, ...tail, '-'],
         env: i.hands ? { [HANDS_ENV]: i.hands.split('/').pop()! } : undefined,
         stdin: prompt(i),
-        parser: codex(i.model),
+        parser: codex(i.model, i.meter, !!i.session),
       }
     },
   },
@@ -140,7 +184,7 @@ export const CATALOG: Def[] = [
         ...(i.session ? ['-r', i.session] : []),
       ],
       file: prompt(i),
-      parser: claudeLike(),
+      parser: claudeLike(i.meter, !!i.session),
     }),
   },
   {
@@ -157,14 +201,14 @@ export const CATALOG: Def[] = [
       parser: gemini(),
     }),
   },
-  { id: 'ollama', name: 'Ollama', short: 'Ollama', maker: 'On this computer', via: 'local', bin: 'ollama', provider: 'ollama', tools: false, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
-  { id: 'lmstudio', name: 'LM Studio', short: 'LM Studio', maker: 'On this computer', via: 'local', bin: 'lms', provider: 'lmstudio', tools: false, mark: 'lmstudio', good: 'Any model you load in LM Studio, served locally', alphabet: '.-=≡#' },
-  { id: 'llamacpp', name: 'llama.cpp', short: 'llama.cpp', maker: 'On this computer', via: 'local', bin: 'llama-server', provider: 'llamacpp', tools: false, mark: 'llamacpp', good: 'A llama-server on port 8080, or any server that speaks the OpenAI API there', alphabet: '.,:;+*' },
-  { id: 'claude-api', name: 'Claude API', short: 'Claude API', maker: 'Anthropic', via: 'api', key: 'anthropic', tools: false, mark: 'claude', good: 'Pay per token, with prompt caching', alphabet: '.:-=+*#%@' },
-  { id: 'openai-api', name: 'OpenAI API', short: 'GPT', maker: 'OpenAI', via: 'api', key: 'openai', tools: false, mark: 'openai', good: 'Pay per token', alphabet: '.-01' },
-  { id: 'grok-api', name: 'xAI API', short: 'Grok API', maker: 'xAI', via: 'api', key: 'xai', tools: false, mark: 'grok', good: 'Pay per token', alphabet: '.:/\\|X#' },
-  { id: 'gemini-api', name: 'Gemini API', short: 'Gemini API', maker: 'Google', via: 'api', key: 'google', tools: false, mark: 'gemini', good: 'Pay per token, generous free tier', alphabet: '.,oO0@' },
-  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: false, mark: 'openrouter', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
+  { id: 'ollama', name: 'Ollama', short: 'Ollama', maker: 'On this computer', via: 'local', bin: 'ollama', provider: 'ollama', tools: true, mark: 'local', good: 'Private and free, never leaves the machine', alphabet: '.:;il!IH#' },
+  { id: 'lmstudio', name: 'LM Studio', short: 'LM Studio', maker: 'On this computer', via: 'local', bin: 'lms', provider: 'lmstudio', tools: true, mark: 'lmstudio', good: 'Any model you load in LM Studio, served locally', alphabet: '.-=≡#' },
+  { id: 'llamacpp', name: 'llama.cpp', short: 'llama.cpp', maker: 'On this computer', via: 'local', bin: 'llama-server', provider: 'llamacpp', tools: true, mark: 'llamacpp', good: 'A llama-server on port 8080, or any server that speaks the OpenAI API there', alphabet: '.,:;+*' },
+  { id: 'claude-api', name: 'Claude API', short: 'Claude API', maker: 'Anthropic', via: 'api', key: 'anthropic', tools: true, mark: 'claude', good: 'Pay per token, with prompt caching', alphabet: '.:-=+*#%@' },
+  { id: 'openai-api', name: 'OpenAI API', short: 'GPT', maker: 'OpenAI', via: 'api', key: 'openai', tools: true, mark: 'openai', good: 'Pay per token', alphabet: '.-01' },
+  { id: 'grok-api', name: 'xAI API', short: 'Grok API', maker: 'xAI', via: 'api', key: 'xai', tools: true, mark: 'grok', good: 'Pay per token', alphabet: '.:/\\|X#' },
+  { id: 'gemini-api', name: 'Gemini API', short: 'Gemini API', maker: 'Google', via: 'api', key: 'google', tools: true, mark: 'gemini', good: 'Pay per token, generous free tier', alphabet: '.,oO0@' },
+  { id: 'openrouter', name: 'OpenRouter', short: 'Router', maker: 'Any model', via: 'api', key: 'openrouter', tools: true, mark: 'openrouter', good: 'Hundreds of models behind one key', alphabet: '.:+*#' },
 ]
 
 // Connectors the person added, rebuilt whenever settings change.
@@ -179,7 +223,7 @@ export function words(s: string) {
 }
 
 function fromConnector(c: Connector): Def {
-  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: c.kind === 'cli', mark: logoOf(c), good: c.good || 'Added by you', alphabet: '.:+*#' }
+  const base = { id: c.id, name: c.name, short: c.name, maker: 'Your connector', tools: true, mark: logoOf(c), good: c.good || 'Added by you', alphabet: '.:+*#' }
   if (c.kind !== 'cli') {
     PROVIDERS[`conn:${c.id}`] = { base: (c.base ?? '').replace(/\/+$/, ''), style: c.kind, prefer: c.model ? new RegExp(`^${c.model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) : /./ }
     return { ...base, via: 'api', key: `conn:${c.id}`, provider: `conn:${c.id}` }
@@ -211,8 +255,18 @@ function fromConnector(c: Connector): Def {
   }
 }
 
+// A connector's extra headers live in the keychain beside its key, since they often hold one.
+function wear(d: Def, keys: Record<string, string>) {
+  if (!d.key?.startsWith('conn:') || !PROVIDERS[d.key]) return
+  PROVIDERS[d.key].extra = parseHeaders(keys[`${d.key}:headers`])
+}
+
+const connModels = new Map<string, string>()
+
 export function useConnectors(list: Connector[] = []) {
   for (const k of Object.keys(PROVIDERS)) if (k.startsWith('conn:')) delete PROVIDERS[k]
+  connModels.clear()
+  for (const c of list) if (c.kind !== 'cli' && c.model?.trim()) connModels.set(c.id, c.model.trim())
   custom = list.filter((c) => c.id && c.name).map(fromConnector)
 }
 
@@ -222,9 +276,9 @@ export const def = (id: string) => all().find((d) => d.id === id)
 
 async function locate(bin: string) {
   const path = bin.replace(/^~(?=[\\/]|$)/, homedir())
-  if (isAbsolute(path)) return existsSync(path) ? path : ''
+  if (isAbsolute(path)) return runnable(path) ? path : ''
   // The app's own working folder means nothing to the person, so ./tools/agent starts from home.
-  if (/[\\/]/.test(path)) return existsSync(resolve(homedir(), path)) ? resolve(homedir(), path) : ''
+  if (/[\\/]/.test(path)) return runnable(resolve(homedir(), path)) ? resolve(homedir(), path) : ''
   return /^[\w.@+-]+$/.test(path) ? which(path) : ''
 }
 
@@ -237,8 +291,16 @@ export async function detect(keys: Record<string, string>, models: Record<string
       if (d.via === 'cli') {
         // One broken install shows as not found rather than hiding every other agent with it.
         const path = await locate(d.bin!).catch(() => '')
-        if (path) paths.set(d.id, path)
-        return { ...base, found: !!path, ready: !!path, version: path ? await version(path).catch(() => '') : undefined }
+        if (!path) { paths.delete(d.id); return { ...base, found: false, ready: false } }
+        // The agents Lunchbox knows have to start, not just be there. A connector is the person's
+        // own command, which may not know --version, so being runnable is enough for it.
+        const started = d.maker === 'Your connector' ? { ok: true, version: await version(path).catch(() => '') } : await probe(path)
+        if (!started.ok) {
+          paths.delete(d.id)
+          return { ...base, found: false, ready: false, note: `There is a ${d.bin} at ${path}, but it does not start. Install ${d.name} again, then check again.` }
+        }
+        paths.set(d.id, path)
+        return { ...base, found: true, ready: true, version: started.version || undefined }
       }
       if (d.via === 'local') {
         const [list, setup] = await Promise.all([listModels(providerOf(d), '').catch(() => null), localSetup(d.id, d.bin!)])
@@ -249,7 +311,8 @@ export async function detect(keys: Record<string, string>, models: Record<string
       // A connector may point at a server that needs no key, such as vLLM on this computer.
       const key = keys[d.key!]
       const mine = d.key!.startsWith('conn:')
-      return { ...base, found: mine || !!key, ready: mine || !!key }
+      // The model typed into the connector is the one used, unless another was picked since.
+      return { ...base, model: base.model || connModels.get(d.id) || undefined, found: mine || !!key, ready: mine || !!key }
     }),
   )
 }
@@ -287,6 +350,7 @@ export async function modelsFor(id: string, keys: Record<string, string>) {
   if (d?.id === 'grok') return grokModels()
   if (d?.id === 'gemini') return GEMINI_MODELS
   if (!d || d.via === 'cli') return []
+  wear(d, keys)
   const all = await listModels(providerOf(d), keys[d.key!] ?? '')
   return d.via === 'local' ? all.filter((m) => !/embed/i.test(m)) : all
 }
@@ -298,11 +362,15 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     const provider = providerOf(d)
     const ctl = new AbortController()
     const t0 = Date.now()
-    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey)
-      .then((r) => ({ text: r.text, acts: [], usage: r.usage, denied: [], ms: Date.now() - t0 }))
-      .catch((e: Error) => {
+    wear(d, keys)
+    const hands = input.bench ? { bench: input.bench, onStep: (s: { working?: string; acts?: Act[] }) => onUpdate(s), inbox: input.inbox } : undefined
+    if (PROVIDERS[provider]?.style === 'ollama') PROVIDERS[provider].unload = !!input.unload
+    const done = chat(provider, keys[d.key ?? ''] ?? '', input.model ?? '', input.system, input.prompt, ctl.signal, (delta) => onUpdate({ delta }), input.history, input.cacheKey, hands)
+      .then((r) => ({ text: r.text, acts: r.acts, usage: r.usage, denied: [], ms: Date.now() - t0 }))
+      .catch((e: Error & { text?: string; acts?: Act[]; usage?: Usage }) => {
         const error = ctl.signal.aborted ? 'Stopped' : e.message
-        return { ...failed(error), limit: limitOf(error) ?? undefined, ms: Date.now() - t0 }
+        // Whatever it wrote and did before failing is kept, as it is for a command line agent.
+        return { ...failed(error), text: e.text ?? '', acts: e.acts ?? [], usage: e.usage ?? failed('').usage, limit: limitOf(error) ?? undefined, ms: Date.now() - t0 }
       })
     return { done, stop: () => ctl.abort() }
   }
@@ -376,7 +444,7 @@ export function run(id: string, input: Input, keys: Record<string, string>, onUp
     // A crash partway through keeps what was written, but it is not a finished answer.
     else if (code !== 0 && !error) error = reason(stderr) || `${name} exited with code ${code}`
     const limit = (error && limitOf(error)) || (code !== 0 && !text ? limitOf(stderr) : null)
-    return { text, acts: turn.acts, usage: turn.usage, session: turn.session, error, limit: limit ?? undefined, denied: turn.denied, ms: Date.now() - t0 }
+    return { text, acts: turn.acts, usage: turn.usage, meter: turn.meter, session: turn.session, model: turn.model ?? input.model, first: turn.first, last: turn.last, quick: turn.quick, error, limit: limit ?? undefined, denied: turn.denied, ms: Date.now() - t0 }
   }
   return { done, stop: () => { stopped = true; if (child) stop(child) } }
 }
@@ -389,7 +457,7 @@ export { PROVIDERS }
 
 // Checks a connector before it is saved: the command is on this computer, or the API answers
 // with its list of models.
-export async function testConnector(c: Connector, key: string): Promise<{ ok: boolean; note: string; models?: string[] }> {
+export async function testConnector(c: Connector, key: string, extra = ''): Promise<{ ok: boolean; note: string; models?: string[] }> {
   if (c.kind === 'cli') {
     const [bin] = words(c.command ?? '')
     const path = bin ? await locate(bin) : ''
@@ -399,7 +467,7 @@ export async function testConnector(c: Connector, key: string): Promise<{ ok: bo
   }
   if (!/^https?:\/\//.test(c.base ?? '')) return { ok: false, note: 'The address should start with https:// or http://' }
   const id = `test:${Date.now()}`
-  PROVIDERS[id] = { base: c.base!.replace(/\/+$/, ''), style: c.kind, prefer: /./ }
+  PROVIDERS[id] = { base: c.base!.replace(/\/+$/, ''), style: c.kind, prefer: /./, extra: parseHeaders(extra) }
   try {
     const models = await listModels(id, key)
     return { ok: true, note: models.length ? `Connected, ${models.length} model${models.length > 1 ? 's' : ''}` : 'Connected', models }

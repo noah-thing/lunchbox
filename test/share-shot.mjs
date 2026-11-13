@@ -15,7 +15,7 @@ for (const name of ['claude', 'codex']) symlinkSync(root + 'test/fake-agent.mjs'
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${temp('profile')}`], cwd: root,
-  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '10' },
+  env: { ...process.env, LB_FOLDER: 'shared', LB_PLAN_LIMITS: 'off', LB_WORKSPACE: temp('work'), LUNCHBOX_PATH: `${bin}:${process.execPath.replace(/\/[^/]+$/, '')}:/usr/bin:/bin`, LUNCHBOX_PATH_ONLY: '1', FAKE_DELAY: '10' },
   timeout: 30000,
 })
 const kill = setTimeout(() => { console.log('timed out'); app.close().finally(() => process.exit(1)) }, 150000)
@@ -32,6 +32,10 @@ for (const text of ['Write a short note on agent limits', 'Now add a line about 
 }
 await page.click('.sbitem:has-text("Savings")')
 await page.waitForTimeout(1200)
+// The whole page, with the notes on how each number is counted, before the card covers it.
+await page.evaluate(() => document.querySelector('.savings .sv-notes')?.scrollIntoView({ block: 'end' }))
+await page.waitForTimeout(500)
+await page.screenshot({ path: out + '0-page.png', scale: 'css' })
 const share = page.locator('.savings button:has-text("Share")')
 console.log('share button:', await share.count())
 if (await share.count()) {

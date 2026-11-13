@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { addressed } from '../../shared/address'
 import { sentence } from '../../shared/steps'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import type { Access, AgentInfo, Block, DecideAction, Event, Flow, Hit, Live, LiveRun, LiveTurn, Pack, RoomMeta, RoomSummary, Skill, Usage, Waiting } from '../../shared/types'
 import { asks, plan } from '../../shared/plan'
@@ -9,11 +11,14 @@ import { DESIGN_SOURCES, studioChecks } from '../../shared/studio'
 import { describe as schedule } from '../../shared/flow'
 import { detect, run, type Result } from '../agents'
 import { plain } from '../agents/parse'
-import type { Hands, Tool } from '../hands'
+import type { Hands, Tool, Watch } from '../hands'
+import { rates } from '../../shared/prices'
 import { openaiImage, target } from '../images'
 import { kit, type Host } from './kit'
 import { clearMemory, writeMemory } from './project'
-import { execute, kill, type Ran } from '../shell'
+import { ask, execute, kill, type Ran } from '../shell'
+import { decide } from '../policy'
+import type { Bench } from '../agents/bench'
 import type { Snapshots } from '../snap'
 import type { Store } from '../store'
 import { briefing, line, prompt, protocol } from './context'
@@ -25,7 +30,7 @@ type Hooks = {
   notify(title: string, body: string, room: string): void
   packs(): Pack[]
   // Tools from outside the room: the built-in browser and any MCP servers the person connected.
-  tools?(who: string, workspace: string, access: Access): Tool[]
+  tools?(who: string, workspace: string, access: Access, room: string): Tool[]
   // Creates a flow the person accepted from a card in a room. Set once the app's flows exist.
   flow?(f: Pick<Flow, 'name' | 'steps' | 'crew' | 'workspace' | 'access' | 'every' | 'at' | 'day' | 'pack'>): Flow | undefined
 }
@@ -42,7 +47,9 @@ type Task = (
 // tried holds who already failed on this message, so a failure everyone shares is not handed round in circles.
 // main is who follows the conversation for this message: the room's main agent, or its stand-in.
 // Everyone else who takes part gets a briefing instead of the log.
-type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string>; tried?: Set<string>; main?: string }
+// host: the turn that called for help, so what the helpers write is shown inside it.
+type Ctx = { gen: number; hops: { n: number }; arena?: string; allow?: string[]; depth?: number; models?: Record<string, string>; tried?: Set<string>; main?: string; host?: { turn: string; mark: () => number } }
+const within = (ctx: Ctx) => (ctx.host ? { inside: { turn: ctx.host.turn, mark: ctx.host.mark() } } : {})
 type Said = { who: string; text: string; asks: { to: string; ask: string }[] }
 
 // Failures of one command in one turn before the loop guard stops it.
@@ -51,7 +58,31 @@ const MAX_HOPS = 24
 const FLOW_ASK = 15 * 60e3
 // Grok Build only loads MCP servers from config files, which the room does not touch.
 const BORROWS = new Set(['claude', 'codex', 'gemini'])
+const LOST_SESSION = /(session|conversation|thread|rollout)[^\n]{0,60}(not found|no such|invalid|expired|unknown|missing|does not exist|could not be (found|loaded|resumed))|no (conversation|session|thread|rollout) found|(could not|cannot|can't|failed to|unable to) (find|load|resume)[^\n]{0,40}(session|conversation|thread|rollout)|--resume|unexpected[^\n]{0,30}(session|resume)/i
+// What "always" remembers for edits in Ask mode, in the place command prefixes are kept.
+const EDITS = '\u0000edits'
 const uid = () => randomUUID().replace(/-/g, '').slice(0, 14)
+
+// Whole command outputs, kept beside the shortened ones the agents were shown.
+const OUTPUTS = join(tmpdir(), 'lunchbox-output')
+const outputs = (room: string) => join(OUTPUTS, room)
+
+// Keeping a session's cache from running out. A ping reads the whole session at the cached
+// price, which is a fraction of writing it again, so a few are worth it against the chance the
+// person comes back: at most this share of what a cold start would cost goes on pings.
+const PING = 'Lunchbox sent this to keep the session cached. The person did not write it. Reply with the single word: ok'
+const PING_SHARE = 0.2
+// A session smaller than this costs too little to pick up cold for a ping to matter.
+const WARM_MIN = 30000
+const SOON = (ttl: number) => (ttl >= 3600 ? 300e3 : 45e3)
+type Warmth = {
+  session: string; model?: string; access: Access; tools: Tool[]
+  // When the last real turn ended, how long its cache lives, and how big the session was.
+  at: number; ttl: number; size: number
+  // The session caches for five minutes by the room's choice, so a ping has to ask for the same.
+  short: boolean
+  pinged?: number; pings: number; timer?: NodeJS.Timeout
+}
 type Draft<E = Event> = E extends Event ? Omit<E, 'id' | 'at'> : never
 
 // The design files a project carries, each listed once even on a disk that ignores case.
@@ -69,12 +100,11 @@ export class Engine {
   private pending = new Map<string, number>()
   private gens = new Map<string, number>()
   private flushed = new Set<string>()
-  // The protocol last sent to each resumed session, so an unchanged one is not sent again.
-  private protos = new Map<string, string>()
   private allowed = new Map<string, Set<string>>()
   private liveTimers = new Map<string, NodeJS.Timeout>()
   private listTimer: NodeJS.Timeout | null = null
   private projectTimers = new Map<string, NodeJS.Timeout>()
+  private warmth = new Map<string, Warmth>()
 
   constructor(private store: Store, private hooks: Hooks, private hands?: Hands, private snaps?: Snapshots) {}
 
@@ -321,6 +351,8 @@ export class Engine {
 
   remove(room: string) {
     this.stop(room)
+    this.cool(room)
+    try { rmSync(outputs(room), { recursive: true, force: true }) } catch {}
     this.store.remove(room)
     this.undecided.delete(room)
     this.lives.delete(room)
@@ -337,6 +369,7 @@ export class Engine {
 
   setWorkspace(room: string, workspace: string) {
     // With Expert on, the new folder's own design files lead from now on.
+    this.cool(room)
     this.store.update(room, (m) => { m.workspace = workspace; m.sessions = {}; if (m.studio) m.design = designFiles(workspace) })
     this.hooks.emit('room:meta', this.store.room(room))
     this.list()
@@ -359,6 +392,85 @@ export class Engine {
   // Quitting the app stops every agent and command, so nothing keeps editing files afterwards.
   stopAll() {
     for (const room of this.lives.keys()) this.stop(room)
+    for (const w of this.warmth.values()) clearTimeout(w.timer)
+    this.warmth.clear()
+  }
+
+  // Outputs from rooms nobody has worked in for a few days are of no use to anyone.
+  sweep() {
+    try {
+      for (const name of readdirSync(OUTPUTS)) {
+        const dir = join(OUTPUTS, name)
+        if (Date.now() - statSync(dir).mtimeMs > 3 * 86400e3) rmSync(dir, { recursive: true, force: true })
+      }
+    } catch {}
+  }
+
+  private cool(room: string, who?: string) {
+    for (const [key, w] of this.warmth) {
+      if (key !== `${room}:${who}` && !(who === undefined && key.startsWith(`${room}:`))) continue
+      clearTimeout(w.timer)
+      this.warmth.delete(key)
+      const live = this.lives.get(room)
+      const agent = key.slice(room.length + 1)
+      if (live?.warm?.[agent]) { delete live.warm[agent]; this.changed(room) }
+    }
+  }
+
+  // After a turn, the room waits until the session's cache is about to run out and reads it once
+  // more, in a copy of the session that is thrown away, so the next message finds it cached.
+  private keepWarm(room: string, who: string, w: Omit<Warmth, 'pings' | 'timer'>) {
+    this.cool(room, who)
+    if (w.size < WARM_MIN) return
+    const state: Warmth = { ...w, pings: 0 }
+    this.warmth.set(`${room}:${who}`, state)
+    this.wait(room, who, state)
+  }
+
+  private wait(room: string, who: string, w: Warmth) {
+    const p = rates(who, w.model ?? '', w.ttl)
+    const most = Math.max(1, Math.min(w.ttl >= 3600 ? 2 : 6, p ? Math.floor(PING_SHARE / (p.read / p.write)) : 2))
+    if (w.pings >= most) return
+    const due = (w.pinged ?? w.at) + w.ttl * 1000 - SOON(w.ttl)
+    w.timer = setTimeout(() => { this.ping(room, who, w).catch(() => {}) }, Math.max(0, due - Date.now()))
+    w.timer.unref()
+  }
+
+  private async ping(room: string, who: string, w: Warmth) {
+    const meta = this.store.room(room)
+    const lapses = (w.pinged ?? w.at) + w.ttl * 1000
+    // A timer that fires late, after the computer slept, finds the cache gone: a ping would then
+    // pay to write it all again for nobody.
+    const gone = !meta || meta.archived || meta.sessions[who] !== w.session || this.store.settings.saving?.warm === false || Date.now() > lapses - 5000
+    if (gone || this.why(who)) return this.cool(room, who)
+    const saving = this.store.settings.saving ?? {}
+    const grant = this.hands?.grant(w.tools, { kind: 'refuse' })
+    const running = run(who, {
+      prompt: PING, system: '', fresh: false, cwd: meta.workspace, access: w.access, model: w.model, session: w.session, fork: true,
+      hands: grant?.url || undefined, hook: grant?.hook || undefined, guarded: true, outputs: saving.trim !== false ? outputs(room) : undefined,
+      effort: this.store.settings.effort?.[who], lean: saving.lean, short: w.short,
+    }, this.store.keys(), () => {})
+    const procs = this.procs.get(room) ?? new Set()
+    this.procs.set(room, procs)
+    procs.add(running)
+    let r: Result
+    try { r = await running.done } finally { grant?.revoke(); procs.delete(running) }
+    if (r.usage.cost > 0 || r.usage.cached > 0) {
+      // A ping counts toward cost and nothing else, so the tokens it read never show up as saved.
+      this.store.record(who, room, { input: 0, output: 0, cached: 0, cost: r.usage.cost, pings: r.usage.cost, v: 2 })
+      this.hooks.emit('ledger', this.ledger())
+      this.hooks.turned?.(who, r.usage)
+    }
+    // The agent's own turn began meanwhile, and that turn sets a timer of its own when it ends.
+    if (this.warmth.get(`${room}:${who}`) !== w) return
+    // It only kept the cache alive if it found it alive.
+    if (r.error || !r.first || r.first.written > r.first.read) return this.cool(room, who)
+    w.pinged = Date.now()
+    w.pings++
+    const live = this.live(room)
+    live.warm = { ...live.warm, [who]: w.pinged }
+    this.changed(room)
+    this.wait(room, who, w)
   }
 
   // Stopping is instant from the user's side: what each agent wrote so far lands in the room now
@@ -371,6 +483,7 @@ export class Engine {
     // Commands too: a running one is killed and one waiting for approval is refused, so the
     // room's queue never hangs on a question nobody will answer.
     for (const r of live.runs) kill(r.id)
+    for (const id of this.quiet.get(room) ?? []) kill(id)
     for (const lt of live.turns) {
       this.flushed.add(lt.id)
       if (lt.text.trim()) this.add(room, { kind: 'say', who: lt.who, text: lt.text.trim(), acts: lt.acts, error: 'Stopped' })
@@ -413,10 +526,8 @@ export class Engine {
       if (command) this.enqueue(room, () => this.shell(room, 'you', command, access))
       return
     }
-    const head = text.match(/^\s*((?:@[\w-]+[\s,]*)+)/)?.[1] ?? ''
-    // @ reaches any agent that is set up, by id or by name. One from outside the crew joins it.
-    const named = (a: AgentInfo) => [a.id, a.short.toLowerCase().replace(/[^a-z0-9]+/g, '-')]
-    const mentioned = this.agents.filter((a) => a.ready && named(a).some((h) => new RegExp(`@${h}(?![\\w-])`, 'i').test(head))).map((a) => a.id)
+    // An agent is reached by @ or by name, any that is set up. One from outside the crew joins it.
+    const mentioned = addressed(text, this.agents.filter((a) => a.ready))
     const joining = mentioned.filter((id) => !meta.crew.includes(id))
     if (joining.length) this.setCrew(room, [...meta.crew, ...joining])
     const cat = classify(text)
@@ -649,9 +760,9 @@ export class Engine {
   // steps out when done. Its report goes back to the agent that brought it in.
   private async bring(room: string, from: string, to: string, job: string, context: string | undefined, access: Access, ctx: Ctx) {
     if (++ctx.hops.n > MAX_HOPS) throw new Error('This message has used all its handoffs. Finish with what you have.')
-    this.add(room, { kind: 'joined', who: to, by: from, task: job.slice(0, 200) })
+    this.add(room, { kind: 'joined', who: to, by: from, task: job.slice(0, 200), ...within(ctx) })
     const r = await this.turn(room, to, { kind: 'job', from, job, context }, access, { ...ctx, arena: undefined, depth: (ctx.depth ?? 0) + 1 })
-    this.add(room, { kind: 'left', who: r?.who ?? to })
+    this.add(room, { kind: 'left', who: r?.who ?? to, ...within(ctx) })
     if (!r?.text) throw new Error(`${this.name(to)} could not take this on right now.`)
     return r.text
   }
@@ -678,8 +789,15 @@ export class Engine {
       const said = await this.consult(room, from, 'codex', ask, access, ctx, this.store.settings.imageModel ? { codex: this.store.settings.imageModel } : undefined, true, prompt, size).catch((e: Error) => e.message)
       if (!existsSync(path)) throw new Error(`The image was not saved. ${said.slice(0, 300)}`)
     }
-    this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage })
+    this.add(room, { kind: 'image', by, for: from, prompt, path, size, usage, ...within(ctx) })
     return `Saved ${relative(meta.workspace, path)}`
+  }
+
+  private keep(room: string, who: string, r: Result) {
+    this.store.update(room, (m) => {
+      m.sessions[who] = r.session!
+      if (r.meter) (m.meters ??= {})[who] = { ...r.meter, session: r.session! }
+    })
   }
 
   private async turn(room: string, who: string, task: Task, access: Access, ctx: Ctx): Promise<Said | null> {
@@ -689,7 +807,7 @@ export class Engine {
     if (blocked) {
       const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
       if (next && ctx.main === who) ctx.main = next
-      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until })
+      this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, reason: blocked, until: this.store.spent[who]?.until, ...within(ctx) })
       if (!next || ++ctx.hops.n > MAX_HOPS) return null
       return this.turn(room, next, task, access, ctx)
     }
@@ -717,6 +835,8 @@ export class Engine {
     // few lines of the room, so a follow-up makes sense; a job or a question does not need them.
     const recent = briefed && (task.kind === 'reply' || task.kind === 'continue') ? events.slice(-12).map((e) => line(e, this.name)).filter((l): l is string => !!l).slice(-8) : []
     const p = briefed ? briefing(meta, events, who, ask, resumed, recent) : prompt(meta, events, who, ask, this.name, resumed)
+    // What a briefing left out: the conversation this agent would otherwise have been sent.
+    const spared = briefed ? Math.max(0, prompt(meta, events, who, ask, this.name, resumed).text.length - p.text.length) : 0
 
     const live = this.live(room)
     const lt: LiveTurn = { id: uid(), who, kind: task.kind === 'answer' ? 'hands' : 'say', from: task.kind === 'answer' ? task.from : undefined, ask: task.kind === 'answer' ? task.ask : undefined, arena: ctx.arena, text: '', acts: [], started: Date.now(), image: task.kind === 'answer' && task.quiet ? true : undefined, label: task.kind === 'answer' ? task.label : undefined, size: task.kind === 'answer' ? task.size : undefined }
@@ -726,17 +846,60 @@ export class Engine {
     if (task.kind === 'answer') live.cable = { from: task.from, to: who, at: Date.now() }
     this.changed(room)
 
+    // Help this turn calls for is shown inside it, where it was asked for, not above it.
+    const inner: Ctx = !ctx.host && !ctx.arena && lt.kind === 'say' ? { ...ctx, host: { turn: lt.id, mark: () => lt.text.length } } : ctx
     const tools = this.hands && me.via === 'cli' && BORROWS.has(who)
-      ? [...kit(this.host(room, me, crew, access, ctx)), ...(this.hooks.tools?.(who, meta.workspace, access) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
+      ? [...kit(this.host(room, me, crew, access, inner)), ...(this.hooks.tools?.(who, meta.workspace, access, room) ?? []).filter((t) => meta.studio || !t.name.startsWith('expert_'))]
       : []
-    const grant = tools.length ? this.hands!.grant(tools) : null
     const http = me.via !== 'cli'
+    // A model behind an API has no file tools of its own, so the room gives it some.
+    const bench = http ? this.bench(room, who, access) : undefined
     const fails = new Map<string, number>()
     let looped = ''
     const system = protocol(meta, me, crew, access, pack, tools.map((t) => t.name), this.store.settings.habits, ctx.main ?? this.main(meta), meta.studio ? meta.design ?? [] : null)
+    // A resumed session already has the protocol; it goes again only when it changed. The mark
+    // is kept with the room, so restarting Lunchbox does not send every session its rules twice.
+    const sent = createHash('sha1').update(system).digest('hex').slice(0, 16)
+    const saving = this.store.settings.saving ?? {}
+    // Long test, build and install output is shortened on its way to Claude Code. Only where
+    // commands already run without asking: the person is never shown a command they did not see.
+    let cut = 0
+    const shorten = who === 'claude' && saving.trim !== false
+    const watch: Watch | undefined = shorten && (access === 'workspace' || access === 'full') ? { kind: 'shorten', dir: outputs(room), cut: (n) => { cut += n } } : undefined
+    // Whether this turn finds its session cached only because the room kept it so.
+    const warm = this.warmth.get(`${room}:${who}`)
+    const warmed = !!warm?.pinged && warm.session === session && Date.now() > warm.at + warm.ttl * 1000 && Date.now() < warm.pinged + warm.ttl * 1000
+    // Claude Code on a subscription caches for an hour, and writing an hour entry costs twice
+    // the input price against 1.25 times for five minutes. The hour pays for itself when a person
+    // may take a while to answer. Work nobody is waiting on, a flow or a crewmate called for one
+    // job, has its next step seconds away, so its session caches for five minutes. That is
+    // decided when a session starts and kept for its life: a request asking for one lifetime does
+    // not find entries written for the other, and would write the whole session again.
+    const natural = this.store.lifetimes[who]
+    const unattended = !!meta.flow || task.kind === 'answer' || task.kind === 'job'
+    const short = who === 'claude' && (resumed ? meta.quick?.[who] === session : unattended && saving.warm !== false)
+    this.cool(room, who)
+    // Messages the person sends while this turn runs reach the agent between its steps instead
+    // of waiting for the turn to end: Claude Code through its after-step hook, HTTP agents through
+    // their own loop. The message joins the room inside this turn, where the agent read it.
+    const midway = !ctx.host && !ctx.arena && lt.kind === 'say' && !meta.flow && (who === 'claude' || http)
+    const inbox = midway ? () => {
+      const list = this.live(room).queued ?? []
+      if (!list.length) return null
+      for (const q of list) {
+        this.unqueue(room, q.id)
+        this.add(room, { kind: 'you', text: q.text, files: q.files, inside: { turn: lt.id, mark: lt.text.length } })
+      }
+      const said = list.map((q) => q.text + (q.files?.length ? `\n\nAttached: ${q.files.join(', ')}` : '')).join('\n\n')
+      return `The person sent this while you were working. Take it into account from here, and keep going unless it asks you to stop:\n\n${said}`
+    } : undefined
+    // Granted last, with nothing between it and the turn that could fail and leave it open.
+    const grant = this.hands && (tools.length || watch || (inbox && who === 'claude')) ? this.hands.grant(tools, watch, inbox) : null
     const running = run(who, {
-      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || this.protos.get(`${room}:${who}`) !== system, cwd: meta.workspace, access,
-      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, allow: ctx.allow, hands: grant?.url,
+      prompt: http ? p.tail : p.text, history: http ? p.history : undefined, cacheKey: `${room}:${who}`, system, fresh: !resumed || meta.protos?.[who] !== sent, cwd: meta.workspace, access,
+      model: ctx.models?.[who] || this.store.settings.models[who] || me.model, session: resumed ? session : undefined, meter: resumed && meta.meters?.[who]?.session === session ? meta.meters[who] : undefined, allow: ctx.allow, hands: grant?.url || undefined, bench,
+      hook: grant?.hook || undefined, outputs: shorten ? outputs(room) : undefined, effort: this.store.settings.effort?.[who], lean: saving.lean, short,
+      inbox: grant?.hook || http ? inbox : undefined, unload: this.store.settings.unload,
     }, this.store.keys(), (u) => {
       if (u.delta) lt.text += u.delta
       if (u.acts) {
@@ -760,7 +923,14 @@ export class Engine {
         if (at >= 0) lt.acts[at] = s
         else lt.acts.push(s)
       }
-      if (u.working) { live.doing = sentence(me.short, u.working); lt.now = u.working.slice(0, 120) }
+      if (u.tokens) lt.tokens = u.tokens
+      if (u.working) {
+        // Paths inside the room's folder read from the folder down.
+        const now = u.working.split('/private' + meta.workspace + '/').join('').split(meta.workspace + '/').join('')
+        live.doing = sentence(me.short, now)
+        lt.now = now.slice(0, 120)
+      }
+      else if (u.working === '') { lt.now = undefined; live.doing = `${me.short} is writing` }
       this.changed(room)
     })
     const procs = this.procs.get(room) ?? new Set()
@@ -781,7 +951,7 @@ export class Engine {
     if (looped) {
       this.store.record(who, room, r.usage)
       this.hooks.emit('ledger', this.ledger())
-      if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
+      if (r.session && me.via === 'cli') this.keep(room, who, r)
       this.flushed.delete(lt.id)
       this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts.length ? r.acts : lt.acts, usage: r.usage, ms: r.ms })
       const other = this.fallback(meta, who)
@@ -798,13 +968,31 @@ export class Engine {
     }
 
     if (r.usage.input + r.usage.output + r.usage.cached > 0) {
-      // Memory the agent already had and was not sent again, in tokens at about four characters each.
-      const kept = Math.round((p.full - p.sent) / 4)
-      this.store.record(who, room, kept > 0 ? { ...r.usage, kept } : r.usage)
+      // What Lunchbox kept out of this turn, in tokens at about four characters each: memory the
+      // agent already had, conversation a briefing stood in for, and command output it shortened.
+      const lean: Partial<Usage> = { kept: Math.round((p.full - p.sent + spared) / 4), cut: Math.round(cut / 4) }
+      // A session the room kept cached past its lifetime: what it read beyond the part every
+      // session shares would have been written again.
+      // The shared part is taken at the most any new session has read of it, so this counts low.
+      const base = meta.bases?.[who]
+      if (warmed && r.first && base !== undefined && r.first.read > r.first.written) lean.held = Math.max(0, r.first.read - Math.max(base, this.store.shared[who] ?? 0))
+      const price = rates(who, r.model ?? '', warm?.ttl)
+      if (price) {
+        lean.spared = (lean.kept ?? 0) * price.input
+        lean.trimmed = (lean.cut ?? 0) * price.input
+        lean.warmed = (lean.held ?? 0) * (price.write - price.read)
+      }
+      // Only where Claude Code is known to ask for the hour when left alone.
+      if (short && natural === 3600 && r.quick) lean.warmed = (lean.warmed ?? 0) + r.quick
+      for (const k of ['kept', 'cut', 'held', 'spared', 'trimmed', 'warmed'] as const) if (!lean[k]) delete lean[k]
+      Object.assign(r.usage, lean)
+      this.store.record(who, room, r.usage)
       this.hooks.emit('ledger', this.ledger())
       this.hooks.turned?.(who, r.usage)
     }
-    if (resumed && r.error && !r.text && !r.limit && /session|resume|conversation|thread|not found|unexpected|no such|invalid/i.test(r.error)) {
+    // Only a failure to pick the session up again: an error that merely says "invalid" or "not
+    // found", a bad key or a missing model, used to throw the session away and run the turn twice.
+    if (resumed && r.error && !r.text && !r.limit && LOST_SESSION.test(r.error)) {
       this.store.update(room, (m) => { delete m.sessions[who] })
       return this.turn(room, who, task, access, ctx)
     }
@@ -814,7 +1002,27 @@ export class Engine {
       if (lt.text.trim() && !already) this.add(room, { kind: 'say', who, text: lt.text.trim(), acts: r.acts, error: 'Stopped' })
       return null
     }
-    if (r.session && me.via === 'cli') this.store.update(room, (m) => { m.sessions[who] = r.session! })
+    if (r.session && me.via === 'cli') this.keep(room, who, r)
+    // A new session's first request reads the shared part from cache. Where even that had run
+    // out, everything it sent counts as shared, so a later saving can only be counted low.
+    if (who === 'claude' && r.session && r.first && !resumed) {
+      const shared = r.first.read || r.first.written
+      this.store.update(room, (m) => { (m.bases ??= {})[who] = shared })
+      if (r.first.read > (this.store.shared[who] ?? 0)) {
+        this.store.shared[who] = r.first.read
+        this.store.saveState()
+      }
+    }
+    const ttl = r.usage.ttl ?? warm?.ttl
+    if (who === 'claude' && !short && r.usage.ttl && r.usage.ttl !== natural) {
+      this.store.lifetimes[who] = r.usage.ttl
+      this.store.saveState()
+    }
+    if (short && !resumed && r.session) this.store.update(room, (m) => { (m.quick ??= {})[who] = r.session! })
+    // Only a session the person is talking to is worth keeping warm for them.
+    if (who === 'claude' && r.session && r.last && ttl && !r.error && !r.limit && saving.warm !== false && !unattended) {
+      this.keepWarm(room, who, { session: r.session, model: r.model, access, tools, at: Date.now(), ttl, size: r.last.read + r.last.written, short })
+    }
 
     // A reply that got partway before the limit is kept, and the limit still counts.
     if (r.text && r.limit) {
@@ -844,7 +1052,7 @@ export class Engine {
     const parsed = task.kind === 'answer' || task.kind === 'job' || ctx.arena ? { asks: [], text: r.text } : asks(r.text, handles)
     let event: Event
     if (task.kind === 'answer') {
-      const hands = { kind: 'hands' as const, from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via }
+      const hands = { kind: 'hands' as const, from: task.from, to: who, ask: task.ask, answer: r.text, acts: r.acts, usage: r.usage, ms: r.ms, via: task.via, ...within(ctx) }
       if (task.quiet) event = { ...hands, id: uid(), at: Date.now() }
       else {
         event = this.add(room, hands)
@@ -852,6 +1060,7 @@ export class Engine {
       }
     } else {
       const draft = { kind: 'say' as const, who, text: parsed.text || (parsed.asks.length ? `Asking ${parsed.asks.map((a) => this.name(a.to)).join(' and ')}.` : r.text), acts: r.acts, usage: r.usage, arena: ctx.arena, ms: r.ms,
+        ...(inner.host?.turn === lt.id ? { turn: lt.id } : within(ctx)),
         // A CLI can fail after writing part of its answer: the text is kept and the failure shown under it.
         ...(r.error && !r.limit ? { error: plain(r.error) } : {}) }
       const proof = check(draft.text, [...events, { ...draft, id: '', at: 0 }], !!meta.studio && tools.length > 0)
@@ -879,8 +1088,8 @@ export class Engine {
       m.seen[who] = briefed ? { ...m.seen[who], ...p.seen } : p.seen
       m.saved.full += p.full
       m.saved.sent += p.sent
+      if (me.via === 'cli') (m.protos ??= {})[who] = sent
     })
-    this.protos.set(`${room}:${who}`, system)
 
     const edited = r.acts.filter((a) => a.t === 'edit').map((a) => (a as { path: string }).path)
     if (edited.length) {
@@ -907,10 +1116,52 @@ export class Engine {
     ctx.tried = (ctx.tried ?? new Set()).add(who)
     const next = ctx.arena ? null : this.fallback(meta, who, task.kind === 'answer' || task.kind === 'job' ? task.from : undefined, ctx.tried)
     if (next && ctx.main === who) ctx.main = next
-    this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until, reason })
+    this.add(room, { kind: 'wall', from: who, to: next ?? '', arena: ctx.arena, until, reason, ...within(ctx) })
     if (next && ++ctx.hops.n <= MAX_HOPS) return this.turn(room, next, task, access, ctx)
     if (next) this.add(room, { kind: 'decide', text: `The crew handed this on ${MAX_HOPS} times in one go, so Lunchbox paused it here.`, options: [{ label: 'Keep going', action: { type: 'ask', who: next, text: `@${next} carry on from where the crew left off.` } }, { label: 'Leave it', action: { type: 'accept' } }] })
     return null
+  }
+
+  // The room's folder for an agent that talks over HTTP, held to the room's mode: a command the
+  // mode allows runs straight away and shows as a step of the turn, one that needs a yes is put
+  // to the person in the room like any other, and an edit in Ask mode waits for the same yes.
+  private quiet = new Map<string, Set<string>>()
+  private bench(room: string, who: string, access: Access): Bench {
+    const meta = this.store.room(room)!
+    const root = meta.workspace
+    const memory = this.allowed.get(root) ?? new Set<string>()
+    this.allowed.set(root, memory)
+    return {
+      root, access,
+      run: async (command) => {
+        if (decide(access, command, root, root, memory).decision === 'ask') {
+          const ran = await this.shell(room, who, command, access)
+          return { code: ran.code, out: ran.out, how: ran.how, reason: ran.verdict.reason }
+        }
+        const id = uid()
+        const ids = this.quiet.get(room) ?? new Set<string>()
+        this.quiet.set(room, ids)
+        ids.add(id)
+        try {
+          const ran = await execute({ id, command, cwd: root, root, access, memory }, { verdict() {}, start() {}, out() {} })
+          return { code: ran.code, out: ran.out, how: ran.how, reason: ran.verdict.reason }
+        } finally { ids.delete(id) }
+      },
+      confirm: async (what) => {
+        if (memory.has(EDITS)) return true
+        const live = this.live(room)
+        const lr: LiveRun = { id: uid(), who, command: what, cwd: root, state: 'asking', edit: true, out: '', started: Date.now(), verdict: { kind: 'write', decision: 'ask', reason: 'changes a file in the folder' } }
+        live.runs.push(lr)
+        this.hooks.notify(meta.name, `Allow ${this.name(who)} to ${what[0].toLowerCase()}${what.slice(1)}?`, room)
+        if (meta.flow) setTimeout(() => { if (live.runs.includes(lr)) kill(lr.id) }, FLOW_ASK).unref()
+        this.changed(room)
+        const a = await ask(lr.id)
+        live.runs = live.runs.filter((x) => x !== lr)
+        this.changed(room)
+        if (a === 'always') memory.add(EDITS)
+        return a !== 'deny'
+      },
+    }
   }
 
   shell(room: string, who: string, command: string, access: Access): Promise<Ran> {

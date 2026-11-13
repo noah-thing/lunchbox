@@ -1,7 +1,7 @@
 {
   "name": "lunchbox",
   "productName": "Lunchbox",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "A desktop app that runs Claude Code, Codex, Grok and Gemini together on your projects, with the logins you already have.",
   "author": {
@@ -20,6 +20,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p electron",
     "test": "node scripts/test.mjs",
     "live": "node scripts/live.mjs",
+    "bench": "node scripts/bench.mjs",
     "tour": "node test/tour.mjs",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",

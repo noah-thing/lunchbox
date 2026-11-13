@@ -18,6 +18,7 @@ electron/
   room/engine.ts    turns, the main agent, bringing others in, limits, memory, proof, side by side
   room/kit.ts       the tools one agent can use to reach another during its turn
   room/context.ts   what each agent is sent (the conversation or a briefing), ordered for prompt caching
+  room/trim.ts      long command output cut to its start, its end and the lines that look like problems
   room/proof.ts     claims checked against the command history
 shared/             types, prices, routing and plan parsing used by both sides
 src/                the React renderer
@@ -32,6 +33,16 @@ test/               unit tests, recorded CLI output and the fake agent
 4. The main agent can ask a crewmate a question or bring one in for a task, through its tools or a line like `@grok: question`. Lunchbox sends the crewmate a briefing with the brief, shared memory, changed files and its task. The answer goes into shared memory and the main agent carries on.
 5. The engine checks claims such as "the tests pass" against commands that exited 0 after the last edit.
 6. The engine writes usage to the ledger, which Pool and Savings read.
+
+## Saving
+
+Three things lower what a turn costs. Each one is counted on its own turn in the ledger, apart from what the agent's own prompt caching saved.
+
+- **Shortened command output.** `hands.ts` answers a Claude Code hook before each command. A command that only logs and ends by itself, such as a test run, a build or an install, runs with its output going to a file, and `room/trim.ts` keeps the start, the end and the lines that look like problems. The agent gets that and the path of the file. Commands that print content, such as `cat`, `git diff` or a search, are never touched. Neither is a dev server or a watcher, or any command in Plan or Ask.
+- **Cache lifetime.** Claude Code on a subscription stores its cache for an hour, which costs twice the input price to write. A session nobody is waiting on, a flow or a crewmate called for one job, stores for five minutes at 1.25 times instead. The lifetime is chosen when a session starts and kept, because a request asking for one lifetime does not find entries written for the other. For a session a person talks to, the engine reads it once more just before its cache runs out, in a copy of the session that is thrown away, so the next message finds it cached. The reads for one pause never add up to more than a fifth of what a cold start would cost.
+- **Not sent twice.** A resumed session gets only the memory that changed, and a crewmate gets a briefing instead of the conversation.
+
+`npm run bench` runs the same tasks in plain Claude Code and in a room and prints what each cost. It uses real agents and real usage.
 
 ## Data
 

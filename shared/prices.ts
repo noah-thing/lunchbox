@@ -8,6 +8,8 @@ const CLAUDE: [RegExp, number, number, number][] = [
   [/(fable|mythos)-5/, 10, 1, 50],
   [/opus-5-5/, 4, 0.2, 20],
   [/opus-(5|4-[5-8])/, 5, 0.5, 25],
+  // Sonnet 5.5 keeps Sonnet 5's prices except a cache read, which is half: $0.10.
+  [/sonnet-5-5/, 2, 0.1, 10],
   [/sonnet-5/, 2, 0.2, 10],
   [/sonnet-4/, 3, 0.3, 15],
   [/haiku-5-5/, 0.1, 0.01, 0.5],
@@ -58,8 +60,8 @@ export function costSaving(agent: string, u: { input: number; output: number; ca
 }
 
 // The bill for one call at list price, for API keys that do not report a cost themselves.
-export function claudeCost(model: string, u: { input: number; read: number; output: number } & Writes): number | null {
-  const p = claudePrice(model, u.input + u.read + u.short + (u.hour ?? 0))
+export function claudeCost(model: string, u: { input: number; read: number; output: number } & Writes, prompt = u.input + u.read + u.short + (u.hour ?? 0)): number | null {
+  const p = claudePrice(model, prompt)
   if (!p) return null
   return (u.input * p.input + u.short * p.input * 1.25 + (u.hour ?? 0) * p.input * 2 + u.read * p.read + u.output * p.output) / 1e6
 }
@@ -94,4 +96,16 @@ export function codexSaving(model: string, cached: number) {
 // What a Claude Code message would cost at list price. Unlisted models count like Sonnet 5.
 export function claudeValue(model: string, u: { input: number; read: number; output: number; short: number; hour?: number }) {
   return claudeCost(model, u) ?? claudeCost('claude-sonnet-5', u)!
+}
+
+// Dollars per token at list price, for pricing what Lunchbox itself kept out of a request: a fresh
+// read, a cached read, and a write to the cache for the lifetime given in seconds. Null for an
+// agent with no price here, whose savings are then counted in tokens only.
+export function rates(agent: string, model: string, ttl = 300): { input: number; read: number; write: number } | null {
+  if (agent === 'codex') {
+    const [, i, c] = CODEX.find(([re]) => re.test(model)) ?? [null, 50, 5, 250]
+    return { input: (i * CREDIT) / 1e6, read: (c * CREDIT) / 1e6, write: (i * CREDIT) / 1e6 }
+  }
+  const p = agent === 'claude' || agent === 'claude-api' ? claudePrice(model) : null
+  return p && { input: p.input / 1e6, read: p.read / 1e6, write: (p.input * (ttl >= 3600 ? 2 : 1.25)) / 1e6 }
 }

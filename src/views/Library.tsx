@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useModal } from '../lib/modal'
 import { createPortal } from 'react-dom'
 import { CATALOG, GROUPS, type CatalogTool } from '../../shared/catalog'
 import { FIELDS, PLAYBOOKS, fillPlaybook, type Field, type Playbook } from '../../shared/skills'
@@ -110,6 +111,7 @@ function Playbooks({ q, go }: { q: string; go: (v: View) => void }) {
 }
 
 function PlaybookSheet({ p, close, go }: { p: Playbook; close: () => void; go: (v: View) => void }) {
+  useModal()
   const [input, setInput] = useState('')
   const box = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { box.current?.focus() }, [])

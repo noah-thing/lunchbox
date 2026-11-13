@@ -6,8 +6,9 @@ import { glyph, nextPattern, PATTERNS } from './patterns'
 // A band of code characters with a label in a cut-out in the middle. By default characters come in
 // runs (0000 |||| \\\\ ---- llll !!!! ****) that drift into each other under a passing light. With
 // `patterned` it draws one of several slow patterns instead (ripples, tides, a weave, a vortex,
-// dunes, a moiré, a current, the crew gathering), a different one each visit, faint where a pattern
-// is quiet so the band never shows holes. With `word` set the band spells it out of its own
+// dunes, a moiré, a current, the crew gathering, signal traces, a dot grid, marbling, a mosaic,
+// herringbone, a rippling checkerboard), a different one each visit, faint where a pattern is quiet
+// so the band never shows holes. With `word` set the band spells it out of its own
 // characters, the rest of the band dimmed.
 
 const FAMILIES = ['0', '|', '\\', '-', 'l', '!', '*', '^', '~', ':', 'i', '/']

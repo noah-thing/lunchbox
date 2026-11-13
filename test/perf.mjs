@@ -28,7 +28,7 @@ const port = site.address().port
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: ['.', `--user-data-dir=${temp('profile')}`], cwd: root,
-  env: { ...process.env, LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.env.PATH}`, FAKE_DELAY: '60' },
+  env: { ...process.env, LB_WORKSPACE: work, LUNCHBOX_PATH: `${bin}:${process.execPath.replace(/\/[^/]+$/, '')}:/usr/bin:/bin`, LUNCHBOX_PATH_ONLY: '1', FAKE_DELAY: '60' },
   timeout: 30000,
 })
 const kill = setTimeout(() => { console.log('timed out'); app.close().finally(() => process.exit(1)) }, 115000)

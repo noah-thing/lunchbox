@@ -133,6 +133,10 @@ export function kit(h: Host): Tool[] {
     })
   }
 
+  // Alone, the agent is sent the whole memory with each message and nobody else reads what it
+  // would save, so the two memory tools would only be definitions carried on every step.
+  if (!mates.length && !h.nested) return tools
+
   tools.push({
     name: 'room_memory',
     description: 'Read the room\'s shared memory in full: the brief, decisions, answers between agents, changed files and anything pinned.',

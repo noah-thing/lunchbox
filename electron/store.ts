@@ -20,13 +20,14 @@ function readJson<T>(file: string, fallback: T): T {
   try { return JSON.parse(readFileSync(file, 'utf8')) as T } catch { return fallback }
 }
 
-function writeJson(file: string, value: unknown) {
-  writeText(file, JSON.stringify(value, null, 1))
+function writeJson(file: string, value: unknown, mode?: number) {
+  writeText(file, JSON.stringify(value, null, 1), mode)
 }
 
-function writeText(file: string, text: string) {
+// mode keeps a file to this account alone, for the keys.
+function writeText(file: string, text: string, mode?: number) {
   const tmp = `${file}.${process.pid}.tmp`
-  writeFileSync(tmp, text)
+  writeFileSync(tmp, text, mode ? { mode } : undefined)
   // On Windows a virus scanner or the indexer can hold the target open for a moment.
   for (let i = 1; ; i++) {
     try {
@@ -56,9 +57,30 @@ export function readRooms(dir: string): RoomMeta[] {
   return readJson<RoomMeta[]>(`${file}.bak`, [])
 }
 
+// Before 0.1.6 a resumed Claude Code turn was recorded with its session's running cost and
+// savings, and a resumed Codex turn with running totals of everything, so each turn counted the
+// ones before it again. Files stay as written; what is read from them is each turn's own share.
+// A row continues the one before when nothing in it went down, so a new session that happens to
+// look like a continuation is counted low, never high.
+export function turnsOnly() {
+  const last = new Map<string, Usage>()
+  return (agent: string, key: string, u: Usage): Usage => {
+    if (u.v === 2 || (agent !== 'claude' && agent !== 'codex')) return u
+    const prev = last.get(`${key}:${agent}`)
+    last.set(`${key}:${agent}`, u)
+    if (!prev || prev.v === 2 || (u.gross ?? 0) < (prev.gross ?? 0)) return u
+    const less = (a?: number, b?: number) => (a === undefined ? undefined : a - (b ?? 0))
+    const money = { saved: less(u.saved, prev.saved), gross: less(u.gross, prev.gross) }
+    if (agent === 'claude') return u.cost < prev.cost ? u : { ...u, cost: u.cost - prev.cost, ...money }
+    if (u.input < prev.input || u.output < prev.output || u.cached < prev.cached) return u
+    return { ...u, input: u.input - prev.input, output: u.output - prev.output, cached: u.cached - prev.cached, ...money }
+  }
+}
+
 // One bad line, say from a crash halfway through a write, costs that row and nothing after it.
 export function readLedger(file: string, since: number) {
   const rows: { at: number; agent: string; room: string; usage: Usage }[] = []
+  const own = turnsOnly()
   let text = ''
   try { text = readFileSync(file, 'utf8') } catch { return rows }
   const keep = Date.now() - LEDGER_DAYS * 86400e3
@@ -69,6 +91,7 @@ export function readLedger(file: string, since: number) {
     try { row = JSON.parse(line) } catch { continue }
     if (!row || typeof row.at !== 'number' || !row.usage) continue
     if (row.at >= keep) kept.push(line)
+    row.usage = own(row.agent, row.room, row.usage)
     if (row.at >= since) rows.push(row)
   }
   // Old and unreadable rows are dropped from the file too, once per start.
@@ -87,6 +110,13 @@ export function addUsage(a: Usage, b: Partial<Usage>) {
   if (b.saved) a.saved = (a.saved ?? 0) + b.saved
   if (b.gross) a.gross = (a.gross ?? 0) + b.gross
   if (b.kept) a.kept = (a.kept ?? 0) + b.kept
+  if (b.premium) a.premium = (a.premium ?? 0) + b.premium
+  if (b.cut) a.cut = (a.cut ?? 0) + b.cut
+  if (b.held) a.held = (a.held ?? 0) + b.held
+  if (b.spared) a.spared = (a.spared ?? 0) + b.spared
+  if (b.trimmed) a.trimmed = (a.trimmed ?? 0) + b.trimmed
+  if (b.warmed) a.warmed = (a.warmed ?? 0) + b.warmed
+  if (b.pings) a.pings = (a.pings ?? 0) + b.pings
   return a
 }
 
@@ -102,6 +132,11 @@ export class Store {
   spent: Record<string, Spent>
   calib: Record<string, { at: number; pct: number; units: number; start: number }[]>
   health: Record<string, string>
+  // What Lunchbox has seen of each agent's caching when it leaves it alone: how long it asks for
+  // its cache to be kept, in seconds, and the most tokens a new session has read from cache,
+  // which is the part every session shares.
+  lifetimes: Record<string, number>
+  shared: Record<string, number>
   skills: Skill[]
   flows: Flow[]
   private ledger: { at: number; agent: string; room: string; usage: Usage }[] = []
@@ -113,11 +148,13 @@ export class Store {
     mkdirSync(join(dir, 'packs'), { recursive: true })
     for (const meta of readRooms(dir)) this.rooms.set(meta.id, meta)
     this.settings = { ...DEFAULTS, ...readJson<Partial<Settings>>(join(dir, 'settings.json'), {}) }
-    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings }>(join(dir, 'state.json'), {})
+    const state = readJson<{ calib?: Record<string, { at: number; pct: number; units: number; start: number }[]>; spent?: Record<string, Spent>; health?: Record<string, string>; arena?: Record<string, number>; ratings?: Ratings; lifetimes?: Record<string, number>; shared?: Record<string, number> }>(join(dir, 'state.json'), {})
     this.spent = state.spent ?? {}
     // Older builds stored a different shape here; only lists are kept.
     this.calib = Object.fromEntries(Object.entries(state.calib ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.filter((r) => r && 'start' in r) : []]))
     this.health = state.health ?? {}
+    this.lifetimes = state.lifetimes ?? {}
+    this.shared = state.shared ?? {}
     this.arena = state.arena ?? {}
     this.ratings = state.ratings ?? {}
     this.skills = readJson<Skill[]>(join(dir, 'skills.json'), [])
@@ -153,13 +190,30 @@ export class Store {
     return log
   }
 
+  // A room's file, named by its id. An id is letters and digits; anything else, a path among
+  // them, names no room.
+  private file(id: string) {
+    if (!/^[\w-]{1,64}$/.test(String(id))) throw new Error('No such room')
+    return join(this.dir, 'rooms', `${id}.jsonl`)
+  }
+
   private load(id: string) {
     const log: Event[] = []
+    const own = turnsOnly()
     try {
-      readFileSync(join(this.dir, 'rooms', `${id}.jsonl`), 'utf8').split('\n').forEach((line, i) => {
+      const text = readFileSync(this.file(id), 'utf8')
+      // A crash in the middle of a write leaves a last line without its end. The next event
+      // would be glued onto it and both lost, so the line is closed first.
+      if (text && !text.endsWith('\n')) try { appendFileSync(this.file(id), '\n') } catch {}
+      text.split('\n').forEach((line, i) => {
         if (!line) return
         // A line that does not parse keeps its place, since agents' heard marks count lines.
-        try { log.push(JSON.parse(line)) } catch { log.push({ kind: 'note', id: `unreadable-${i}`, at: 0, text: 'A line of this room could not be read.', tone: 'warn' }) }
+        try {
+          const e: Event = JSON.parse(line)
+          if (e.kind === 'say' && e.usage) e.usage = own(e.who, '', e.usage)
+          if (e.kind === 'hands' && e.usage) e.usage = own(e.to, '', e.usage)
+          log.push(e)
+        } catch { log.push({ kind: 'note', id: `unreadable-${i}`, at: 0, text: 'A line of this room could not be read.', tone: 'warn' }) }
       })
     } catch {}
     return log
@@ -177,7 +231,7 @@ export class Store {
     const meta = this.rooms.get(id)
     if (!meta) return
     this.events(id).push(event)
-    this.write(join(this.dir, 'rooms', `${id}.jsonl`), JSON.stringify(event) + '\n')
+    this.write(this.file(id), JSON.stringify(event) + '\n')
     meta.updated = event.at
     this.touch(id)
   }
@@ -208,7 +262,7 @@ export class Store {
     this.rooms.delete(id)
     this.logs.delete(id)
     this.cold.delete(id)
-    const file = join(this.dir, 'rooms', `${id}.jsonl`)
+    const file = this.file(id)
     this.pending.delete(file)
     rmSync(file, { force: true })
     this.touch(id)
@@ -247,7 +301,7 @@ export class Store {
   }
 
   saveState() {
-    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings, calib: this.calib })
+    writeJson(join(this.dir, 'state.json'), { spent: this.spent, health: this.health, arena: this.arena, ratings: this.ratings, calib: this.calib, lifetimes: this.lifetimes, shared: this.shared })
   }
 
   saveSkills() {
@@ -271,7 +325,7 @@ export class Store {
     const sealed = readJson<Record<string, string>>(join(this.dir, 'keys.json'), {})
     if (key) sealed[provider] = this.cipher.seal(key)
     else delete sealed[provider]
-    writeJson(join(this.dir, 'keys.json'), sealed)
+    writeJson(join(this.dir, 'keys.json'), sealed, 0o600)
   }
 
   record(agent: string, room: string, usage: Usage) {
@@ -292,12 +346,16 @@ export class Store {
     const week = Date.now() - 7 * 86400e3
     const days = Array.from({ length: DAYS }, (_, i) => {
       const d = new Date(day.getTime() - (DAYS - 1 - i) * 86400e3)
-      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, gross: 0, kept: 0 }
+      return { day: localDay(d), start: d.getTime(), cost: 0, tokens: 0, input: 0, cached: 0, saved: 0, gross: 0, kept: 0, cut: 0, held: 0, spared: 0, trimmed: 0, warmed: 0, pings: 0 }
     })
     const out: Ledger = { today: {}, week: {}, arena: { ...this.arena }, ratings: this.ratings, days: [], rooms: {} }
     for (const raw of this.ledger) {
       // Rows from before Lunchbox priced a saving get one from what the agent reported.
-      const row = raw.usage.gross === undefined ? { ...raw, usage: { ...raw.usage, gross: (raw.agent === 'codex' ? codexSaving('', raw.usage.cached) : costSaving(raw.agent, raw.usage)) ?? undefined } } : raw
+      const priced = raw.usage.gross === undefined ? { ...raw, usage: { ...raw.usage, gross: (raw.agent === 'codex' ? codexSaving('', raw.usage.cached) : costSaving(raw.agent, raw.usage)) ?? undefined } } : raw
+      // The cost of storing the cache is the gap between what the reads saved and the net, and is
+      // only known where the agent reported both. A saving worked back from a cost has no net.
+      const u = priced.usage
+      const row = u.gross !== undefined && u.saved !== undefined && u.gross > u.saved ? { ...priced, usage: { ...u, premium: u.gross - u.saved } } : priced
       if (row.at >= week) {
         addUsage((out.week[row.agent] ??= zero()), row.usage)
         addUsage((out.rooms[row.room] ??= zero()), row.usage)
@@ -312,6 +370,12 @@ export class Store {
         slot.saved += row.usage.saved ?? 0
         slot.gross += row.usage.gross ?? Math.max(0, row.usage.saved ?? 0)
         slot.kept += row.usage.kept ?? 0
+        slot.cut += row.usage.cut ?? 0
+        slot.held += row.usage.held ?? 0
+        slot.spared += row.usage.spared ?? 0
+        slot.trimmed += row.usage.trimmed ?? 0
+        slot.warmed += row.usage.warmed ?? 0
+        slot.pings += row.usage.pings ?? 0
       }
     }
     out.days = days.map(({ start: _, ...d }) => d)

@@ -75,17 +75,26 @@ export function boot() {
     desk.call('limits').then((limits) => limits && set({ limits }))
     desk.on('skills', (skills) => set({ skills }))
     desk.on('flows', (f) => set({ flows: f.flows, running: f.running }))
+    // One part failing to load must not leave the app on its loading screen for good: the rest
+    // opens, and that part starts empty.
     const [env, agents, rooms, settings, ledger, skills, packs, flows] = await Promise.all(
-      ['env', 'agents', 'rooms', 'settings', 'ledger', 'skills', 'packs', 'flows'].map((c) => desk.call(c)),
+      ['env', 'agents', 'rooms', 'settings', 'ledger', 'skills', 'packs', 'flows'].map((c) => desk.call(c).catch((e) => { desk.call('error:log', `boot ${c}: ${reason(e)}`).catch(() => {}); return null })),
     )
-    set({ env, agents, rooms, settings: settings ?? state.settings, ledger, skills, packs, flows: flows?.flows ?? [], running: flows?.running ?? [], loaded: true })
+    set({ env: env ?? state.env, agents: agents ?? [], rooms: rooms ?? [], settings: settings ?? state.settings, ledger, skills: skills ?? [], packs: packs ?? [], flows: flows?.flows ?? [], running: flows?.running ?? [], loaded: true })
   })()
   return booted
 }
 
 export const reload = {
   packs: async () => set({ packs: await desk.call('packs') }),
-  settings: async (patch: Partial<Settings>) => set({ settings: await desk.call('settings:set', patch) }),
+  // The change shows at once and the next one builds on it. Saving also looks for agents again,
+  // which takes a moment; a second change made in that moment used to be built on the old
+  // settings and undo the first.
+  settings: async (patch: Partial<Settings>) => {
+    set({ settings: { ...state.settings, ...patch } })
+    const saved = await desk.call('settings:set', patch)
+    if (saved) set({ settings: saved })
+  },
   agents: async () => set({ agents: await desk.call('agents:refresh') }),
 }
 
@@ -105,6 +114,13 @@ export const KIND_LABEL: Record<Kind, string> = {
 }
 
 export const short = (path: string, home = state.env.home) => (home && path.startsWith(home) ? '~' + path.slice(home.length) : path)
+// A long path by its end, which is the part that says which folder it is.
+export const tail = (path: string, max = 34) => {
+  const s = short(path)
+  if (s.length <= max) return s
+  const parts = s.split(/[\\/]/).filter(Boolean)
+  return `…/${parts.slice(-2).join('/')}`.length <= max + 6 ? `…/${parts.slice(-2).join('/')}` : `…/${parts[parts.length - 1]}`
+}
 
 export const agentOf = (id: string, list = state.agents): AgentInfo =>
   list.find((a) => a.id === id) ?? { id, name: id, short: id, maker: '', via: 'cli', found: false, ready: false, tools: false, good: '', alphabet: '.:+*#', mark: id }
@@ -146,7 +162,7 @@ export const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `${Ma
 export function unavailable(a: AgentInfo, s: State = state): string | null {
   if (s.settings.disabled.includes(a.id)) return 'Turned off'
   if (!a.ready && a.setup && a.found) return !a.setup.running ? 'Installed, server is off' : a.setup.suggest ? 'No chat model yet, one click to get one' : 'No model loaded'
-  if (!a.ready) return a.found ? a.note ?? 'Not ready' : 'Not set up'
+  if (!a.ready) return a.found ? a.note ?? 'Not ready' : a.note && a.via === 'cli' ? 'Installed, but it does not start' : 'Not set up'
   const spent = s.ledger?.spent[a.id]
   if (spent && spent.until > Date.now()) return `Out until ${clock(spent.until)}`
   const budget = s.settings.budgets[a.id]

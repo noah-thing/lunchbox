@@ -80,6 +80,61 @@ export const PATTERNS: Record<string, Pattern> = {
     }
     return clamp(0.12 + (field / (1 + field)) * 0.95 + 0.05 * Math.sin(c / 3.1 + r * 1.7 - t * 1.3))
   },
+  // Four traces on one screen, a line per agent. Where two cross they brighten, and a sweep leaves
+  // a short afterglow behind it.
+  signal(c, r, t, cols, rows) {
+    let v = 0.05
+    for (let k = 0; k < 4; k++) {
+      const y = rows / 2 + (rows / 2 - 1.2) * Math.sin(c / (9 + k * 3.3) + t * (0.5 + k * 0.17) + k * 1.7) * (0.55 + 0.45 * Math.sin(t * 0.13 + k))
+      const d = Math.abs(r - y) * ASPECT
+      v += Math.exp(-d * d / 2.2) * 0.62
+    }
+    const sweep = ((t * 22) % (cols + 40)) - 20
+    const behind = c <= sweep ? Math.exp(-(sweep - c) / 26) : 0
+    return clamp(v * (0.55 + 0.45 * behind) + 0.04 * Math.sin(c / 2 + r))
+  },
+  // A dot grid like a printed proof. A slow diagonal light crosses it and each dot swells to a
+  // heavier mark as it passes, then settles back.
+  grid(c, r, t) {
+    if (c % 4 !== 1 || r % 2 !== 0) return 0.02
+    const y = r * ASPECT
+    const wave = Math.sin((c + y * 1.6) / 22 - t * 0.7)
+    return clamp(0.18 + 0.62 * Math.max(0, wave) ** 2 + 0.3 * (fbm(c / 50 + t * 0.03, y / 20) - 0.4))
+  },
+  // Striped bands pushed around by a slow current, like marbled paper.
+  marble(c, r, t) {
+    const x = c / 26, y = (r * ASPECT) / 26
+    const w = fbm(x + t * 0.025, y - t * 0.012) * 4.2
+    return clamp(0.5 + 0.38 * Math.sin(c / 7 + w * 3 + t * 0.3) + 0.1 * Math.sin(c / 2.7 + y * 4 - t * 0.5))
+  },
+  // Flat tiles, each its own tone. Their borders slide as the tiles drift, and they trade shades.
+  mosaic(c, r, t, cols, rows) {
+    let a = 1e9, b = 1e9, tone = 0
+    for (let k = 0; k < 14; k++) {
+      const x = cols * ((k * 0.618) % 1) + 10 * Math.sin(t * (0.06 + k * 0.009) + k * 2.3)
+      const y = rows * ((k * 0.383) % 1) + 2.5 * Math.sin(t * (0.08 + k * 0.011) + k * 1.1)
+      const d = Math.hypot(c - x, (r - y) * ASPECT)
+      if (d < a) { b = a; a = d; tone = 0.3 + 0.6 * (0.5 + 0.5 * Math.sin(k * 2.4 + t * 0.15)) } else if (d < b) b = d
+    }
+    return clamp(b - a < 1.1 ? 0.12 : tone)
+  },
+  // A herringbone weave: stripes lean one way in a column and the other way in the next, with a
+  // sheen moving across as if the cloth turned.
+  herringbone(c, r, t) {
+    const dir = Math.floor(c / 10) % 2 ? 1 : -1
+    const stripe = ((((c + dir * r * 2) / 6) % 1) + 1) % 1 < 0.5 ? 1 : 0
+    const sheen = 0.5 + 0.5 * Math.sin(c / 34 - t * 0.5 + Math.sin(r / 3 + t * 0.2))
+    return clamp(0.16 + 0.34 * stripe + 0.42 * sheen * (0.45 + 0.55 * stripe))
+  },
+  // A checkerboard on rippling cloth: the squares bend and swell as slow waves pass through.
+  checker(c, r, t) {
+    const y = r * ASPECT
+    const wx = c + 3.2 * Math.sin(y / 7 + t * 0.6) + 2 * Math.sin(c / 17 - t * 0.35)
+    const wy = y + 2.4 * Math.sin(c / 11 - t * 0.5)
+    const on = (Math.floor(wx / 7) + Math.floor(wy / 4.2)) % 2 === 0 ? 1 : 0
+    const shade = 0.5 + 0.5 * Math.sin(c / 23 + y / 9 - t * 0.45)
+    return clamp(0.14 + 0.5 * on + 0.3 * shade * (0.4 + 0.6 * on))
+  },
 }
 
 export const NAMES = Object.keys(PATTERNS)

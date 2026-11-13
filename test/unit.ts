@@ -6,8 +6,13 @@ import { claudeLike, codex, gemini, limitOf, plain, reason } from '../electron/a
 import { wallWhy } from '../shared/wall'
 import { check } from '../electron/room/proof'
 import { prompt } from '../electron/room/context'
-import { chat, PROVIDERS } from '../electron/agents/http'
-import { cacheSaving, claudeCost, codexSaving, costSaving } from '../shared/prices'
+import { chat, listModels, parseHeaders, PROVIDERS } from '../electron/agents/http'
+import { cacheSaving, claudeCost, codexSaving, costSaving, rates, readSaving } from '../shared/prices'
+import { clean, logs, NATIVE, trim } from '../electron/room/trim'
+import { Hands, wrap } from '../electron/hands'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 import { pull, suggest } from '../electron/local'
 import type { Pull } from '../shared/types'
@@ -18,7 +23,13 @@ import { fill, nextRun } from '../shared/flow'
 import { merge, section, strip } from '../electron/room/project'
 import { markdown, replay } from '../electron/export'
 import { cmdLine, firstPath } from '../electron/system'
+import { sentence, stepOf } from '../shared/steps'
+import { cut, weave } from '../shared/weave'
+import { addressed } from '../shared/address'
+import { testConnector } from '../electron/agents'
 import type { Event, RoomMeta } from '../shared/types'
+import { shift, side } from '../src/lib/fit'
+import { evict } from '../shared/tabs'
 
 const fixture = (name: string) =>
   readFileSync(join(process.cwd(), 'test', 'fixtures', `${name}.jsonl`), 'utf8').split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l))
@@ -37,6 +48,97 @@ test('claude: streams text, pairs tool calls with results, reads usage and sessi
   assert.ok(turn.acts.length > 0, 'tool activity')
   assert.ok(turn.usage.output > 0 && turn.usage.cost > 0, 'usage')
   assert.equal(turn.error, undefined)
+})
+
+test('claude: thinking, a file being written and retries show as they happen', () => {
+  const p = claudeLike()
+  const se = (event: unknown) => p.line({ type: 'stream_event', event })
+  assert.equal(p.line({ type: 'system', subtype: 'status', status: 'requesting' })?.working, '~Thinking')
+  assert.equal(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } })?.working, '~Thinking')
+  p.line({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 400, estimated_tokens_delta: 400 })
+  assert.equal(p.line({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 900, estimated_tokens_delta: 500 })?.tokens, 900)
+  assert.equal(se({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 't1', name: 'Write', input: {} } })?.working, 'Write')
+  assert.equal(se({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"file_path": "/Users/a/site/src/pa' } })?.working, 'Write')
+  const u = se({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: 'ge.html", "content": "<h1>' + 'x'.repeat(400) } })
+  assert.equal(u?.working, 'Write /Users/a/site/src/page.html')
+  assert.ok((u?.tokens ?? 0) > 1000, 'tool input counts as written')
+  assert.deepEqual(stepOf(u!.working!), { verb: 'Writing', text: '…/site/src/page.html' })
+  assert.equal(se({ type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } })?.working, '')
+  assert.equal(p.line({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10 })?.working, '~Reconnecting, try 2 of 11')
+  assert.equal(sentence('Claude', '~Thinking'), 'Claude is thinking')
+  assert.equal(sentence('Codex', '~Fix plan'), 'Codex: Fix plan')
+  assert.equal(sentence('Claude', 'Grep useSmooth'), 'Claude is searching the code for useSmooth')
+})
+
+test('codex: a reasoning summary becomes the step it is on', () => {
+  const p = codex()
+  assert.equal(p.line({ type: 'item.completed', item: { type: 'reasoning', text: '**Inspecting the build script**\n\nI need to see how...' } })?.working, '~Inspecting the build script')
+})
+
+test('help asked for mid-turn reads inside the turn that asked, in exports too', () => {
+  const head = 'I built the island. I will ask a crewmate.'
+  const text = `${head}\n\nCodex is right, I fixed the cliffs.`
+  assert.deepEqual(cut(text, [head.length]), [head, 'Codex is right, I fixed the cliffs.'])
+  assert.deepEqual(cut('One line only', [40]), ['One line only', ''])
+  const events = [
+    { kind: 'you', id: 'u', at: 1, text: 'Build it' },
+    { kind: 'hands', id: 'h', at: 2, from: 'claude', to: 'codex', ask: 'Weakest points?', answer: 'The cliffs.', acts: [], via: 'tool', inside: { turn: 't1', mark: head.length } },
+    { kind: 'say', id: 's', at: 3, who: 'claude', text, acts: [{ t: 'edit', path: 'a.js', change: 'edit' }], turn: 't1' },
+  ] as Event[]
+  const woven = weave(events)
+  assert.deepEqual(woven.map((e) => e.kind), ['you', 'say', 'hands', 'say'])
+  assert.equal((woven[1] as { text: string }).text, head)
+  assert.equal((woven[3] as { acts: unknown[] }).acts.length, 1, 'acts stay with the end of the turn')
+  assert.equal(woven[3].id, 's')
+})
+
+test('connectors: extra headers reach the server, and one named like the default replaces it', async () => {
+  assert.deepEqual(parseHeaders('x-plan: go\n# note\n\nbad line\nAuthorization:  Token abc '), { 'x-plan': 'go', Authorization: 'Token abc' })
+  const seen: Record<string, string | undefined>[] = []
+  const server = createServer((req, res) => {
+    seen.push({ plan: req.headers['x-plan'] as string, auth: req.headers.authorization })
+    if (req.headers['x-plan'] !== 'go') { res.writeHead(401, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'missing plan header' } })); return }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'go-model' }] }))
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`
+  try {
+    const c = { id: 'x', name: 'Go', kind: 'openai' as const, base }
+    const without = await testConnector(c, 'sk-1')
+    assert.equal(without.ok, false)
+    assert.match(without.note, /missing plan header/)
+    const withIt = await testConnector(c, 'sk-1', 'x-plan: go')
+    assert.equal(withIt.ok, true)
+    assert.deepEqual(withIt.models, ['go-model'])
+    assert.equal(seen[1].auth, 'Bearer sk-1', 'the key still goes as Bearer')
+    PROVIDERS['conn:hdr'] = { base, style: 'openai', prefer: /./, extra: parseHeaders('x-plan: go\nauthorization: Token raw') }
+    await listModels('conn:hdr', 'sk-1')
+    assert.equal(seen[2].auth, 'Token raw', 'a header named like the default replaces it')
+  } finally {
+    delete PROVIDERS['conn:hdr']
+    server.close()
+  }
+})
+
+test('prices: Sonnet 5.5 reads from cache at $0.10, Sonnet 5 at $0.20', () => {
+  // A million cached tokens saved the input price minus the read price.
+  assert.equal(readSaving('claude-sonnet-5-5', 1_000_000), 1.9)
+  assert.equal(readSaving('claude-sonnet-5', 1_000_000), 1.8)
+})
+
+test('addressing: a name at the start reaches that agent, with or without @', () => {
+  const crew = [{ id: 'claude', short: 'Claude' }, { id: 'codex', short: 'Codex' }, { id: 'ollama', short: 'Ollama' }, { id: 'my-kilo', short: 'Kilo Free' }]
+  const to = (t: string) => addressed(t, crew)
+  assert.deepEqual(to('@claude look at this'), ['claude'])
+  assert.deepEqual(to('Claude, could you look into this?'), ['claude'])
+  assert.deepEqual(to('Ollama: rename the file'), ['ollama'])
+  assert.deepEqual(to('hey codex, run the tests'), ['codex'])
+  assert.deepEqual(to('Claude could you check the build'), ['claude'])
+  assert.deepEqual(to('Claude and Codex, compare these two'), ['claude', 'codex'])
+  assert.deepEqual(to('Kilo Free, summarise this'), ['my-kilo'])
+  assert.deepEqual(to('Claude is slow today'), [], 'talking about an agent is not asking it')
+  assert.deepEqual(to('Fix the build, then tell Claude'), [])
+  assert.deepEqual(to('The plan, step two'), [])
 })
 
 test('grok: same shape as claude without partial deltas', () => {
@@ -427,8 +529,8 @@ test('savings: a result without per model rows is priced at the session model', 
 })
 
 test('savings: hour long cache writes cost double, not a quarter extra', () => {
-  const short = cacheSaving('claude-sonnet-5-5', 100000, { short: 20000 })!
-  const hour = cacheSaving('claude-sonnet-5-5', 100000, { short: 0, hour: 20000 })!
+  const short = cacheSaving('claude-sonnet-5', 100000, { short: 20000 })!
+  const hour = cacheSaving('claude-sonnet-5', 100000, { short: 0, hour: 20000 })!
   assert.ok(Math.abs(short - (100000 * 1.8 - 20000 * 0.5) / 1e6) < 1e-9)
   assert.ok(Math.abs(hour - (100000 * 1.8 - 20000 * 2) / 1e6) < 1e-9)
   assert.equal(cacheSaving('gpt-6', 100000, 0), null, 'unknown prices stay in tokens')
@@ -774,7 +876,7 @@ test('flows: a step is judged only by what it added to the room', async () => {
 
 test('band patterns: every one stays in range, holds still for a still frame, and a visit picks a new one', async () => {
   const { PATTERNS, NAMES, glyph, nextPattern } = await import('../src/ui/patterns')
-  assert.equal(NAMES.length, 8)
+  assert.equal(NAMES.length, 14)
   for (const name of NAMES) {
     const f = PATTERNS[name]
     for (let c = 0; c < 140; c += 7) for (let r = 0; r < 9; r++) {
@@ -859,6 +961,22 @@ test('studio: instructions change only when Studio is on, and stay the same turn
   assert.ok(!protocol(meta, crew[1], crew, 'workspace', undefined, ['propose_flow'], [], 'claude', null).includes('Lunchbox around this room'))
 })
 
+test('saving: a room with one agent is told nothing about a crew', async () => {
+  const { protocol } = await import('../electron/room/context')
+  const { kit } = await import('../electron/room/kit')
+  const meta = { id: 'r', name: 'Room', created: 0, updated: 0, crew: ['claude'], workspace: '/w', sessions: {}, seen: {}, heard: {}, blocks: [], saved: { full: 0, sent: 0 } } as RoomMeta
+  const agent = (id: string) => ({ id, short: id, name: id, maker: 'x', via: 'cli', good: 'good', tools: true, ready: true, mark: id }) as never
+  const me = agent('claude')
+  const alone = protocol(meta, me, [me], 'workspace', undefined, ['propose_flow'], [], 'claude', null)
+  const crewed = protocol({ ...meta, crew: ['claude', 'codex'] }, me, [me, agent('codex')], 'workspace', undefined, ['propose_flow', 'room_memory', 'remember'], [], 'claude', null)
+  assert.ok(!/crewmate|several AI agents|@handle|what others/.test(alone))
+  assert.ok(alone.includes('- [ ] step') && alone.includes('Run the check before claiming it') && alone.includes('offer one with propose_flow'))
+  assert.ok(alone.length < 1700 && alone.length < crewed.length * 0.7)
+  const host = (crew: never[]) => ({ me, crew, ready: crew, nested: false, canWrite: true, lead: true }) as never
+  assert.deepEqual(kit(host([me])).map((t) => t.name), ['propose_flow'])
+  assert.ok(kit(host([me, agent('codex')])).some((t) => t.name === 'remember'))
+})
+
 // Free models answer in their own ways: some think in a separate stream and can run out before
 // the answer, some gateways refuse the usage option. Each case must end in text or a clear error.
 test('openai style: free model quirks end in text or a sentence, never an empty bubble', async () => {
@@ -898,4 +1016,478 @@ test('openai style: free model quirks end in text or a sentence, never an empty 
     delete PROVIDERS['free-test']
     server.close()
   }
+})
+
+// The result lines of three turns of one real session, each a separate `claude -p --resume`
+// (Claude Code 2.1.322, Haiku 5.5): `usage` is the turn, the cost and `modelUsage` run on.
+const RESUMED = [
+  { cost: 0.0070341200000000005, usage: [2, 41, 11382, 34498], model: [2, 41, 11382, 34498] },
+  { cost: 0.00751072, usage: [2, 4, 45880, 78], model: [4, 45, 57262, 34576] },
+  { cost: 0.0093729, usage: [2, 82, 45958, 6807], model: [6, 127, 103220, 41383] },
+].map(({ cost, usage: [i, o, r, w], model: [mi, mo, mr, mw] }) => ({
+  type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: '55065b38', total_cost_usd: cost,
+  usage: { input_tokens: i, output_tokens: o, cache_read_input_tokens: r, cache_creation_input_tokens: w, cache_creation: { ephemeral_1h_input_tokens: w, ephemeral_5m_input_tokens: 0 } },
+  modelUsage: { 'claude-haiku-5-5': { inputTokens: mi, outputTokens: mo, cacheReadInputTokens: mr, cacheCreationInputTokens: mw, cacheCreationEphemeral1hInputTokens: mw, costUSD: cost } },
+}))
+
+test('savings: a resumed Claude Code turn counts only itself, not the session before it', () => {
+  let meter
+  const turns = RESUMED.map((line, n) => {
+    const p = claudeLike(meter, n > 0)
+    p.line(line)
+    meter = p.turn.meter
+    return p.turn.usage
+  })
+  assert.deepEqual(turns.map((u) => [u.input, u.output, u.cached, u.written]), [[34500, 41, 11382, 34498], [80, 4, 45880, 78], [6809, 82, 45958, 6807]])
+  assert.ok(Math.abs(turns[1].cost - (0.00751072 - 0.0070341200000000005)) < 1e-12)
+  assert.ok(Math.abs(turns.reduce((n, u) => n + u.cost, 0) - 0.0093729) < 1e-12, 'the turns add up to what the session cost')
+  // Each turn's saving is its own reads and hour long writes at Haiku 5.5 rates.
+  assert.ok(Math.abs(turns[1].gross! - (45880 * 0.09) / 1e6) < 1e-12)
+  assert.ok(Math.abs(turns[1].saved! - (45880 * 0.09 - 78 * 0.1) / 1e6) < 1e-12)
+  assert.ok(Math.abs(turns.reduce((n, u) => n + u.gross!, 0) - (103220 * 0.09) / 1e6) < 1e-12)
+  assert.ok(turns.every((u) => u.v === 2))
+})
+
+test('savings: a session resumed with no count on file falls back to the turn\'s own usage', () => {
+  const p = claudeLike(undefined, true)
+  p.line({ type: 'system', subtype: 'init', session_id: '55065b38', model: 'claude-haiku-5-5' })
+  p.line(RESUMED[2])
+  const u = p.turn.usage
+  assert.deepEqual([u.input, u.output, u.cached], [6809, 82, 45958])
+  assert.ok(Math.abs(u.cost - claudeCost('claude-haiku-5-5', { input: 2, output: 82, read: 45958, short: 0, hour: 6807 })!) < 1e-12)
+  assert.ok(Math.abs(u.gross! - (45958 * 0.09) / 1e6) < 1e-12)
+  assert.deepEqual(p.turn.meter?.rows['claude-haiku-5-5'].slice(0, 4), [6, 127, 103220, 41383], 'and the next turn has a count to work from')
+})
+
+test('savings: a CLI that reports per turn is left alone when resumed', () => {
+  // Grok Build, three turns of one session, the model switched after the first: its totals are the turn's.
+  const lines = [[21079, 860, 10112, 0.052374], [22400, 64, 10112, 0.10048], [704, 34, 32512, 0.035736]].map(([i, o, r, cost], n) => ({
+    type: 'result', subtype: 'success', result: 'ok', session_id: 'g', total_cost_usd: cost,
+    usage: { input_tokens: i, output_tokens: o, cache_read_input_tokens: r, cache_creation_input_tokens: 0 },
+    modelUsage: { [n ? 'grok-4.7-build-fast' : 'grok-4.7-build']: { inputTokens: i, outputTokens: o, cacheReadInputTokens: r, cacheCreationInputTokens: 0, costUSD: cost } },
+  }))
+  let meter
+  const turns = lines.map((line, n) => {
+    const p = claudeLike(meter, n > 0)
+    p.line(line)
+    meter = p.turn.meter
+    return p.turn.usage
+  })
+  assert.deepEqual(turns.map((u) => [u.input, u.cached, u.cost]), [[21079, 10112, 0.052374], [22400, 10112, 0.10048], [704, 32512, 0.035736]])
+  const bare = claudeLike(undefined, true)
+  bare.line(lines[2])
+  assert.equal(bare.turn.usage.cost, 0.035736)
+})
+
+test('savings: a resumed Codex turn counts only itself', () => {
+  // Codex 0.157.1, GPT-6 Luna, three turns of one thread through `exec resume`.
+  const lines = [[23535, 0, 5], [53096, 23296, 11], [82678, 52736, 17]].map(([i, c, o]) => ({ type: 'turn.completed', usage: { input_tokens: i, cached_input_tokens: c, cache_write_input_tokens: 0, output_tokens: o, reasoning_output_tokens: 0 } }))
+  let meter
+  const turns = lines.map((line, n) => {
+    const p = codex('gpt-6-luna', meter, n > 0)
+    p.line(line)
+    meter = p.turn.meter
+    return p.turn.usage
+  })
+  assert.deepEqual(turns.map((u) => [u.input, u.cached, u.output]), [[23535, 0, 5], [6265, 23296, 6], [142, 29440, 6]])
+  assert.ok(Math.abs(turns[2].saved! - codexSaving('gpt-6-luna', 29440)) < 1e-12)
+  const bare = codex('gpt-6-luna', undefined, true)
+  bare.line(lines[2])
+  assert.deepEqual([bare.turn.usage.input, bare.turn.usage.cached, bare.turn.usage.saved], [0, 0, 0], 'a thread with no count on file is left out')
+  assert.ok(bare.turn.meter)
+})
+
+test('savings: old ledger rows holding running totals are read as single turns, the file untouched', async () => {
+  const { mkdtempSync, writeFileSync, readFileSync: read } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { readLedger, turnsOnly } = await import('../electron/store')
+  const file = join(mkdtempSync(join(tmpdir(), 'lb-old-')), 'ledger.jsonl')
+  const at = Date.now() - 3600e3
+  // Shaped like real rows from 0.1.5: tokens per turn, cost and savings running on.
+  const rows = [
+    { at, agent: 'claude', room: 'a', usage: { input: 317288, output: 198465, cached: 10696012, cost: 8.6464, written: 317198, saved: 39.3761, gross: 40.6448 } },
+    { at: at + 1, agent: 'codex', room: 'a', usage: { input: 100, output: 5, cached: 0, cost: 0, saved: 0, gross: 0 } },
+    { at: at + 2, agent: 'claude', room: 'a', usage: { input: 16086, output: 2743, cached: 3343050, cost: 9.4985, written: 16058, saved: 52.0154, gross: 53.3484, kept: 378 } },
+    { at: at + 3, agent: 'claude', room: 'b', usage: { input: 54414, output: 3700, cached: 515996, cost: 0.6124, written: 54396, saved: 1.7432, gross: 1.9608 } },
+    { at: at + 4, agent: 'codex', room: 'a', usage: { input: 150, output: 9, cached: 400, cost: 0, saved: 0.01, gross: 0.01 } },
+    { at: at + 5, agent: 'claude', room: 'a', usage: { input: 1972, output: 795, cached: 2072817, cost: 9.9447, written: 1956, saved: 59.8843, gross: 61.2251, kept: 676 } },
+    { at: at + 6, agent: 'claude', room: 'a', usage: { input: 900, output: 30, cached: 40000, cost: 0.02, saved: 0.1, gross: 0.12 } },
+    { at: at + 7, agent: 'claude', room: 'a', usage: { input: 900, output: 30, cached: 40000, cost: 0.03, saved: 0.2, gross: 0.2, v: 2 } },
+    { at: at + 8, agent: 'claude', room: 'a', usage: { input: 900, output: 30, cached: 40000, cost: 0.04, saved: 0.3, gross: 0.3, v: 2 } },
+  ]
+  const text = rows.map((r) => JSON.stringify(r) + '\n').join('')
+  writeFileSync(file, text)
+  const got = readLedger(file, 0).map((r) => r.usage)
+  const near = (a: number | undefined, b: number) => assert.ok(Math.abs((a ?? NaN) - b) < 1e-9, `${a} vs ${b}`)
+  near(got[2].cost, 9.4985 - 8.6464)
+  near(got[2].gross, 53.3484 - 40.6448)
+  near(got[2].saved, 52.0154 - 39.3761)
+  assert.deepEqual([got[2].input, got[2].cached, got[2].kept], [16086, 3343050, 378], 'Claude Code tokens were per turn already')
+  near(got[3].cost, 0.6124)
+  assert.deepEqual([got[4].input, got[4].output, got[4].cached], [50, 4, 400], 'Codex tokens ran on too')
+  near(got[5].cost, 9.9447 - 9.4985)
+  near(got[6].cost, 0.02)
+  near(got[7].cost, 0.03)
+  near(got[8].cost, 0.04)
+  near(got.filter((_, n) => rows[n].agent === 'claude' && rows[n].room === 'a' && n < 6).reduce((n, u) => n + u.cost, 0), 9.9447)
+  assert.equal(read(file, 'utf8'), text)
+  const own = turnsOnly()
+  assert.equal(own('grok', 'a', rows[0].usage), rows[0].usage)
+})
+
+// A server that answers any chat request and keeps what it was sent.
+async function echo(reply: (body: any, n: number) => { status?: number; lines: string[] }) {
+  const seen: { body: any; headers: Record<string, any> }[] = []
+  const server = createServer((req, res) => {
+    let raw = ''
+    req.on('data', (c) => { raw += c })
+    req.on('end', () => {
+      const body = JSON.parse(raw)
+      seen.push({ body, headers: req.headers })
+      const r = reply(body, seen.length)
+      res.writeHead(r.status ?? 200, { 'content-type': r.status ? 'application/json' : 'text/event-stream' })
+      res.end(r.lines.join('\n\n'))
+    })
+  })
+  await new Promise<void>((ok) => server.listen(0, '127.0.0.1', () => ok()))
+  return { seen, url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, close: () => server.close() }
+}
+const sse = (usage: object) => ({ lines: ['data: {"choices":[{"delta":{"content":"Done."}}]}', `data: ${JSON.stringify({ choices: [], usage })}`, 'data: [DONE]', ''] })
+
+test('cache: Claude on OpenRouter is sent marked blocks, and every OpenRouter room names its session', async () => {
+  const s = await echo(() => sse({ prompt_tokens: 9000, completion_tokens: 5, cost: 0.004, prompt_tokens_details: { cached_tokens: 8000, cache_write_tokens: 600 } }))
+  const base = PROVIDERS.openrouter.base
+  PROVIDERS.openrouter.base = s.url
+  try {
+    const history = ['The conversation so far:', 'Person: one', 'Claude: two']
+    const r = await chat('openrouter', 'k', 'anthropic/claude-sonnet-5', 'Rules', 'Memory and task', AbortSignal.timeout(5000), () => {}, history, 'room1:openrouter')
+    const [sys, user] = s.seen[0].body.messages
+    assert.deepEqual(sys.content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
+    assert.equal(user.content.length, 4)
+    assert.deepEqual(user.content[2].cache_control, { type: 'ephemeral' }, 'breakpoint on the last history block')
+    assert.equal(user.content[3].cache_control, undefined, 'the changing part is never cached')
+    assert.equal(user.content.slice(0, 3).map((b: any) => b.text).join(''), history.join('\n\n'), 'the model reads the same conversation as before')
+    assert.equal(s.seen[0].body.session_id, 'room1:openrouter')
+    assert.deepEqual([r.usage.input, r.usage.cached, r.usage.written, r.usage.cost], [1000, 8000, 600, 0.004])
+    // A turn later the conversation has grown, and every block sent before is byte for byte the same.
+    await chat('openrouter', 'k', 'anthropic/claude-sonnet-5', 'Rules', 'Next task', AbortSignal.timeout(5000), () => {}, [...history, 'Person: three'], 'room1:openrouter')
+    const again = s.seen[1].body.messages[1].content
+    assert.deepEqual(again.slice(0, 3).map((b: any) => b.text), user.content.slice(0, 3).map((b: any) => b.text))
+    assert.equal(again[2].cache_control, undefined)
+    assert.deepEqual(again[3].cache_control, { type: 'ephemeral' })
+
+    await chat('openrouter', 'k', 'openai/gpt-6-luna', 'Rules', 'Memory and task', AbortSignal.timeout(5000), () => {}, history, 'room1:openrouter')
+    const plainBody = s.seen[2].body
+    assert.equal(plainBody.messages[0].content, 'Rules', 'other models keep plain messages')
+    assert.equal(plainBody.messages[1].content, history.join('\n\n'))
+    assert.equal(plainBody.session_id, 'room1:openrouter')
+    assert.equal(plainBody.prompt_cache_key, undefined)
+  } finally {
+    PROVIDERS.openrouter.base = base
+    s.close()
+  }
+})
+
+test('cache: a route that refuses marked blocks still gets the room as plain text', async () => {
+  const s = await echo((_b, n) => (n === 1 ? { status: 400, lines: ['{"error":{"message":"content must be a string"}}'] } : sse({ prompt_tokens: 50, completion_tokens: 5 })))
+  const base = PROVIDERS.openrouter.base
+  PROVIDERS.openrouter.base = s.url
+  try {
+    const r = await chat('openrouter', 'k', 'anthropic/claude-sonnet-5', 'Rules', 'Task', AbortSignal.timeout(5000), () => {}, ['Head', 'Person: one'], 'r:openrouter')
+    assert.equal(r.text, 'Done.')
+    assert.equal(s.seen.length, 2)
+    assert.equal(s.seen[1].body.messages[0].content, 'Rules')
+    assert.equal(s.seen[1].body.messages[1].content, 'Head\n\nPerson: one')
+  } finally {
+    PROVIDERS.openrouter.base = base
+    s.close()
+  }
+})
+
+test('cache: xAI is told which conversation it is, and DeepSeek cache hits are counted', async () => {
+  const s = await echo(() => sse({ prompt_tokens: 5000, completion_tokens: 5, prompt_cache_hit_tokens: 4800, prompt_cache_miss_tokens: 200 }))
+  const base = PROVIDERS.xai.base
+  PROVIDERS.xai.base = s.url
+  PROVIDERS['conn:deep'] = { base: s.url, style: 'openai', prefer: /./ }
+  try {
+    await chat('xai', 'k', 'grok-4.7', 'Rules', 'Task', AbortSignal.timeout(5000), () => {}, ['Head'], 'room1:grok-api')
+    assert.equal(s.seen[0].headers['x-grok-conv-id'], 'room1:grok-api')
+    assert.equal(s.seen[0].body.session_id, undefined)
+    const r = await chat('conn:deep', 'k', 'deepseek-chat', 'Rules', 'Task', AbortSignal.timeout(5000), () => {}, ['Head'], 'room1:deep')
+    assert.equal(s.seen[1].headers['x-grok-conv-id'], undefined)
+    assert.deepEqual([r.usage.input, r.usage.cached], [200, 4800])
+  } finally {
+    PROVIDERS.xai.base = base
+    delete PROVIDERS['conn:deep']
+    s.close()
+  }
+})
+
+test('cache: the lifetime a turn reports is the shortest entry it wrote', () => {
+  const result = (short: number, hour: number) => ({ type: 'result', subtype: 'success', result: 'ok', session_id: 's', total_cost_usd: 0.01, usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 9000, cache_creation_input_tokens: short + hour, cache_creation: { ephemeral_5m_input_tokens: short, ephemeral_1h_input_tokens: hour } } })
+  const ttl = (short: number, hour: number) => { const p = claudeLike(); p.line(result(short, hour)); return p.turn.usage.ttl }
+  assert.equal(ttl(0, 500), 3600)
+  assert.equal(ttl(500, 0), 300)
+  assert.equal(ttl(40, 500), 300)
+  assert.equal(ttl(0, 0), undefined, 'a turn that only read says nothing new')
+  const grok = claudeLike()
+  grok.line({ type: 'result', result: 'ok', usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 9000, cache_creation_input_tokens: 0 } })
+  assert.equal(grok.turn.usage.ttl, undefined)
+})
+
+test('a floating surface keeps its side while it fits, flips when only the other fits, and is capped when neither does', () => {
+  assert.deepEqual(side(300, 400, 100, 'up'), { side: 'up', max: 400 })
+  assert.deepEqual(side(300, 100, 400, 'up'), { side: 'down', max: 400 })
+  assert.deepEqual(side(300, 400, 100, 'down'), { side: 'up', max: 400 })
+  assert.deepEqual(side(600, 250, 200, 'down'), { side: 'up', max: 250 })
+  assert.deepEqual(side(600, 200, 200, 'down'), { side: 'down', max: 200 })
+  // A sliver of room still leaves a list tall enough to use.
+  assert.equal(side(600, 20, 40, 'up').max, 96)
+})
+
+test('a floating surface slides sideways only as far as the window edge', () => {
+  assert.equal(shift(100, 300, 8, 900), 0)
+  assert.equal(shift(-40, 300, 8, 900), 48)
+  assert.equal(shift(700, 300, 8, 900), -100)
+  assert.equal(shift(10, 1000, 8, 900), -2)
+})
+
+test('agent browser pages are capped: the one unused longest goes, never one at work or the person\'s', () => {
+  const tab = (id: string, used: number, working = false) => ({ id, who: id === 'you' ? 'you' : 'claude', working, used })
+  assert.equal(evict([tab('you', 0), tab('a', 5), tab('b', 3)], 3), undefined)
+  assert.equal(evict([tab('you', 0), tab('a', 5), tab('b', 3), tab('c', 9)], 3), 'b')
+  assert.equal(evict([tab('a', 5), tab('b', 3, true), tab('c', 9)], 3), 'a')
+  assert.equal(evict([tab('a', 5, true), tab('b', 3, true), tab('c', 9, true)], 3), null)
+})
+
+test('asks: a long row of heading or emphasis marks is read at once, not for minutes', () => {
+  const t0 = Date.now()
+  for (const mark of ['#', '*', '_', '> ', '- ', '1. ']) assert.deepEqual(asks(`${mark.repeat(4000)}\nplain`, ['codex']).asks, [])
+  assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0} ms`)
+  assert.deepEqual(asks('### 2) > **@codex**: run the tests', ['codex']).asks, [{ to: 'codex', ask: 'run the tests' }])
+  assert.deepEqual(asks('@codex: **please** check `a.ts`', ['codex']).asks, [{ to: 'codex', ask: 'please** check `a.ts`' }])
+})
+
+test('expert: a direction is written before building, held against the result, and the person\'s own files still lead', async () => {
+  const { DIRECTION, crafts, studioChecks, studioCore } = await import('../shared/studio')
+  const core = studioCore([])
+  assert.equal(DIRECTION, 'looks/direction.md')
+  for (const part of ['Their direction rules', 'three directions in one line each', `save it as ${DIRECTION}`, 'References', 'The one move', 'named before', `with ${DIRECTION} beside the image`, 'made by default', 'before and after', 'A one line fix stays a one line fix']) assert.ok(core.includes(part), part)
+  assert.ok(core.indexOf('1. Their direction rules') < core.indexOf('2. Read the brief'), 'the person comes first')
+  assert.ok(studioCore(['DESIGN.md']).includes('Where they conflict with anything below, they win'))
+  assert.ok(core.length < 5600, 'the method stays short enough to send with every room')
+  for (const part of ['First screen: what the opening frame holds', 'judged as a poster', 'the best thing under the fold']) assert.ok(core.includes(part), part)
+  assert.match(studioChecks('Redesign the landing page'), /Compose the first screen as one frame/)
+  assert.deepEqual(crafts('Design a logo for a bakery'), ['brand', 'graphic'])
+  assert.match(studioChecks('Design a logo for a bakery'), /Draw it in black on white/)
+  assert.match(studioChecks('Model a chair in Blender'), /Silhouette and proportion before detail/)
+  assert.match(studioChecks('Redesign the landing page'), /Content first/)
+  assert.match(studioChecks('Make a pitch deck'), /The argument first/)
+  assert.match(studioChecks('Animate the page transition'), /Key poses first/)
+  assert.match(studioChecks('Redesign the landing page'), /The project's own system and the person's direction replace any line here/)
+})
+
+test('a reply still arriving never shows markup it is about to lose', async () => {
+  const { steady } = await import('../shared/stream')
+  // Finished text is left alone.
+  assert.equal(steady('One line.\nAnother **bold** and `code`.'), 'One line.\nAnother **bold** and `code`.')
+  // A fence, a heading, a bullet or a number half typed waits until it is one.
+  for (const tail of ['`', '``', '#', '## ', '-', '- [', '- [x]', '1', '12.', '3) ']) assert.equal(steady(`Intro.\n\n${tail}`), 'Intro.\n\n', tail)
+  assert.equal(steady('Intro.\n\n```ts'), 'Intro.\n\n```ts')
+  assert.equal(steady('## What'), '## What')
+  assert.equal(steady('1. First'), '1. First')
+  // Bold, code and links left open read as they will once closed.
+  assert.equal(steady('This is **very'), 'This is **very**')
+  assert.equal(steady('This is **very*'), 'This is **very**')
+  assert.equal(steady('This is **'), 'This is ')
+  assert.equal(steady('Run `npm te'), 'Run `npm te`')
+  assert.equal(steady('Run `'), 'Run ')
+  assert.equal(steady('Open `a*b` and **go'), 'Open `a*b` and **go**')
+  assert.equal(steady('See [the docs](https://exa'), 'See the docs')
+  assert.equal(steady('See [the docs](https://example.com) for'), 'See [the docs](https://example.com) for')
+  assert.equal(steady('2 * 3 is six'), '2 * 3 is six')
+  // In an open fence, stars and backticks are code, the closing fence waits until it is whole,
+  // and the next line starts with its first character.
+  assert.equal(steady('```js\nconst a = `x'), '```js\nconst a = `x')
+  assert.equal(steady('```js\nconst a = 1\n'), '```js\nconst a = 1')
+  assert.equal(steady('```js\nconst a = 1\n``'), '```js\nconst a = 1')
+  assert.equal(steady('```js\nconst a = 1\n```'), '```js\nconst a = 1\n```')
+  assert.equal(steady('```js\na\n```\nThen **more'), '```js\na\n```\nThen **more**')
+})
+
+test('a dialog keeps Tab inside it: past the last item comes the first, and back again', async () => {
+  const { round } = await import('../src/lib/modal')
+  assert.equal(round(3, 2, false), 0)
+  assert.equal(round(3, 0, true), 2)
+  // In the middle the browser moves focus as usual.
+  assert.equal(round(3, 1, false), null)
+  assert.equal(round(3, 1, true), null)
+  // Focus that got outside comes back in at the near end.
+  assert.equal(round(3, -1, false), 0)
+  assert.equal(round(3, -1, true), 2)
+  // Nothing to reach: focus stays on the dialog itself.
+  assert.equal(round(0, -1, false), -1)
+})
+
+test('expert audit: the first screen is always stated, and a bare half is listed as a fault', async () => {
+  const { report } = await import('../electron/audit')
+  const view = { width: 1440, findings: [{ kind: 'first screen', text: 'The right half of the first screen (1440 by 900) is bare (6% used, the other half 44%)', at: [] }], families: ['Charter'], sizes: [18, 56], colours: 4, offGrid: 0, spacings: 10, tells: [], first: { all: 25, left: 44, right: 6, top: 30, bottom: 20 } }
+  const text = report('index.html', [view, { ...view, width: 390, findings: [], first: { all: 60, left: 60, right: 60, top: 70, bottom: 50 } }], [], [])
+  assert.match(text, /1\. \[first screen\] The right half/)
+  assert.match(text, /First screen: 25% of the frame carries content \(left 44%, right 6%, top 30%, bottom 20%\)/)
+  assert.match(text, /Phone, 390px: no layout problems found\nFirst screen: 60%/)
+})
+
+test('savings: the cost of storing the cache is counted only where the net is known', async () => {
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { Store } = await import('../electron/store')
+  const store = new Store(mkdtempSync(join(tmpdir(), 'lb-premium-')), { seal: (t: string) => t, open: (t: string) => t })
+  // Claude reports both: reads saved 10 cents, storing cost 4, so 6 net.
+  store.record('claude', 'r1', { input: 1000, output: 50, cached: 9000, cost: 0.01, written: 1000, saved: 0.06, gross: 0.1, v: 2 })
+  // A gateway reports only a cost. Its saving is worked back and has no storing cost on record,
+  // which must not be read as the whole saving having been spent on storing.
+  store.record('openrouter', 'r1', { input: 700, output: 10, cached: 3000, cost: 0.002 })
+  // Codex has no charge for storing.
+  store.record('codex', 'r1', { input: 500, output: 10, cached: 4000, cost: 0, saved: 0.007, gross: 0.007, v: 2 })
+  const week = store.totals().week
+  assert.ok(Math.abs((week.claude.premium ?? 0) - 0.04) < 1e-12)
+  assert.equal(week.openrouter.premium ?? 0, 0)
+  assert.ok((week.openrouter.gross ?? 0) > 0)
+  assert.equal(week.codex.premium ?? 0, 0)
+})
+
+// Saving: long command output is shortened to what an agent needs, and only for commands that log.
+test('trim: short output passes untouched, colour and progress bars are dropped', () => {
+  assert.deepEqual(trim('all good\n'), { text: 'all good\n', cut: 0 })
+  assert.equal(clean('\x1b[32m✔ passed\x1b[0m'), '✔ passed')
+  assert.equal(clean('10%\r50%\r100% done\nnext'), '100% done\nnext')
+})
+
+test('trim: a long log keeps its start, its end and the lines that look like problems', () => {
+  const lines = ['> app@1.0.0 test', ...Array.from({ length: 600 }, (_, i) => `✔ case ${i} passes (0.1ms)`)]
+  lines.splice(300, 0, '✖ totals with a fixed amount off (1.2ms)', '  AssertionError: 5464 !== 5465', '      at Test.run (node:internal/test_runner/test:1372:12)')
+  lines.push('ℹ pass 600', 'ℹ fail 1')
+  const raw = lines.join('\n')
+  const r = trim(raw, '/tmp/out/1.txt')
+  assert.ok(r.text.length < raw.length / 2, 'much shorter')
+  assert.ok(r.text.startsWith('> app@1.0.0 test'), 'the start')
+  assert.match(r.text, /✖ totals with a fixed amount off/)
+  assert.match(r.text, /5464 !== 5465/)
+  assert.doesNotMatch(r.text, /node:internal/, 'frames inside the runtime are left in the file')
+  assert.match(r.text, /ℹ fail 1/)
+  assert.match(r.text, /lines not shown/)
+  assert.match(r.text, /The whole output is in \/tmp\/out\/1\.txt/)
+  assert.equal(r.cut, raw.length - r.text.length)
+})
+
+test('trim: nothing is counted for output Claude Code would have moved to a file itself', () => {
+  const raw = Array.from({ length: 2000 }, (_, i) => `✔ case ${i} passes (0.1ms)`).join('\n')
+  assert.ok(raw.length > NATIVE)
+  const r = trim(raw)
+  assert.ok(r.text.length < 12000)
+  assert.equal(r.cut, 0)
+})
+
+test('trim: output that would barely shrink is left whole', () => {
+  const raw = Array.from({ length: 300 }, (_, i) => `src/file${i}.ts(12,4): error TS2345: argument ${i} is not assignable`).join('\n')
+  assert.equal(trim(raw).text, raw)
+})
+
+test('logs: tests, builds and installs are shortened, content never is', () => {
+  for (const c of ['npm test', 'cd app && npm run build', 'CI=1 pnpm install', 'npx tsc --noEmit && npm test', 'pytest -x tests/', 'cargo test --workspace', 'node --test', 'go test ./...', 'make -j8', 'npm run test:unit -- --coverage', 'yarn lint', 'npx vitest run', 'next build', './gradlew test']) assert.equal(logs(c), true, c)
+  for (const c of ['cat src/app.ts', 'git diff', 'npm test 2>&1 | tail -20', 'npm test | grep fail', 'npm test; cat out.log', 'npm ls', 'node build.js', 'npm run dev &', 'npm test || exit 1', 'ls -la', 'curl -s localhost:3000', 'npm test > out.txt; echo $(wc -l < out.txt)']) assert.equal(logs(c), false, c)
+  // Whatever keeps running is read while it runs, so its output is never held back in a file.
+  for (const c of ['npm run dev', 'npm start', 'yarn dev', 'npx vite', 'next dev', 'npm test -- --watch', 'npx jest --watch', 'vitest', 'npx serve dist', 'docker compose up', 'npm run storybook', 'tsc -w', './gradlew bootRun', 'npx playwright test --ui']) assert.equal(logs(c), false, c)
+})
+
+test('wrap: the command keeps its exit code and its place in the shell', { skip: process.platform === 'win32' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lunchbox-wrap-'))
+  const file = join(dir, 'out.txt')
+  // No room is listening on this address, so the whole output is printed, as without Lunchbox.
+  const run = (command: string) => spawnSync('/bin/sh', ['-c', wrap(command, file, 'http://127.0.0.1:9/output/none/1')], { encoding: 'utf8', cwd: dir })
+  const ok = run('echo one; echo two >&2')
+  assert.equal(ok.status, 0)
+  assert.equal(ok.stdout, 'one\ntwo\n')
+  const bad = run('echo before; false')
+  assert.equal(bad.status, 1)
+  assert.equal(bad.stdout, 'before\n')
+  // cd inside the command still moves the shell that runs what comes after it.
+  assert.equal(spawnSync('/bin/sh', ['-c', `${wrap('cd /', file, 'http://127.0.0.1:9/x')}; pwd`], { encoding: 'utf8', cwd: dir }).stdout.trim(), '/')
+  // A file that cannot be written runs the command as it was.
+  assert.equal(spawnSync('/bin/sh', ['-c', wrap('echo plain', join(dir, 'missing', 'out.txt'), 'http://127.0.0.1:9/x')], { encoding: 'utf8' }).stdout, 'plain\n')
+})
+
+test('rates: list prices per token for what Lunchbox kept out', () => {
+  const fable = rates('claude', 'claude-fable-5-2', 3600)!
+  assert.equal(fable.input, 8 / 1e6)
+  assert.equal(fable.read, 0.2 / 1e6)
+  assert.equal(fable.write, 16 / 1e6)
+  assert.equal(rates('claude', 'claude-sonnet-5-5', 300)!.write, 2.5 / 1e6)
+  assert.equal(rates('codex', 'gpt-6.1-terra')!.input, (25 * 0.04) / 1e6)
+  assert.equal(rates('claude', 'some-new-model'), null)
+  assert.equal(rates('gemini', 'gemini-3.5-flash'), null)
+})
+
+test('claude: a turn reports its model, and what its first and last request read and wrote', () => {
+  const p = claudeLike()
+  const usage = (read: number, written: number) => ({ input_tokens: 2, output_tokens: 5, cache_read_input_tokens: read, cache_creation_input_tokens: written })
+  p.line({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-sonnet-5-5' })
+  p.line({ type: 'assistant', message: { usage: usage(14000, 30000), content: [{ type: 'tool_use', id: 't', name: 'Read', input: { file_path: 'a' } }] } })
+  p.line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'x' }] } })
+  p.line({ type: 'assistant', message: { usage: usage(44000, 900), content: [{ type: 'text', text: 'done' }] } })
+  p.line({ type: 'result', subtype: 'success', result: 'done', session_id: 's', usage: { ...usage(58000, 30900), cache_creation: { ephemeral_5m_input_tokens: 30900, ephemeral_1h_input_tokens: 0 } }, modelUsage: { 'claude-sonnet-5-5': { inputTokens: 4, outputTokens: 10, cacheReadInputTokens: 58000, cacheCreationInputTokens: 30900, cacheCreationEphemeral1hInputTokens: 0, costUSD: 0.08 } } })
+  assert.equal(p.turn.model, 'claude-sonnet-5-5')
+  assert.deepEqual(p.turn.first, { read: 14000, written: 30000 })
+  assert.deepEqual(p.turn.last, { read: 44000, written: 900 })
+  assert.equal(p.turn.usage.ttl, 300)
+  // Five minute entries: 0.75 of the $2 input price less than the hour would have cost.
+  assert.ok(Math.abs(p.turn.quick! - (30900 * 2 * 0.75) / 1e6) < 1e-9)
+})
+
+test('hands: a message sent mid-turn reaches Claude Code after its next step, once', async (t) => {
+  const hands = new Hands()
+  await hands.start()
+  t.after(() => hands.stop())
+  let waiting: string | null = 'Use tabs, not spaces'
+  const grant = hands.grant([], undefined, () => { const m = waiting; waiting = null; return m })
+  assert.ok(grant.hook, 'a turn with an inbox gets a hook even without tools')
+  const post = (body: object) => fetch(grant.hook, { method: 'POST', body: JSON.stringify(body) }).then((r) => r.json())
+  assert.deepEqual(await post({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }), {}, 'nothing before a step')
+  assert.deepEqual(await post({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Use tabs, not spaces' } })
+  assert.deepEqual(await post({ hook_event_name: 'PostToolUse', tool_name: 'Read' }), {}, 'handed over once')
+  grant.revoke()
+})
+
+test('hands: a shortened command posts its output with a token that opens nothing else', async (t) => {
+  const hands = new Hands()
+  await hands.start()
+  t.after(() => hands.stop())
+  const dir = mkdtempSync(join(tmpdir(), 'lunchbox-drop-'))
+  let cut = 0
+  const tool = { name: 'remember', description: '', input: {}, run: async () => 'kept' }
+  const grant = hands.grant([tool], { kind: 'shorten', dir, cut: (n) => { cut += n } })
+  const post = (url: string, body: string) => fetch(url, { method: 'POST', body })
+  const ask = (command: string, more = {}) => post(grant.hook, JSON.stringify({ tool_name: 'Bash', tool_input: { command, ...more } })).then((r) => r.json())
+
+  assert.deepEqual(await ask('git diff'), {}, 'content is left alone')
+  assert.deepEqual(await ask('npm test', { run_in_background: true }), {}, 'and so is anything in the background')
+  const wrapped: string = (await ask('npm test', { timeout: 60000 })).hookSpecificOutput.updatedInput.command
+  assert.equal((await ask('npm test', { timeout: 60000 })).hookSpecificOutput.updatedInput.timeout, 60000, 'the rest of the call is kept')
+  const secret = grant.hook.split('/').pop()!
+  assert.ok(!wrapped.includes(secret), 'the turn\'s own token never reaches a command line')
+  const drop = wrapped.match(/http:\/\/127\.0\.0\.1:\d+\/output\/[\w-]+\/[\w-]+/)![0]
+  const token = drop.split('/').at(-2)!
+  assert.equal((await post(grant.url.replace(secret, token), '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')).status, 404, 'the output token lists no tools')
+  assert.equal((await post(grant.hook.replace(secret, token), '{}')).status, 404)
+
+  const long = Array.from({ length: 900 }, (_, i) => `✔ case ${i} passes (0.1ms)`).join('\n') + '\n✖ one fails\nℹ fail 1\n'
+  const short = await (await post(drop, long)).text()
+  assert.match(short, /✖ one fails/)
+  assert.ok(short.length < long.length / 3)
+  assert.equal(cut, long.length - short.trimEnd().length)
+  assert.equal(await (await post(drop, 'ok\n')).text(), 'ok\n')
+
+  grant.revoke()
+  assert.equal((await post(drop, long)).status, 404, 'and it ends with the turn')
 })

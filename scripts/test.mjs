@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { build } from 'esbuild'
 
 const out = mkdtempSync(join(tmpdir(), 'lunchbox-test-'))
-const files = ['test/unit.ts', 'test/engine.ts']
+const files = ['test/unit.ts', 'test/engine.ts', 'test/tools.ts']
 await build({ entryPoints: files, outdir: out, bundle: true, platform: 'node', format: 'cjs', external: ['electron'], logLevel: 'warning' })
 
 const policy = spawnSync(process.execPath, ['scripts/test-policy.mjs'], { stdio: 'inherit' })

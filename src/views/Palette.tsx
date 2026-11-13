@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useModal } from '../lib/modal'
 import type { Hit } from '../../shared/types'
 import { IconSearch } from '../ui/icons'
 import { still } from '../ui/bits'
@@ -40,6 +41,7 @@ export function Palette({ commands, close, openHit, anchor }: { commands: Comman
   const [q, setQ] = useState('')
   const [at, setAt] = useState(0)
   const [hits, setHits] = useState<Hit[]>([])
+  useModal()
   const [leaving, setLeaving] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)

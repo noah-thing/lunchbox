@@ -66,7 +66,7 @@ export class Remote {
     this.running = true
     this.offset = this.saved()
     this.changed()
-    this.loop()
+    this.loop(++this.round)
   }
 
   stop() {
@@ -95,8 +95,11 @@ export class Remote {
     }
   }
 
-  private async loop() {
-    while (this.running) {
+  // Each start is a new round. A loop from an earlier one, still in its wait after an error or
+  // busy with a message, ends itself instead of polling beside the new one.
+  private round = 0
+  private async loop(round: number) {
+    while (this.running && round === this.round) {
       this.abort = new AbortController()
       try {
         const updates = await this.api<Update[]>('getUpdates', { offset: this.offset, timeout: 25, allowed_updates: ['message', 'callback_query'] }, this.abort.signal)
@@ -108,7 +111,7 @@ export class Remote {
           await this.handle(u).catch((e) => this.reply(u.message?.chat.id ?? u.callback_query?.message?.chat.id, `Something broke: ${(e as Error).message}`))
         }
       } catch (e) {
-        if (!this.running) return
+        if (!this.running || round !== this.round) return
         this.error = (e as Error).message
         this.changed()
         await new Promise((r) => setTimeout(r, 8000))

@@ -33,8 +33,9 @@ kbd{opacity:.5;margin-left:auto}
 textarea,input{font:inherit;color:inherit;background:none;border:0;outline:0;resize:none}
 ::selection{background:var(--ink);color:var(--ground)}
 :focus-visible{outline:1px solid var(--ink);outline-offset:2px;border-radius:4px}
-textarea:focus-visible,input:focus-visible{outline:0}
+textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 ::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-corner{background:transparent}
 ::-webkit-scrollbar-thumb{background:transparent;border-radius:4px;border:2px solid transparent;background-clip:padding-box}
 :hover::-webkit-scrollbar-thumb{background-color:var(--cell)}
 .grow{flex:1;min-width:0}
@@ -55,7 +56,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .btn.quiet.chosen{background:none;color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .iconbtn,.ghostbtn{display:inline-flex;align-items:center;gap:6px;height:28px;border-radius:6px;color:var(--dim);transition:color 140ms var(--out),background-color 140ms var(--out)}
 .iconbtn{width:28px;justify-content:center}
-.ghostbtn{padding:0 8px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ghostbtn{padding:0 8px;max-width:280px;white-space:nowrap}
+.ghostbtn>svg{flex:none}
+.ghostbtn>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .ghostbtn.mono{font:11px var(--mono)}
 .iconbtn.on{color:var(--ink);background:var(--hover)}
 @media (hover:hover){.iconbtn:hover,.ghostbtn:hover{color:var(--ink);background:var(--hover)}}
@@ -115,7 +118,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .sbitem svg{flex:none}
 .sbitem small,.sbroom small{font:11px var(--mono);color:var(--faint)}
 .sbitem.on,.sbroom.on{color:var(--ink)}
-.sbitem>.sbsel,.sbroom>.sbsel{position:absolute;inset:0;border-radius:6px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);pointer-events:none;will-change:transform}
+.sbitem>.sbsel,.sbroom>.sbsel{position:absolute;inset:0;border-radius:6px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line);pointer-events:none}
 @media (hover:hover){.sbitem:hover,.sbroom:hover{color:var(--ink);background:var(--hover)}.sbitem.on:hover,.sbroom.on:hover{background:none}}
 .sbitem:active,.sbroom:active{transform:scale(.985)}
 .waitdot{width:6px;height:6px;border-radius:1.5px;background:var(--warn);flex:none;animation:markbreathe 1.6s ease-in-out infinite}
@@ -124,7 +127,9 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .sblabel{padding:20px 8px 6px;font:11px var(--mono);color:var(--faint)}
 .sbrooms{flex:1;overflow:auto;display:flex;flex-direction:column;gap:1px}
 .sbfoot{display:flex;flex-direction:column;gap:1px;padding-top:8px}
-.sheet>*{animation:pagein 320ms var(--out) both}
+/* backwards, not both: a transform left on the page after it lands would trap every dialog's
+   fixed backdrop inside the page instead of the window. */
+.sheet>*{animation:pagein 320ms var(--out) backwards}
 @keyframes pagein{from{opacity:0;transform:translateY(6px)}}
 .sheet{margin:8px 8px 8px 0;border-radius:12px;background:var(--sheet);box-shadow:0 0 0 1px var(--line);overflow:hidden;min-width:0;position:relative;view-transition-name:sheet}
 .app.arriving .sidebar{animation:rise 700ms var(--out) both}
@@ -146,8 +151,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .roomhead button,.roomhead .stack{-webkit-app-region:no-drag}
 .roomhead h1{font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .roomhead .stack{margin:0 8px}
-.transcript{flex:1;overflow:auto;padding:36px 24px 48px;-webkit-mask:linear-gradient(transparent,#000 24px,#000 calc(100% - 32px),transparent)}
-.column{max-width:var(--col);margin:0 auto;display:flex;flex-direction:column}
+/* The scrollbar's room is kept on both sides from the start, so the column does not step sideways
+   when a room first grows past the window, and stays in line with the message box. */
+.transcript{flex:1;overflow:auto;scrollbar-gutter:stable both-edges;padding:36px 16px 48px;-webkit-mask:linear-gradient(transparent,#000 24px,#000 calc(100% - 32px),transparent)}
+.column{position:relative;max-width:var(--col);margin:0 auto;display:flex;flex-direction:column}
 .tail{scroll-margin-bottom:44px}
 .dock{padding:0 24px 20px;flex:none}
 .dock .composer{max-width:var(--col);margin:0 auto}
@@ -296,7 +303,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .btn.danger.sure{background:color-mix(in srgb,var(--bad) 10%,transparent)}
 .iconbtn.sure{width:auto;padding:0 8px;font-size:12px;white-space:nowrap;color:var(--bad);background:color-mix(in srgb,var(--bad) 10%,transparent)}
 /* The sidebar's right click menu, placed at the pointer. */
-.menu.ctx{position:fixed;bottom:auto;width:240px;transform-origin:top left;-webkit-app-region:no-drag}
+.menu.ctx{position:fixed;bottom:auto;width:240px;max-height:calc(100vh - 16px);overflow-y:auto;transform-origin:top left;-webkit-app-region:no-drag}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 /* Models live in the crew menu: a quiet label beside each agent in the room. It opens that
    agent's list in place; the menu eases to its new height and the views slide, never jump. */
@@ -334,13 +341,12 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .modelfind{display:block;width:calc(100% - 8px);height:30px;margin:2px 4px 4px;padding:0 10px;border-radius:7px;font-size:12.5px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
 @media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*{animation:none}}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
-/* Dropped below its button when there is no room above. */
-.menu.down{top:calc(100% + 6px);bottom:auto;transform-origin:top left;animation-name:menudown}
-.menuwrap.up .menu.down{transform-origin:top right}
+/* lib/fit.ts drops a menu below its button when there is no room above, and caps its height. */
+.menu,.suggest{overscroll-behavior:contain}
 @keyframes menudown{from{opacity:0;transform:scale(.97) translateY(-4px)}}
 .item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px;border-radius:8px;transition:background-color 120ms var(--out)}
 .item>.modeicon,.item>.mark{margin-top:2px}
-.item .grow{display:flex;flex-direction:column}
+.item .grow{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}
 .item b{font-weight:500}
 .item .grow span{font-size:12px;color:var(--dim)}
 .item.on{background:var(--hover)}
@@ -350,7 +356,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 
 /* Panel: the room at a glance. Field on top, then who is here, how far along, what they share. */
 .room.withdetails{grid-template-columns:minmax(0,1fr) 320px}
-.panel{border-left:1px solid var(--line);overflow:auto;min-width:0;display:flex;flex-direction:column;animation:slidein 280ms var(--out) both}
+.panel{border-left:1px solid var(--line);overflow:auto;min-width:0;display:flex;flex-direction:column;animation:slidein 640ms cubic-bezier(.65,0,.35,1) both}
 @keyframes slidein{from{opacity:0;transform:translateX(8px)}}
 /* The panel's header lines up with the room header, so one hairline runs across both panes. */
 .panelhead{height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-app-region:drag}
@@ -372,20 +378,6 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .crew.on small{color:var(--dim)}
 .crew.spent{opacity:.45}
 .crew .meter i{width:2px;height:8px}
-.stepbar{display:grid;grid-auto-flow:column;gap:2px;margin:4px 0 10px}
-.stepbar i{height:3px;border-radius:1px;background:var(--cell);transition:background-color 400ms var(--out)}
-.stepbar i.done{background:var(--ink)}
-.stepbar i.you{background:var(--warn)}
-.task{display:flex;align-items:flex-start;gap:10px;min-height:28px;padding:5px 0;font-size:12.5px;line-height:18px;color:var(--dim)}
-.task code{font:11.5px var(--mono);padding:0 4px;border-radius:3px;background:var(--hover)}
-.task>i{margin-top:5px;width:8px;height:8px;border-radius:2px;box-shadow:inset 0 0 0 1.25px var(--faint);flex:none;transition:background-color 300ms var(--out),box-shadow 300ms var(--out)}
-.task.done>i{background:var(--dim);box-shadow:none}
-.task.done .grow{color:var(--faint)}
-.task.you{color:var(--ink)}
-.task.you>i{box-shadow:inset 0 0 0 1.5px var(--warn)}
-.task small{font-size:11.5px;color:var(--faint)}
-.task .needs{font-size:10.5px}
-.task .needs::before{display:none}
 .mem{display:flex;align-items:center;gap:10px;height:30px;font-size:12.5px;color:var(--dim)}
 .mem .grow small{font:11px var(--mono);color:var(--faint);margin-left:8px}
 .mem .late,.mem .fresh{display:flex;align-items:center;gap:4px;font-size:11.5px}
@@ -427,7 +419,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .anote{font-size:12.5px;line-height:1.5;color:var(--warn)}
 .field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .field>span{font-size:12px;font-weight:500}
-.field input{height:32px;padding:0 10px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line2);font:12px var(--mono);transition:box-shadow 140ms var(--out);flex:1}
+.field input{height:32px;min-height:32px;padding:0 10px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line2);font:12px var(--mono);transition:box-shadow 140ms var(--out);flex:1}
 .field input:focus{box-shadow:inset 0 0 0 1px var(--ink)}
 .field input::placeholder{color:var(--faint)}
 .field small{font-size:11.5px;color:var(--faint)}
@@ -476,8 +468,10 @@ textarea:focus-visible,input:focus-visible{outline:0}
 @media (hover:hover){.obback:hover{color:var(--ink)}}
 
 /* Palette and toast */
-.scrim{position:fixed;inset:0;z-index:40;-webkit-app-region:no-drag;background:rgba(0,0,0,.32);display:flex;justify-content:center;padding-top:15vh;animation:fadein 220ms var(--out) both}
+.scrim{position:fixed;inset:0;width:auto;max-width:none;z-index:40;-webkit-app-region:no-drag;background:rgba(0,0,0,.32);display:flex;justify-content:center;padding-top:15vh;animation:fadein 220ms var(--out) both}
 [data-theme=light] .scrim{background:rgba(20,20,18,.14)}
+/* The window still moves by its top edge while a dialog is open. */
+.scrim::before{content:"";position:absolute;top:0;left:0;right:0;height:36px;-webkit-app-region:drag}
 .palette{position:relative;width:600px;align-self:flex-start}
 .pglow{position:absolute;inset:0;border-radius:14px;box-shadow:0 32px 80px -12px rgba(0,0,0,.6);pointer-events:none}
 .pbody{position:relative;max-height:460px;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;background:var(--sheet);box-shadow:inset 0 0 0 1px var(--line2);will-change:transform,clip-path}
@@ -530,7 +524,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .note.bad .evbody{color:var(--bad)}
 .note .rich p{font-size:12.5px;color:inherit}
 
-.rich{display:flex;flex-direction:column;gap:10px;min-width:0}
+/* Everything an agent or the person wrote can be selected and copied, lists and headings too. */
+.rich{display:flex;flex-direction:column;gap:10px;min-width:0;user-select:text;overflow-wrap:anywhere}
 .rich p{font-size:14px;line-height:1.62;overflow-wrap:anywhere}
 .rich h4{font-size:13.5px;font-weight:600;margin-top:4px}
 .rich ul,.rich ol{display:flex;flex-direction:column;gap:4px;padding-left:20px;font-size:14px;line-height:1.55}
@@ -546,7 +541,7 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .rich li.todo.done>i{background:var(--ink);box-shadow:none}
 .rich li.todo.done>i::after{content:"";position:absolute;left:4.5px;top:2px;width:3.5px;height:7px;border:solid var(--ground);border-width:0 1.6px 1.6px 0;transform:rotate(42deg)}
 .rich li.todo.done>span{color:var(--dim)}
-.rich code{font:12.5px var(--mono);padding:1px 5px;border-radius:4px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
+.rich code{font:12.5px/1 var(--mono);padding:1px 5px;border-radius:4px;background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
 .rich a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px;transition:text-decoration-color 140ms var(--out)}
 .rich a:hover{text-decoration-color:var(--ink)}
 .codeblock{position:relative;padding:12px 14px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:12px/1.6 var(--mono);color:var(--dim);overflow-x:auto;white-space:pre}
@@ -678,7 +673,8 @@ textarea:focus-visible,input:focus-visible{outline:0}
 .obnote{font-size:12px;color:var(--faint)}
 .onboard.leaving{opacity:0;transform:translateY(-8px) scale(.995)}
 
-@media (prefers-reduced-motion:reduce){*,::before,::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}}
+/* One pass, not a loop: a looping animation cut to a millisecond would flicker a thousand times a second. */
+@media (prefers-reduced-motion:reduce){*,::before,::after{animation-duration:1ms!important;animation-delay:0ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}}
 
 /* Local model setup */
 .localbox{display:flex;flex-direction:column;gap:10px}
@@ -946,3 +942,76 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .freeon svg{width:12px;height:12px}
 .freenote{margin-top:20px;font-size:12px;color:var(--faint)}
 .savings .sv-actions .sv-range{margin-top:0;align-self:auto}
+
+
+/* The plan. Drawn live: row by row each box is traced from its top corner in one stroke, then its
+   step fades in. Done steps fill, tick and strike through; the step being worked on has a slow
+   breathing dot. Only strokes, opacity and transforms move. */
+.plan{margin:8px 0 4px;max-width:600px;overflow:hidden}
+.plan ol{list-style:none;margin:0;padding:0}
+.planfold{display:block;margin:0 0 4px;font-size:11.5px;color:var(--faint)}
+.planfold:hover{color:var(--ink)}
+.planrow{display:flex;align-items:flex-start;gap:10px;padding:4px 0;font-size:13.5px;line-height:21px;color:var(--ink)}
+.planbox{flex:none;width:16px;height:16px;margin-top:2.5px;overflow:visible}
+/* The dash is a fifth longer than the outline: the traced line closes while it is still moving,
+   and the easing's slow tail runs past the join instead of leaving a gap at it. */
+.planbox .frame{fill:none;stroke:var(--faint);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1.2 1.2;stroke-dashoffset:0;transition:stroke 500ms var(--out)}
+.planbox .fill{fill:var(--ink);opacity:0;transform:scale(.5);transform-origin:8px 8px;transition:opacity 360ms var(--out),transform 560ms cubic-bezier(.34,1.36,.64,1)}
+.planbox .tick{fill:none;stroke:var(--ground);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1.2 1.2;stroke-dashoffset:1.2;transition:stroke-dashoffset 460ms 240ms cubic-bezier(.65,0,.35,1)}
+.planbox .pulse{fill:var(--ink);opacity:0;transform:scale(.5);transform-origin:8px 8px}
+.plantext{min-width:0;flex:1}
+.planstep{background:linear-gradient(currentColor,currentColor) 0 58%/0 1px no-repeat;-webkit-box-decoration-break:clone;box-decoration-break:clone;transition:background-size 700ms 420ms cubic-bezier(.65,0,.35,1),color 600ms 300ms var(--out)}
+.planrow.done{color:var(--faint)}
+.planrow.done .frame{stroke:var(--ink)}
+.planrow.done .fill{opacity:1;transform:none}
+.planrow.done .tick{stroke-dashoffset:0}
+.planrow.done .planstep{background-size:100% 1px}
+.planrow.on .frame{stroke:var(--ink)}
+.planrow.on .pulse{animation:planpulse 1.6s ease-in-out infinite}
+@keyframes planpulse{0%,100%{opacity:.2;transform:scale(.45)}50%{opacity:.85;transform:scale(.9)}}
+.drawing .planrow .frame{animation:plantrace 1500ms both;animation-delay:var(--d)}
+/* The line is traced in ink and settles to the resting grey once it has closed. */
+@keyframes plantrace{from{stroke-dashoffset:1.2;stroke:var(--ink);animation-timing-function:cubic-bezier(.55,0,.3,1)}48%{stroke-dashoffset:0;stroke:var(--ink);animation-timing-function:ease}to{stroke-dashoffset:0}}
+.drawing .planrow .plantext{animation:planin 700ms var(--out) both;animation-delay:calc(var(--d) + 520ms)}
+@keyframes planin{from{opacity:0;transform:translateX(-8px)}}
+
+.planbar{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;margin:2px 0 10px}
+.planbar i{height:3px;border-radius:2px;background:var(--cell);overflow:hidden;position:relative}
+.planbar i::after{content:"";position:absolute;inset:0;background:var(--ink);transform:scaleX(0);transform-origin:left;transition:transform 560ms var(--out)}
+.planbar i.done::after{transform:none}
+.planbar i.on::after{opacity:.35;transform:none;animation:planbreathe 1.6s ease-in-out infinite}
+@keyframes planbreathe{50%{opacity:.7}}
+
+/* Handed to the panel: the rows close up and fade, the chat below glides up after them. */
+.plan{display:grid;grid-template-rows:1fr;transition:grid-template-rows 760ms cubic-bezier(.65,0,.35,1),opacity 480ms var(--out),margin 760ms cubic-bezier(.65,0,.35,1)}
+.plan>ol{min-height:0}
+/* Closed, the card takes no room at all, the gap between blocks included, so removing it moves nothing. */
+.plan.leaving{grid-template-rows:0fr;opacity:0;margin:0 0 -10px}
+
+/* In the panel. */
+.planside h2 small{font-feature-settings:"tnum"}
+.planside .planrow{font-size:12.5px;line-height:18px;padding:4px 0}
+.planside .planbox{width:14px;height:14px;margin-top:2px}
+.planside.arriving{animation:planglow 1400ms var(--out) both}
+@keyframes planglow{from{background-color:var(--hover)}}
+.planwho{display:block;font-size:11px;color:var(--faint)}
+.plannow{display:block;margin-top:3px;font:11px/16px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
+.plannow .what{display:block;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* The chat's live line with a plan: the step it is on, then what is happening this moment. */
+.workpair{position:relative;margin-top:6px;overflow:clip}
+.workstep{display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12.5px;line-height:18px;color:var(--dim);animation:planin 600ms var(--out) both}
+.workstep .n{flex:none;font:11px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
+.workstep .t{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.workpair .workline{margin-top:0}
+.workpair .workstep+.workline{margin-top:2px}
+.workpair .xsearch{margin-top:2px}
+/* The turn has ended: the working line fades where it stands before the outcome takes its place. */
+.workpair.leaving{animation:fadeout 200ms var(--out) both}
+/* What the line says changes in place: the new words fade in where the old ones were. */
+.workline .shimmer{animation:shimmer 1.8s linear infinite,fadein 220ms var(--out) both}
+.workline code{animation:fadein 220ms var(--out) both}
+/* Blocks that form while an answer is written arrive the way everything else does. */
+.ev.live .rich>:is(pre,h4,ul,ol):last-child{animation:fadein 240ms var(--out) both}
+.ev.settled :is(.plan,.workstep){animation:none}
+.ev.settled .plan *{animation:none!important;transition:none!important}

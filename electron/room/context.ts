@@ -37,21 +37,28 @@ export function protocol(meta: RoomMeta, me: AgentInfo, crew: AgentInfo[], acces
   const mates = crew
     .filter((a) => a.id !== me.id)
     .map((a) => `- @${a.id}  ${a.short} (${a.maker}): ${a.good}${a.tools ? '' : '. Text only, no files or commands'}`)
-  const borrowed = [...tools.map((t) => TOOL_LINES[t]).filter(Boolean), connected(tools)].filter(Boolean)
+  // propose_flow is described once, with the rest of Lunchbox, for the agent that holds it alone.
+  const solo = crew.every((a) => a.id === me.id)
+  const borrowed = [...tools.filter((t) => !(solo && t === 'propose_flow')).map((t) => TOOL_LINES[t]).filter(Boolean), connected(tools)].filter(Boolean)
+  // A room with one agent says nothing about a crew: every line here is read again on each step.
+  const alone = !mates.length
   return [
-    `You are ${me.short}, one of several AI agents working with one person in a shared room in Lunchbox.`,
+    alone ? `You are ${me.short}, working with one person in a Lunchbox room.` : `You are ${me.short}, one of several AI agents working with one person in a shared room in Lunchbox.`,
     `Room: ${meta.name}. Folder: ${meta.workspace}. Access: ${ACCESS[access]}`,
-    me.tools ? '' : 'You cannot read files or run commands yourself. When that is needed, ask a crewmate who can.',
-    mates.length ? `Your crew:\n${mates.join('\n')}` : 'You are working alone in this room.',
-    borrowed.length ? `The lunchbox tools lend you your crewmates' abilities mid-turn. ${borrowed.join(' ')} Prefer them to an @handle line when you need the answer to keep working.` : '',
+    me.tools ? '' : alone ? 'You cannot read files or run commands yourself. When that is needed, say so.' : 'You cannot read files or run commands yourself. When that is needed, ask a crewmate who can.',
+    // A model behind an API works through the room's own file tools, and is told to use them:
+    // left alone, many ask the person to paste a file they could have opened.
+    me.tools && me.via !== 'cli' ? `You work in the folder yourself, through your tools: ${access === 'plan' ? 'list_directory, read_file, search_file_content and run_command for commands that only read' : 'list_directory, read_file, search_file_content, write_file, edit_file and run_command'}. Look things up in the folder before asking the person for them, and check your work by running it.` : '',
+    mates.length ? `Your crew:\n${mates.join('\n')}` : '',
+    borrowed.length ? (alone ? `Your lunchbox tools: ${borrowed.join(' ')}` : `The lunchbox tools lend you your crewmates' abilities mid-turn. ${borrowed.join(' ')} Prefer them to an @handle line when you need the answer to keep working.`) : '',
     [
       'How the room works:',
       mates.length && main === me.id ? '- You are the main agent. The person talks to you; the rest of the crew is on call and does not read along. Do the work yourself unless a crewmate is clearly better placed, then involve only that one, with a task complete enough to start on: they see the brief, the shared memory and the files changed, not this conversation.' : '',
       mates.length ? '- To get something from a crewmate, put a line on its own: "@handle: what you need". Their answer comes back to you before you finish. Ask only when they are clearly better placed, at most two at a time.' : '',
-      me.tools && access !== 'plan' ? '- The folder is yours to organise. Create subfolders for separate pieces of work, and give a new project its own folder inside it rather than scattering files.' : '',
-      '- When the work has several steps, post the plan once as a checklist of "- [ ] step" lines. Lunchbox pins it beside the room and crosses steps off, so never post the whole list again: when a step is done, write just that step as "- [x] step" on its own line, and add a new step as one "- [ ] step" line.',
-      '- Claims like "the tests pass" or "the build works" are checked against the commands that actually ran in this room after the last edit. Run the check before claiming it.',
-      '- Write for the person: short and plain. Do not repeat what others already said.',
+      me.tools && access !== 'plan' ? '- The folder is yours to organise. Give a new project its own folder inside it rather than scattering files.' : '',
+      '- For work with several steps, post the plan before you start: three to eight short "- [ ] step" lines, in order. Lunchbox pins it beside the room for the person to follow. The moment a step is done, write that one step as "- [x] step" on its own line before starting the next, never all at the end. Never post the whole list again; a new step is one more "- [ ] step" line.',
+      '- Claims like "the tests pass" or "the build works" are checked against the commands that ran in this room after the last edit. Run the check before claiming it.',
+      '- Write for the person: short and plain.' + (alone ? '' : ' Do not repeat what others already said.'),
     ].filter(Boolean).join('\n'),
     pack ? `Room focus, ${pack.name}: ${pack.brief}` : '',
     rules.length ? `How this person wants the work done:\n${rules.join('\n')}` : '',

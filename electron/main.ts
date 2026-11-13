@@ -4,7 +4,9 @@ import { homedir } from 'node:os'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, nativeTheme, Notification, safeStorage, shell } from 'electron'
 import type { Access, Connector, Flow, Report, Settings, Skill } from '../shared/types'
+import { Count } from './count'
 import { installed, modelsFor, testConnector, useConnectors } from './agents'
+import { setBase } from './agents/http'
 import { markdown, replay } from './export'
 import { Flows } from './flows'
 import { fetchPack, importPack, loadPacks, packJson, removePack } from './packs'
@@ -40,6 +42,7 @@ let store: Store
 let engine: Engine
 let limits: Limits
 let flows: Flows
+let count: Count
 let remote: Remote
 let browser: Browser
 let toolbox: Toolbox
@@ -73,6 +76,13 @@ function roomFolder(about: string) {
   return dir
 }
 
+// Local servers answer at their usual address unless the person, or Ollama's own OLLAMA_HOST,
+// says otherwise.
+function useEndpoints() {
+  const typed = store.settings.endpoints ?? {}
+  for (const id of ['ollama', 'lmstudio', 'llamacpp']) setBase(id, typed[id] || (id === 'ollama' ? process.env.OLLAMA_HOST : '') || '')
+}
+
 function createWindow() {
   const dark = nativeTheme.shouldUseDarkColors
   win = new BrowserWindow({
@@ -100,7 +110,8 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => { if (!process.env.VITE_URL) e.preventDefault() })
   if (process.env.VITE_URL) win.loadURL(process.env.VITE_URL)
   else win.loadFile(join(__dirname, 'renderer/index.html'))
-  win.on('closed', () => { win = null })
+  // The agent browser's pages live in this window, so they go with it.
+  win.on('closed', () => { win = null; browser?.destroy() })
 }
 
 function notify(title: string, body: string, room: string) {
@@ -118,7 +129,11 @@ function notify(title: string, body: string, room: string) {
 }
 
 function wire() {
-  const h = (channel: string, fn: (...args: any[]) => unknown) => ipcMain.handle(channel, (_e, ...args) => fn(...args))
+  // Only the app's own window may call in, never a page inside the agent browser or a frame.
+  const h = (channel: string, fn: (...args: any[]) => unknown) => ipcMain.handle(channel, (e, ...args) => {
+    if (e.sender !== win?.webContents || e.senderFrame !== e.sender.mainFrame) throw new Error('Not allowed')
+    return fn(...args)
+  })
 
   h('env', () => ({ home: homedir(), platform: process.platform, version: app.getVersion(), cwd: workspace(), data: store.dir }))
   h('agents', () => engine.agents)
@@ -146,9 +161,9 @@ function wire() {
     return engine.create({ ...opts, workspace: folder })
   })
   h('room:rename', (id: string, name: string) => engine.rename(id, name))
-  h('room:mark', (id: string, patch: { pinned?: boolean; archived?: boolean }) => engine.mark(id, patch))
+  h('room:mark', (id: string, patch: { pinned?: boolean; archived?: boolean }) => { if (patch.archived) browser.closeRoom(id); return engine.mark(id, patch) })
   h('inbox', () => engine.inbox())
-  h('room:remove', (id: string) => engine.remove(id))
+  h('room:remove', (id: string) => { browser.closeRoom(id); return engine.remove(id) })
   h('room:fork', (id: string, at: string) => engine.fork(id, at))
   h('room:crew', (id: string, crew: string[]) => engine.setCrew(id, crew))
   h('room:workspace', (id: string, path: string) => engine.setWorkspace(id, path))
@@ -203,7 +218,9 @@ function wire() {
   h('flows:run', (id: string) => flows.run(id).room)
   h('browser', () => browser.state())
   h('browser:place', (b: { x: number; y: number; width: number; height: number } | null) => browser.place(b))
-  h('browser:open', (url: string) => browser.open(url))
+  h('browser:open', (url: string) => browser.open(String(url)))
+  h('browser:select', (id: string) => browser.select(String(id)))
+  h('browser:close', (id: string) => browser.close(String(id)))
   h('browser:nav', (kind: 'back' | 'forward' | 'reload' | 'stop') => browser.nav(kind))
   h('browser:device', (d: Device) => browser.setDevice(d))
   h('browser:devtools', () => browser.devtools())
@@ -256,9 +273,12 @@ function wire() {
   h('settings', () => store.settings)
   h('settings:set', async (patch: Partial<Settings>) => {
     store.saveSettings(patch)
+    // Turning the count back on sends today's count straight away.
+    if (patch.count === true) void count?.send()
     if (patch.connectors) useConnectors(store.settings.connectors)
+    if (patch.endpoints) useEndpoints()
     if (patch.autoUpdate !== undefined) updates?.setAuto(patch.autoUpdate)
-    if (patch.models || patch.disabled || patch.connectors) await engine.refresh()
+    if (patch.models || patch.disabled || patch.connectors || patch.endpoints) await engine.refresh()
     if (patch.budgets) emit('ledger', engine.ledger())
     return store.settings
   })
@@ -278,7 +298,7 @@ function wire() {
   h('report:diagnostics', () => diagnostics(engine.agents))
   h('report:send', (r: Report) => send(r, store.dir, Object.values(store.keys())))
   h('error:log', (message: string) => logError('window', String(message).slice(0, 4000)))
-  h('connector:test', (c: Connector, key: string) => testConnector(c, key ?? ''))
+  h('connector:test', (c: Connector, key: string, headers?: string) => testConnector(c, key ?? '', typeof headers === 'string' ? headers : ''))
   // An installer may have just added its folder to the shell profile, so the PATH is read again.
   h('connector:installed', (bins: string[]) => { resetPath(); return installed(Array.isArray(bins) ? bins : []) })
   h('packs', () => packs())
@@ -323,7 +343,14 @@ function wire() {
     const r = await dialog.showOpenDialog(win, { title: 'Choose a folder', properties: ['openDirectory', 'createDirectory'] })
     return r.canceled ? null : r.filePaths[0]
   })
-  h('reveal', (path: string) => (existsSync(path) ? shell.openPath(path) : 'missing'))
+  // Opening is for folders and pictures. Anything else is shown in its folder, never started: the
+  // path can come from an agent's message, and opening a program or a script would run it.
+  h('reveal', (path: string) => {
+    if (typeof path !== 'string' || !existsSync(path)) return 'missing'
+    if (statSync(path).isDirectory() || IMAGE_TYPES[extname(path).toLowerCase()]) return shell.openPath(path)
+    shell.showItemInFolder(path)
+    return ''
+  })
   h('file:image', (path: string) => {
     const type = IMAGE_TYPES[extname(path).toLowerCase()]
     if (!type || !existsSync(path) || statSync(path).size > 12e6) return null
@@ -368,24 +395,28 @@ app.whenReady().then(async () => {
   await hands.start().catch(() => {})
   browser = new Browser(() => win, emit)
   toolbox = new Toolbox(store, emit)
-  const tools = (who: string, folder: string, access: Access) => [
+  const tools = (who: string, folder: string, access: Access, room: string) => [
     // The browser reaches the internet and signed in pages, so it waits for Auto or Full; Plan
     // only reads, and a connected tool can write anywhere.
-    ...(store.settings.browser !== false && (access === 'workspace' || access === 'full') ? browser.tools(who, folder) : []),
+    ...(store.settings.browser !== false && (access === 'workspace' || access === 'full') ? browser.tools(who, folder, room) : []),
     ...(access === 'plan' ? [] : toolbox.tools()),
   ]
   limits = new Limits(store, (l) => { emit('limits', l); emit('ledger', engine.ledger()) }, () => engine.agents.filter((a) => a.found && a.via === 'cli').map((a) => a.id))
   engine = new Engine(store, { emit, notify, packs, tools, turned: (who, u) => limits.turned(who, u), flow: (f) => flows?.put(f) }, hands, new Snapshots(join(app.getPath('userData'), 'checkpoints')))
   flows = new Flows(store, engine, { emit, notify })
+  count = new Count(store)
+  count.start()
   remote = new Remote(store, engine, { emit, defaults })
   wire()
   const icon = join(__dirname, '../build/icon-1024.png')
   if (mac && existsSync(icon)) app.dock?.setIcon(icon)
   useConnectors(store.settings.connectors)
+  useEndpoints()
   createWindow()
   updates = new Updates(store, emit)
   updates.start()
   flush(store.dir).catch(() => {})
+  engine.sweep()
   await engine.refresh()
   limits.start()
   flows.start()
