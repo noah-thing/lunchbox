@@ -508,7 +508,15 @@ input[type=number].select{width:64px}
 .ws-stephead{display:flex;align-items:center;gap:10px}
 .ws-stephead code{font:11px var(--mono);color:var(--faint)}
 .ws-stephead i{flex:1;height:1px;background:var(--line)}
-.ws-steps pre{margin:10px 0 12px;font:11px/14px var(--mono);color:var(--faint);overflow:hidden;user-select:none}
+.ws-steps pre{margin:10px 0 12px;font:11px/14px var(--mono);color:var(--faint);white-space:pre;overflow:hidden;user-select:none}
+.ws-steps pre>div{height:14px}
+.ws-steps pre{min-height:42px}
+.ws-steps pre .cell{display:inline-block;width:1ch;font-style:normal;text-align:center;overflow:visible}
+.ws-steps .bn-frame{color:color-mix(in oklab,var(--faint) 70%,transparent)}
+.ws-steps .bn-dim{color:var(--dim)}
+.ws-steps .bn-ink{color:var(--ink)}
+.caretblink{animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
 .ws-steps b{font-weight:500}
 .ws-steps span{font-size:12px;line-height:1.5;color:var(--dim)}
 @media (max-width:860px){.ws-steps{grid-template-columns:1fr}.ws-steps li+li{border-left:0;border-top:1px solid var(--line)}}
@@ -524,7 +532,7 @@ input[type=number].select{width:64px}
 .ws-ticks{display:inline-flex;gap:2px;max-width:180px;flex-wrap:wrap}
 .ws-ticks i{width:3px;height:14px;border-radius:1px;background:var(--line2)}
 .ws-ticks i.new{background:var(--lit)}
-@media (prefers-reduced-motion:reduce){.ws-nowline i{animation:none}}
+@media (prefers-reduced-motion:reduce){.ws-nowline i,.caretblink{animation:none}}
 .ws-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .ws-actions .grow{flex:1}
 .ws-ask{display:flex;flex-direction:column;gap:12px}

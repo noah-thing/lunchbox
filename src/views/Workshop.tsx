@@ -46,19 +46,37 @@ function Now({ state, busy, waiting }: { state: WorkshopState | null; busy: bool
   )
 }
 
-// The three steps, each with a small drawing in the app's own characters: the box you type in, the
-// alphabets of the agents at work, and the two buttons at the end.
-// The builders' alphabets, each climbing its ramp and back down, as the middle step's drawing.
-const weave = (alphabets: string[]) => (alphabets.length ? alphabets : ['.:-=+*#%@', '.-01', '.:/\\|X#']).slice(0, 3)
-  .map((a) => { const ramp = a + [...a].reverse().slice(1, -1).join(''); return ramp.repeat(Math.ceil(24 / ramp.length)).slice(0, 24) }).join('\n')
+// The three steps, each drawn in box lines: the box you type in, the builders' alphabets running
+// together into one part, and the two buttons at the end.
+type Run = [string, string?]
+// Symbols past ASCII can come from a fallback font of another width, so each sits in a cell of its own.
+const cells = (text: string) => [...text].map((c, i) => (c.charCodeAt(0) > 127 ? <i key={i} className="cell">{c}</i> : c))
+const line = (runs: Run[], key: number) => <div key={key}>{runs.map(([text, cls], j) => <span key={j} className={cls}>{cells(text)}</span>)}</div>
+const repeat = (alphabet: string, n: number) => alphabet.repeat(Math.ceil(n / Math.max(1, alphabet.length))).slice(0, n)
 
-const STEPS = [
+function streams(alphabets: string[]): Run[][] {
+  const list = (alphabets.length ? alphabets : ['.:-=+*#']).slice(0, 3)
+  const n = list.length
+  const join = n === 1 ? ['───▸ '] : n === 2 ? ['─╮   ', '─┴─▸ '] : ['─╮   ', '─┼─▸ ', '─╯   ']
+  const at = n === 1 ? 0 : 1
+  return list.map((a, i) => [[repeat(a, 9), 'bn-dim'], [' ' + join[i], 'bn-frame'], [i === at ? '▓▓▓▓▓▓' : '', 'bn-ink']])
+}
+
+const STEPS: { name: string; line: string; art: (alphabets: string[]) => Run[][] }[] = [
   { name: 'Say what you want', line: 'A button, a page, a provider, an integration. Anything Lunchbox could do.',
-    art: '+----------------------+\n| > a sound when an_   |\n+----------------------+' },
+    art: () => [
+      [['╭' + '─'.repeat(26) + '╮', 'bn-frame']],
+      [['│ ', 'bn-frame'], ['a sound when an agent', 'bn-dim'], ['▍', 'bn-ink caretblink'], ['   │', 'bn-frame']],
+      [['╰' + '─'.repeat(26) + '╯', 'bn-frame']],
+    ] },
   { name: 'An agent builds it', line: 'In your own copy of Lunchbox, the way the rest of the app is made. The first time takes a minute to set up.',
-    art: '' },
+    art: streams },
   { name: 'Try it, or send it', line: 'Open your Lunchbox with one click and switch back any time. Send it to us if everyone should have it.',
-    art: '+----------+ +---------+\n| > try it | | ^ send  |\n+----------+ +---------+' },
+    art: () => [
+      [['╭' + '─'.repeat(10) + '╮ ╭' + '─'.repeat(10) + '╮', 'bn-frame']],
+      [['│ ', 'bn-frame'], ['▸ Try it', 'bn-ink'], [' │ │ ', 'bn-frame'], ['↑ Send  ', 'bn-dim'], [' │', 'bn-frame']],
+      [['╰' + '─'.repeat(10) + '╯ ╰' + '─'.repeat(10) + '╯', 'bn-frame']],
+    ] },
 ]
 
 // Where the person asks for what Lunchbox is missing. An agent builds it into their own copy of
@@ -195,7 +213,7 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
             {STEPS.map((st, i) => (
               <li key={st.name}>
                 <div className="ws-stephead"><code>0{i + 1}</code><i /></div>
-                <pre aria-hidden="true">{st.art || weave(builders)}</pre>
+                <pre aria-hidden="true">{st.art(builders).map(line)}</pre>
                 <b>{st.name}</b>
                 <span>{st.line}</span>
               </li>
