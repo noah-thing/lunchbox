@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { WorkshopState } from '../../shared/types'
 import { Loader, Mark, Sure } from '../ui/bits'
+import { Field, type Scene } from '../ui/Field'
 import { IconFolder, IconPlay, IconShare } from '../ui/icons'
 import { agentOf, ago, desk, isDesktop, mod, reason, unavailable, useApp } from '../lib/desk'
 import type { View } from '../App'
@@ -13,6 +14,47 @@ const IDEAS = [
   'A shortcut that opens the room\'s folder in my editor',
   'A page that lists my open GitHub pull requests',
   'A sound when an agent finishes',
+]
+
+// The crew the main process starts a Workshop room with: the default crew, or the first three ready.
+function useBuilders() {
+  const agents = useApp((s) => s.agents)
+  const defaults = useApp((s) => s.settings.defaultCrew)
+  const ready = agents.filter((a) => !unavailable(a)).map((a) => a.id)
+  const preferred = defaults.filter((id) => ready.includes(id))
+  return (preferred.length ? preferred : ready.slice(0, 3)).map((id) => agentOf(id, agents))
+}
+
+// The Workshop at a glance, drawn the way a room's panel draws its crew: each builder is a region
+// of its own alphabet, the field quickens while a version is being built and nearly stops when one
+// waits to be tried.
+function Now({ state, busy, waiting }: { state: WorkshopState | null; busy: boolean; waiting: boolean }) {
+  const crew = useBuilders()
+  const scene = useRef<Scene>({ sources: [], active: -1, cables: [] })
+  scene.current.sources = crew.map((a, i) => ({ alphabet: a.alphabet, x: (i + 0.5) / crew.length, y: i % 2 ? 0.66 : 0.34, energy: 0.22 }))
+  scene.current.active = busy && crew.length ? 0 : -1
+  scene.current.hold = waiting
+  const phase = busy ? 'working' : waiting ? 'waiting' : 'idle'
+  const seen = useRef(phase)
+  if (seen.current !== phase) { seen.current = phase; scene.current.bump = (scene.current.bump ?? 0) + 1 }
+  const caption = busy ? state!.busy!.step : state?.mine ? 'This is your Lunchbox' : waiting ? 'Ready to try' : crew.length ? 'Ready when you are' : 'No agent is ready yet'
+  return (
+    <div className="ws-now rise" aria-hidden="true">
+      <Field scene={scene} height={84} quiet={0.3} className="nowfield" />
+      <div className={`ws-nowline ${phase}`}><i /><span>{caption}</span>{state?.ready && <code>Lunchbox {label(state.base)}</code>}</div>
+    </div>
+  )
+}
+
+// The three steps, each with a small drawing in the app's own characters: the box you type in, the
+// alphabets of the agents at work, and the two buttons at the end.
+const STEPS = [
+  { name: 'Say what you want', line: 'A button, a page, a provider, an integration. Anything Lunchbox could do.',
+    art: '+----------------------+\n| > a sound when an_   |\n+----------------------+' },
+  { name: 'An agent builds it', line: 'In your own copy of Lunchbox, the way the rest of the app is made. The first time takes a minute to set up.',
+    art: '.:-=+*#%@@%#*+=-:..:-=+*\n.-01.-0110.-01.-0110.-01\n.:/\\|X#X|\\/:..:/\\|X#X|\\/' },
+  { name: 'Try it, or send it', line: 'Open your Lunchbox with one click and switch back any time. Send it to us if everyone should have it.',
+    art: '+----------+ +---------+\n| > try it | | ^ send  |\n+----------+ +---------+' },
 ]
 
 // Where the person asks for what Lunchbox is missing. An agent builds it into their own copy of
@@ -70,11 +112,12 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
 
         {!isDesktop && <div className="hint rise">The Workshop works in the desktop app.</div>}
 
+        <Now state={state} busy={busy} waiting={!!state?.ready && changed > 0 && !behind && !busy && !state.mine} />
+
         {state?.mine && (
           <section className="ws-mine rise" style={{ '--i': 1 } as CSSProperties}>
             <span className="ws-dot" aria-hidden />
             <div className="grow"><b>You are using your Lunchbox</b><span>Everything you built is in this one. Updates arrive in the standard Lunchbox.</span></div>
-            {(state.changes.length ?? 0) > 0 && <Suggest disabled={busy} say={say} />}
             <button className="btn small quiet" onClick={() => act('workshop:back')}>Switch back</button>
           </section>
         )}
@@ -103,9 +146,13 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
         {state?.ready && changed > 0 && !behind && (
           <section className="ws-card ws-built rise" style={{ '--i': 2 } as CSSProperties}>
             <div className="grow">
-              <b>{state.mine ? 'Your Lunchbox' : 'Ready to try'}</b>
+              <b><i className="ws-lit" aria-hidden />{state.mine ? 'Your Lunchbox' : 'Ready to try'}</b>
               <span>{changed} file{changed === 1 ? '' : 's'} changed{ideas.length ? `, from ${ideas.length} idea${ideas.length === 1 ? '' : 's'}` : ''}. <button className="linkish" onClick={() => setDetails(!details)} aria-expanded={details}>{details ? 'Hide details' : 'Details'}</button></span>
             </div>
+            <span className="ws-tally" title="One mark per file. Lit marks are new files.">
+              <span className="ws-ticks" aria-hidden>{state.changes.slice(0, 40).map((c) => <i key={c.file} className={c.fresh ? 'new' : ''} />)}</span>
+              <span className="ws-count"><i>+{state.changes.reduce((n, c) => n + c.added, 0)}</i><em>−{state.changes.reduce((n, c) => n + c.removed, 0)}</em></span>
+            </span>
             <button className="btn" disabled={busy} onClick={() => act('workshop:open')}><IconPlay />{state.mine ? 'Restart with changes' : 'Try it'}</button>
             <div className="ws-also"><span>Want everyone to have it too?</span><Suggest disabled={busy} say={say} /></div>
             {details && (
@@ -140,9 +187,14 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
 
         {state && !state.ready && !busy && !state.busy?.error && !ideas.length && (
           <ol className="ws-steps rise" style={{ '--i': 2 } as CSSProperties}>
-            <li><code>01</code><div><b>Say what you want</b><span>A button, a page, a provider, an integration. Anything Lunchbox could do.</span></div></li>
-            <li><code>02</code><div><b>An agent builds it</b><span>In your own copy of Lunchbox, the way the rest of the app is made. The first time takes a minute to set up.</span></div></li>
-            <li><code>03</code><div><b>Try it, or send it</b><span>Open your Lunchbox with one click and switch back any time. Send it to us if everyone should have it.</span></div></li>
+            {STEPS.map((st, i) => (
+              <li key={st.name}>
+                <div className="ws-stephead"><code>0{i + 1}</code><i /></div>
+                <pre aria-hidden="true">{st.art}</pre>
+                <b>{st.name}</b>
+                <span>{st.line}</span>
+              </li>
+            ))}
           </ol>
         )}
       </div>
@@ -206,13 +258,8 @@ function Progress({ state, first, retry, clear, agent }: { state: WorkshopState;
 function Ask({ disabled, onStart }: { disabled: boolean; onStart: (text: string) => void }) {
   const [text, setText] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
-  const agents = useApp((s) => s.agents)
-  const defaults = useApp((s) => s.settings.defaultCrew)
-  // The crew the main process starts a Workshop room with: the default crew, or the first three ready.
-  const ready = agents.filter((a) => !unavailable(a)).map((a) => a.id)
-  const preferred = defaults.filter((id) => ready.includes(id))
-  const crew = preferred.length ? preferred : ready.slice(0, 3)
-  const names = crew.map((id) => agentOf(id, agents).short)
+  const crew = useBuilders()
+  const names = crew.map((a) => a.short)
   const go = () => { if (text.trim() && !disabled) { onStart(text.trim()); setText('') } }
   return (
     <section className="ws-ask rise" style={{ '--i': 1 } as CSSProperties}>
@@ -221,7 +268,7 @@ function Ask({ disabled, onStart }: { disabled: boolean; onStart: (text: string)
           onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } }} />
         <div className="ws-fieldfoot">
           {crew.length > 0
-            ? <span className="ws-by"><span className="stack">{crew.map((id) => <span key={id}><Mark seed={agentOf(id, agents).mark} size={12} /></span>)}</span>{names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} build it` : `${names[0]} builds it`}, in a room of its own</span>
+            ? <span className="ws-by"><span className="stack">{crew.map((a) => <span key={a.id}><Mark seed={a.mark} size={12} /></span>)}</span>{names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} build it` : `${names[0]} builds it`}, in a room of its own</span>
             : <span className="ws-by">Connect an agent on the Agents page to build it</span>}
           <button className="btn small" disabled={!text.trim() || disabled} onClick={go}>Build it<kbd>↵</kbd></button>
         </div>

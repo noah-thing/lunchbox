@@ -121,6 +121,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
     return () => removeEventListener('keydown', key)
   }, [])
 
+  const [shut, setShut] = useState<string | null>(null)
   const before = text.slice(0, caret)
   const mention = before.match(/(^|\s)@([\w-]*)$/)
   const slash = before.match(/^\/([\w: -]*)$/)
@@ -143,6 +144,8 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
       ...PLAYBOOKS.map((p) => ({ key: `p-${p.id}`, label: p.name, hint: `${p.field} · ${p.line}`, insert: fillPlaybook(p, '') })),
     ] as Suggestion[]).filter((s) => s.run || s.label.toLowerCase().includes(q) || s.hint.toLowerCase().includes(q)).slice(0, 10)
   }
+  // Escape puts the list away until the text changes.
+  if (shut === before) suggestions = []
   const pickSuggestion = (s: Suggestion) => {
     if (s.run) { s.run(); setText(''); setCaret(0); return }
     const start = mention ? caret - mention[2].length - 1 : 0
@@ -154,6 +157,8 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   }
 
   // The list opens above the box, or below it when there is no room, and keeps the chosen row in view.
+  // Rows without a mark keep its place when others have one, so the names line up.
+  const marked = suggestions.some((x) => x.mark)
   const listing = suggestions.length
   useLayoutEffect(() => {
     if (list.current) return follow(list.current, list.current.parentElement!)
@@ -213,7 +218,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
           {suggestions.map((s, i) => (
             <button key={s.key} role="option" aria-selected={i === at % suggestions.length} className={i === at % suggestions.length ? 'on' : ''}
               onMouseEnter={() => setAt(i)} onMouseDown={(e) => { e.preventDefault(); pickSuggestion(s) }}>
-              {s.mark && <Mark seed={s.mark} size={12} />}<b>{s.label}</b><span>{s.hint}</span>
+              {s.mark ? <Mark seed={s.mark} size={12} /> : marked && <i className="nomark" />}<b>{s.label}</b><span>{s.hint}</span>
             </button>
           ))}
         </div>
@@ -229,6 +234,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
             if (e.key === 'ArrowDown') { e.preventDefault(); return setAt(at + 1) }
             if (e.key === 'ArrowUp') { e.preventDefault(); return setAt(at - 1 + suggestions.length) }
             if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing)) { e.preventDefault(); return pickSuggestion(suggestions[at % suggestions.length]) }
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); e.nativeEvent.stopPropagation(); return setShut(before) }
           }
           // Up in an empty box brings back what was sent before; down walks forward again.
           // Inside a recalled message the arrows still move the caret; only its two ends step on.

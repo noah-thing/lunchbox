@@ -118,8 +118,11 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
     sent.current = true
     start(text)
   })
-  const shownPacks = packs.filter((p, i) => i < 4 || p.id === pack)
-  const morePacks = packs.filter((p) => !shownPacks.includes(p))
+  // Three packs sit beside General and the rest are behind More, which carries the name of the one
+  // picked from it. The row is the same length whatever is chosen, so it never wraps.
+  const shownPacks = packs.slice(0, 3)
+  const morePacks = packs.slice(3)
+  const picked = morePacks.find((p) => p.id === pack)
   const pick = async () => { const p = await desk.call('pick'); if (p) setWorkspace(p) }
   const recent = recents().filter((r) => r !== workspace)
   const label = crew.length ? crew.map((id) => agentOf(id, agents).bin ?? agentOf(id, agents).short.toLowerCase()).join(' + ') : 'no agents yet'
@@ -166,10 +169,13 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
           <button className={`chip${!pack ? ' on' : ''}`} onClick={() => setPack(undefined)}>General</button>
           {shownPacks.map((p) => <button key={p.id} className={`chip${pack === p.id ? ' on' : ''}`} onClick={() => setPack(p.id)} title={p.line}>{p.name}</button>)}
           {morePacks.length > 0 && (
-            <select className="chip select" value="" onChange={(e) => e.target.value && setPack(e.target.value)} aria-label="More packs">
-              <option value="">More</option>
-              {morePacks.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <Menu label="More packs" className={`packmenu${picked ? ' on' : ''}`} button={<span className="pilltext">{picked?.name ?? 'More'}</span>}>
+              {(close) => morePacks.map((p) => (
+                <button key={p.id} role="menuitemradio" aria-checked={pack === p.id} className={`item${pack === p.id ? ' on' : ''}`} onClick={() => { setPack(p.id); close() }}>
+                  <span className="grow"><b>{p.name}</b><span>{p.line}</span></span>
+                </button>
+              ))}
+            </Menu>
           )}
         </div>
         <div className="ideas rise" style={{ '--i': 4 } as CSSProperties}>

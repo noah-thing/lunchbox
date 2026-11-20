@@ -1,5 +1,6 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { still } from './bits'
+import { along, DAY_FLOOR } from './Band'
 
 // A source is one agent's region of the field. It writes in its own alphabet.
 export type Source = { alphabet: string; x: number; y: number; energy: number }
@@ -47,7 +48,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
     const ctx = el.getContext('2d')!
     let cols = 0, rows = 0, cellW = 7.2, raf = 0, last = 0, shown = true, bumps = scene.current.bump ?? 0
     let slow = 0, vt = 0, prev = 0
-    let ink = '', mid = '', faint = '', font = '', ramped = false
+    let ink = '', mid = '', faint = '', font = '', ramped = false, light = false
     const energy: number[] = []
     const ripples: Ripple[] = []
     const pointer = { c: -99, r: -99, lift: 0 }
@@ -62,6 +63,9 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
       ink = (ramped && glyph(4)) || s.getPropertyValue('--ink').trim()
       mid = (ramped && glyph(3)) || ink
       faint = (ramped && glyph(1)) || s.getPropertyValue('--faint').trim()
+      // By day the quiet cells start further up the ramp, as the bands do, or they wash into the paper.
+      light = document.documentElement.dataset.theme === 'light'
+      if (light && ramped) faint = along([1, 2, 3, 4].map(glyph), DAY_FLOOR)
       font = `12px ${s.getPropertyValue('--mono')}`
     }
     const size = () => {
@@ -189,7 +193,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
         ctx.fillStyle = faint
         ctx.fillText(line[DIM], 0, yy)
         ctx.fillStyle = mid
-        ctx.globalAlpha = ramped ? 0.85 : 0.6
+        ctx.globalAlpha = ramped ? (light ? 1 : 0.85) : 0.6
         ctx.fillText(line[MID], 0, yy)
         ctx.globalAlpha = 1
         ctx.fillStyle = ink
