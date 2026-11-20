@@ -308,7 +308,8 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cbar{display:flex;align-items:center;gap:4px;padding:8px}
 .shellnote{font:11px var(--mono);color:var(--faint);margin-left:8px}
-.send{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}
+/* Send keeps its shape in a narrow room; the note beside the pills gives way instead. */
+.send{flex:none;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}
 .send:disabled{opacity:.2}
 .send span{display:none}
 .send:active:not(:disabled){transform:scale(.94)}

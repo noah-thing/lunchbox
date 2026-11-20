@@ -28,7 +28,7 @@ export function watchLeaving() {
     for (const c of changes) {
       if (!c.removedNodes.length || !c.target.isConnected) continue
       for (const node of c.removedNodes) {
-        if (node instanceof HTMLElement && !node.classList.contains('gone') && node.matches('.scrim.center, .menu, .toast.long, .panel')) stand(node, c.target, c.nextSibling)
+        if (node instanceof HTMLElement && !node.classList.contains('gone') && node.matches('.scrim.center, .menu, .suggest, .toast.long, .panel')) stand(node, c.target, c.nextSibling)
       }
     }
   }).observe(document.body, { childList: true, subtree: true })

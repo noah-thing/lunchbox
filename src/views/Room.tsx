@@ -155,6 +155,13 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
     // cuts them off at that edge so they come out from under the panel, not across it.
     slide('.convo .roomhead > .spacer ~ *', from.edge - to.edge)
     document.querySelector('.convo .roomhead')?.animate([{ clipPath: 'inset(0)' }, { clipPath: 'inset(0)' }], { duration: 760 })
+    // A name or a folder that gets its room back is uncovered at the pace the buttons move, so
+    // the two never lie on each other on the way.
+    const uncover = (sel: string, grown: number, side: 'left' | 'right') => {
+      if (grown > 2) document.querySelector(sel)?.animate([{ clipPath: side === 'right' ? `inset(0 ${grown}px 0 0)` : `inset(0 0 0 ${grown}px)` }, { clipPath: 'inset(0)' }], { duration: 760, easing: 'cubic-bezier(.65,0,.35,1)' })
+    }
+    uncover('.convo .roomhead h1', to.title - from.title, 'right')
+    uncover('.convo .roomhead > .ghostbtn', to.folder - from.folder, 'left')
   }, [panel])
   // Defined before the loading return: the shortcut can fire while the room is still loading.
   const togglePanel = () => {
@@ -243,11 +250,14 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   )
 }
 
-type Lefts = { column: number; edge: number }
-// Where the chat column and the right end of the room header are, before and after the panel moves them.
+type Lefts = { column: number; edge: number; title: number; folder: number }
+// Where the chat column and the right end of the room header are, and how wide the name and the
+// folder are, before and after the panel moves them.
 const lefts = (): Lefts | null => {
   const column = document.querySelector('.convo .column'), convo = document.querySelector('.convo')
-  return column && convo ? { column: column.getBoundingClientRect().left, edge: convo.getBoundingClientRect().right } : null
+  if (!column || !convo) return null
+  const wide = (sel: string) => convo.querySelector(sel)?.getBoundingClientRect().width ?? 0
+  return { column: column.getBoundingClientRect().left, edge: convo.getBoundingClientRect().right, title: wide('.roomhead h1'), folder: wide('.roomhead > .ghostbtn') }
 }
 
 function Title({ name, rename }: { name: string; rename: (n: string) => void }) {
