@@ -334,10 +334,11 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 /* Models live in the crew menu: a quiet label beside each agent in the room. It opens that
    agent's list in place; the menu eases to its new height and the views slide, never jump. */
-.fit{overflow:hidden;transition:height 220ms var(--out)}
-.slide{animation:slidein 200ms var(--out) both}
-.slide.returning{animation-name:slideback}
-@keyframes slideback{from{opacity:0;transform:translateX(-10px)}}
+.fit{overflow:hidden;transition:height 280ms cubic-bezier(.32,.72,0,1)}
+.slide{animation:pushin 280ms cubic-bezier(.32,.72,0,1) both}
+.slide.returning{animation-name:pushback}
+@keyframes pushin{from{opacity:0;transform:translateX(18px)}}
+@keyframes pushback{from{opacity:0;transform:translateX(-18px)}}
 .crewrow{position:relative}
 .crewrow .modelchip{position:absolute;right:30px;top:8px;display:inline-flex;align-items:center;gap:4px;max-width:150px;height:20px;padding:0 6px 0 8px;border-radius:6px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 140ms var(--out),background-color 140ms var(--out)}
 @media (hover:hover){.crewrow .modelchip:hover{color:var(--ink);background:var(--hover)}}
@@ -350,11 +351,16 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .maintag.make{display:none;color:var(--faint);box-shadow:none;background:var(--hover);animation:fadein 160ms var(--out) both;transition:color 140ms var(--out)}
 @media (hover:hover){.crewrow:hover .maintag.make{display:inline-block}.maintag.make:hover{color:var(--ink)}}
 .crewrow:focus-within .maintag.make{display:inline-block}
-.menu:has(.crewrow){width:356px}
+.menu:has(>.fit){width:356px}
 /* The crew list scrolls inside the menu so it fits a short window. */
 .menu:has(>.fit){max-height:min(560px,calc(100vh - 140px));overflow-y:auto;overscroll-behavior:contain}
 .crewrow.off .item>.mark{opacity:.45}
-.modellist{max-height:280px;overflow-y:auto;overscroll-behavior:contain}
+/* Lists in a menu scroll without a bar: their edges fade instead, and only where there is more. */
+.menu ::-webkit-scrollbar,.menu::-webkit-scrollbar{width:0;height:0}
+@property --fade-top{syntax:'<length>';inherits:false;initial-value:0px}
+@property --fade-bottom{syntax:'<length>';inherits:false;initial-value:0px}
+.modellist{max-height:280px;overflow-y:auto;overscroll-behavior:contain;mask-image:linear-gradient(to bottom,transparent,#000 var(--fade-top),#000 calc(100% - var(--fade-bottom)),transparent);animation:edges linear both;animation-timeline:scroll(self)}
+@keyframes edges{0%{--fade-top:0px;--fade-bottom:22px}8%,92%{--fade-top:22px;--fade-bottom:22px}100%{--fade-top:22px;--fade-bottom:0px}}
 .item.modelrow{align-items:center;gap:10px;padding:7px 8px}
 .item.modelrow .grow{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .item.modelrow code,.item.modelrow .modelnow{flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--faint)}

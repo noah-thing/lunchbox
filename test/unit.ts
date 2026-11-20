@@ -2372,3 +2372,23 @@ test('plan heads-up: the answering agent near the end of a window is named, with
   assert.equal(lowOn([], limits, name), null)
 })
 
+
+test('codex effort: with no model picked, the levels are those of the model in its config', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { effortsFor } = await import('../electron/agents')
+  const was = process.env.CODEX_HOME
+  const home = (process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), 'lb-codex-')))
+  try {
+    writeFileSync(join(home, 'models_cache.json'), JSON.stringify({ models: [
+      { slug: 'big', priority: 0, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'ultra' }] },
+      { slug: 'small', priority: 1, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }] },
+    ] }))
+    assert.deepEqual(await effortsFor('codex'), ['low', 'ultra'], 'no config: the first listed model')
+    writeFileSync(join(home, 'config.toml'), 'model = "small"\nmodel_reasoning_effort = "high"\n\n[profiles.x]\nmodel = "big"\n')
+    assert.deepEqual(await effortsFor('codex'), ['low', 'medium'], 'the model Codex starts with, not one in a profile')
+    assert.deepEqual(await effortsFor('codex', 'big'), ['low', 'ultra'])
+  } finally {
+    if (was === undefined) delete process.env.CODEX_HOME
+    else process.env.CODEX_HOME = was
+  }
+})
