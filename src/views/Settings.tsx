@@ -243,7 +243,7 @@ export function Settings({ edit, theme, setTheme, mode, setMode, custom, tune, s
           {EFFORT.filter((id) => agents.some((a) => a.id === id && a.found) && (id !== 'antigravity' || settings.models[id])).map((id) => {
             const a = agents.find((x) => x.id === id)!
             return (
-              <div className="setting col" key={id}>
+              <div className="setting" key={id}>
                 <div className="grow"><b>{a.short} effort</b><span>How hard {a.short} thinks before it acts, for the model it uses now. Thinking is billed as output, the most expensive kind of token. Default leaves {a.name} as you set it up.</span></div>
                 <Effort a={a} model={settings.models[id] ?? ''} plain />
               </div>
