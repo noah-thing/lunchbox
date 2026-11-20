@@ -132,7 +132,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // A new plan lifts out of the chat into the panel, so the panel opens for it. Only for now: the
   // choice to keep it closed stays saved. Pressing Stop is no moment for a panel to slide in.
   useEffect(() => {
-    const open = () => { if (!panelOn.current && performance.now() - stopped.current > 4000) { glideFrom.current = columnLeft(); reflow(); setPanel(true) } }
+    const open = () => { if (!panelOn.current && performance.now() - stopped.current > 4000) { glideFrom.current = lefts(); reflow(); setPanel(true) } }
     addEventListener('lunchbox:plan', open)
     return () => removeEventListener('lunchbox:plan', open)
   }, [])
@@ -140,19 +140,25 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // jumping, on the compositor.
   const panelOn = useRef(panel)
   panelOn.current = panel
-  const glideFrom = useRef<number | null>(null)
+  const glideFrom = useRef<Lefts | null>(null)
   useLayoutEffect(() => {
     const from = glideFrom.current
     glideFrom.current = null
-    const to = columnLeft()
-    if (from === null || to === null || Math.abs(from - to) < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    for (const el of document.querySelectorAll('.convo .column, .convo .dock')) {
-      el.animate([{ transform: `translateX(${from - to}px)` }, { transform: 'none' }], { duration: 760, easing: 'cubic-bezier(.65,0,.35,1)' })
+    const to = lefts()
+    if (!from || !to || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const slide = (sel: string, d: number) => {
+      if (Math.abs(d) < 2) return
+      for (const el of document.querySelectorAll(sel)) el.animate([{ transform: `translateX(${d}px)` }, { transform: 'none' }], { duration: 760, easing: 'cubic-bezier(.65,0,.35,1)' })
     }
+    slide('.convo .column, .convo .dock', from.column - to.column)
+    // The buttons at the end of the header ride with the edge they are pinned to, and the header
+    // cuts them off at that edge so they come out from under the panel, not across it.
+    slide('.convo .roomhead > .spacer ~ *', from.edge - to.edge)
+    document.querySelector('.convo .roomhead')?.animate([{ clipPath: 'inset(0)' }, { clipPath: 'inset(0)' }], { duration: 760 })
   }, [panel])
   // Defined before the loading return: the shortcut can fire while the room is still loading.
   const togglePanel = () => {
-    glideFrom.current = columnLeft()
+    glideFrom.current = lefts()
     reflow()
     setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
   }
@@ -237,7 +243,12 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   )
 }
 
-const columnLeft = () => document.querySelector('.convo .column')?.getBoundingClientRect().left ?? null
+type Lefts = { column: number; edge: number }
+// Where the chat column and the right end of the room header are, before and after the panel moves them.
+const lefts = (): Lefts | null => {
+  const column = document.querySelector('.convo .column'), convo = document.querySelector('.convo')
+  return column && convo ? { column: column.getBoundingClientRect().left, edge: convo.getBoundingClientRect().right } : null
+}
 
 function Title({ name, rename }: { name: string; rename: (n: string) => void }) {
   const [editing, setEditing] = useState(false)

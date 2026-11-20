@@ -132,7 +132,8 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .sbroom,.sbitem.needsyou{animation:land 300ms var(--out) backwards}
 .sbroom .grow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sblabel{padding:20px 8px 6px;font:11px var(--mono);color:var(--faint)}
-.sbrooms{flex:1;overflow:auto;display:flex;flex-direction:column;gap:1px}
+/* The list's scrollbar sits in the sidebar's own padding, so a long list keeps its rows as wide. */
+.sbrooms{flex:1;overflow:auto;display:flex;flex-direction:column;gap:1px;margin-right:-8px;scrollbar-gutter:stable}
 .sbfoot{display:flex;flex-direction:column;gap:1px;padding-top:8px}
 /* backwards, not both: a transform left on the page after it lands would trap every dialog's
    fixed backdrop inside the page instead of the window. */
@@ -416,7 +417,10 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 
 /* Panel: the room at a glance. Field on top, then who is here, how far along, what they share. */
 .room.withdetails{grid-template-columns:minmax(0,1fr) 320px}
-.panel{border-left:1px solid var(--line);overflow:auto;min-width:0;display:flex;flex-direction:column;animation:slidein 640ms cubic-bezier(.65,0,.35,1) both}
+/* The panel scrolls the way menus do, with no bar and a fade where there is more, so nothing in
+   it narrows the moment it grows past the window. */
+.panel{border-left:1px solid var(--line);overflow:auto;min-width:0;display:flex;flex-direction:column;mask-image:linear-gradient(to bottom,transparent,#000 var(--fade-top),#000 calc(100% - var(--fade-bottom)),transparent);animation:slidein 640ms cubic-bezier(.65,0,.35,1) both,edges linear both;animation-timeline:auto,scroll(self)}
+.panel::-webkit-scrollbar{width:0;height:0}
 @keyframes slidein{from{opacity:0;transform:translateX(8px)}}
 /* The panel's header lines up with the room header, so one hairline runs across both panes. */
 .panelhead{height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink);white-space:nowrap;-webkit-app-region:drag}
@@ -549,7 +553,10 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .pinput .pclose{display:flex;padding:4px;margin:-4px;border-radius:6px;cursor:pointer}
 @media (hover:hover){.pinput .pclose:hover kbd{color:var(--ink);box-shadow:inset 0 0 0 1px var(--faint)}}
 .pinput kbd{margin:0;padding:2px 6px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2);opacity:1;color:var(--faint);font-size:10.5px}
-.plist{overflow:auto;padding:6px}
+/* Room for the bar is always kept, as wide as the padding on the other side, so the rows do not
+   widen when a search leaves too few to scroll. */
+.plist{overflow:auto;padding:6px 0 6px 6px;scrollbar-gutter:stable}
+.plist::-webkit-scrollbar{width:6px}
 .pgroup{padding:10px 12px 4px;font:11px var(--mono);color:var(--faint)}
 .pgroup:first-child{padding-top:4px}
 .plist button{display:flex;width:100%;align-items:center;gap:16px;height:34px;padding:0 12px;border-radius:8px;color:var(--dim);transition:background-color 90ms var(--out),color 90ms var(--out)}
@@ -570,7 +577,7 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .booting,.room.loading{height:100%;display:grid;place-items:center;color:var(--faint)}
 .roomfail{display:flex;flex-direction:column;align-items:center;gap:12px;max-width:340px;text-align:center;color:var(--dim);animation:fadein 300ms var(--out) both}
 .rise{animation:rise 640ms var(--out) both;animation-delay:calc(var(--i,0) * 70ms + 60ms)}
-.titleedit{font-size:14px;font-weight:500;height:28px;padding:0 8px;margin-left:-8px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line2);min-width:240px}
+.titleedit{font-size:13.5px;font-weight:500;height:28px;padding:0 8px;margin-left:-8px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line2);min-width:240px}
 .tag{height:20px;padding:0 6px;border-radius:4px;font:10.5px var(--mono);color:var(--faint);box-shadow:inset 0 0 0 1px var(--line2)}
 .replaybar{display:flex;align-items:center;gap:10px;height:40px;padding:0 24px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim);animation:fadein 200ms var(--out) both}
 .replaybar .dot{width:6px;height:6px;border-radius:50%;background:var(--live);animation:breathe 1.2s ease-in-out infinite}
@@ -679,7 +686,8 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .msgtools>button svg,.msgtools>.menuwrap>button svg{width:14px;height:14px}
 .msgtools .menu{font:13px/1.5 var(--sans);color:var(--ink)}
 
-.arena{margin-top:24px;display:flex;flex-direction:column;gap:12px;animation:land 380ms var(--out) both}
+/* Not the message box, which is .composer.arena while side by side is on. */
+.arena:not(.composer){margin-top:24px;display:flex;flex-direction:column;gap:12px;animation:land 380ms var(--out) both}
 .arenahead{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
 .arenahead b{font-weight:500;color:var(--ink)}
 .arenahead span{margin-left:auto;font:11px var(--mono);color:var(--faint)}
@@ -905,7 +913,7 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .sbitem.needsyou small{color:var(--warn)}
 .sbpin{display:flex;color:var(--faint)}
 .sbpin svg{width:11px;height:11px}
-.sbarchived{height:26px;padding:0 8px;margin-top:6px;border-radius:6px;font-size:11.5px;color:var(--faint);text-align:left;transition:color 140ms var(--out)}
+.sbarchived{animation:fadein 200ms var(--out) both;height:26px;padding:0 8px;margin-top:6px;border-radius:6px;font-size:11.5px;color:var(--faint);text-align:left;transition:color 140ms var(--out)}
 @media (hover:hover){.sbarchived:hover{color:var(--dim)}}
 .sbroom.archived{opacity:.6}
 .inboxrow .grow b.mono{font:12.5px var(--mono)}
@@ -1092,7 +1100,9 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .planside h2 small{font-feature-settings:"tnum"}
 .planside .planrow{font-size:12.5px;line-height:18px;padding:4px 0}
 .planside .planbox{width:14px;height:14px;margin-top:2px}
-.planside.arriving{animation:planglow 1400ms var(--out) both}
+/* A plan handed to the panel opens its own room first, so the sections under it slide down. */
+.planside.arriving{interpolate-size:allow-keywords;overflow:clip;animation:planglow 1400ms var(--out) both,sideopen 520ms cubic-bezier(.65,0,.35,1) both}
+@keyframes sideopen{from{height:0;padding-block:0}}
 @keyframes planglow{from{background-color:var(--hover)}}
 .planwho{display:block;font-size:11px;color:var(--faint)}
 .plannow{display:block;margin-top:3px;font:11px/16px var(--mono);color:var(--faint);font-feature-settings:"tnum"}

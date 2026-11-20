@@ -1,4 +1,4 @@
-// Sheets, menus and a toast that reports a failure leave the way they came. React takes the node out at once, so a copy that
+// Sheets, menus, the room panel and a toast that reports a failure leave the way they came. React takes the node out at once, so a copy that
 // cannot be clicked or focused stands in its place for the length of the exit. A close from the
 // keyboard is instant, as every keyboard action is.
 const OUT = 180
@@ -28,7 +28,7 @@ export function watchLeaving() {
     for (const c of changes) {
       if (!c.removedNodes.length || !c.target.isConnected) continue
       for (const node of c.removedNodes) {
-        if (node instanceof HTMLElement && !node.classList.contains('gone') && node.matches('.scrim.center, .menu, .toast.long')) stand(node, c.target, c.nextSibling)
+        if (node instanceof HTMLElement && !node.classList.contains('gone') && node.matches('.scrim.center, .menu, .toast.long, .panel')) stand(node, c.target, c.nextSibling)
       }
     }
   }).observe(document.body, { childList: true, subtree: true })
