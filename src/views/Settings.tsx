@@ -9,7 +9,6 @@ import { Loader, Mark, Sure } from '../ui/bits'
 import { IconEdit, IconPalette, IconPlus, IconTrash } from '../ui/icons'
 import { Logo } from '../ui/Logo'
 import { Maker } from '../ui/Maker'
-import { Effort } from '../ui/ModelPicker'
 import { ACCESS, desk, reason, reload, short, unavailable, useApp, type RemoteStatus } from '../lib/desk'
 import type { Look } from '../App'
 import type { Limits } from '../../shared/types'
@@ -77,9 +76,6 @@ function Phone({ say }: { say: (t: string) => void }) {
     </section>
   )
 }
-
-// The agents that take an effort level on the command line. Which levels depends on the model.
-const EFFORT = ['claude', 'codex', 'antigravity']
 
 export function Settings({ edit, theme, setTheme, mode, setMode, custom, tune, setTune, keepTheme, dropTheme, themeWithAgent, ascii, setAscii, reach, setReach, look, setLook, restart, say }: {
   edit?: string; theme: ThemeId; setTheme: (t: ThemeId, e?: MouseEvent) => void; mode: Mode; setMode: (m: Mode, e?: MouseEvent) => void
@@ -240,15 +236,6 @@ export function Settings({ edit, theme, setTheme, mode, setMode, custom, tune, s
             <div className="grow"><b>Only the tools connected in Lunchbox</b><span>Start Claude Code in rooms without the MCP servers you set up outside Lunchbox. Every step reads less. Leave it off if your rooms use those servers.</span></div>
             <Toggle on={saving.lean === true} set={(v) => reload.settings({ saving: { ...saving, lean: v } })} label="Only the tools connected in Lunchbox" />
           </div>
-          {EFFORT.filter((id) => agents.some((a) => a.id === id && a.found) && (id !== 'antigravity' || settings.models[id])).map((id) => {
-            const a = agents.find((x) => x.id === id)!
-            return (
-              <div className="setting" key={id}>
-                <div className="grow"><b>{a.short} effort</b><span>How hard {a.short} thinks before it acts, for the model it uses now. Thinking is billed as output, the most expensive kind of token. Default leaves {a.name} as you set it up.</span></div>
-                <Effort a={a} model={settings.models[id] ?? ''} plain />
-              </div>
-            )
-          })}
         </div>
       </section>
 

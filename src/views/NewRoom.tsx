@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { PLAYBOOKS } from '../../shared/skills'
 import type { Skill } from '../../shared/types'
 import { Band } from '../ui/Band'
@@ -55,6 +55,33 @@ function defaultCrew(ids: string[], preferred: string[]) {
   const fromSettings = preferred.filter((id) => ids.includes(id))
   if (fromSettings.length) return fromSettings
   return ids.slice(0, 3)
+}
+
+// The page is centred, so anything that changes its height, a longer message or a second row of
+// ideas, moves all of it. It travels to its new place instead of jumping there. A window being
+// resized moves it every frame and takes its places.
+function useSettle() {
+  const body = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = body.current
+    if (!el) return
+    let top = el.offsetTop
+    let win = `${innerWidth} ${innerHeight}`
+    const born = performance.now()
+    const ro = new ResizeObserver(() => {
+      const was = top + new DOMMatrix(getComputedStyle(el).transform).m42
+      const same = win === `${innerWidth} ${innerHeight}`
+      top = el.offsetTop
+      win = `${innerWidth} ${innerHeight}`
+      // The first second belongs to the page rising in.
+      if (!same || Math.abs(was - top) < 1 || performance.now() - born < 1000 || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      for (const a of el.getAnimations()) if (a.id === 'settle') a.cancel()
+      el.animate([{ transform: `translateY(${was - top}px)` }, { transform: 'none' }], { id: 'settle', duration: 260, easing: 'cubic-bezier(.23,1,.32,1)' })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return body
 }
 
 const skillText = (s: Skill) => `${s.brief}\n\nSteps that worked last time:\n${s.steps.map((x) => `- ${x}`).join('\n')}`
@@ -118,15 +145,19 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
     sent.current = true
     start(text)
   })
-  const shownPacks = packs.filter((p, i) => i < 4 || p.id === pack)
-  const morePacks = packs.filter((p) => !shownPacks.includes(p))
+  // Three packs sit beside General and the rest are behind More, which carries the name of the one
+  // picked from it. The row is the same length whatever is chosen, so it never wraps.
+  const shownPacks = packs.slice(0, 3)
+  const morePacks = packs.slice(3)
+  const picked = morePacks.find((p) => p.id === pack)
   const pick = async () => { const p = await desk.call('pick'); if (p) setWorkspace(p) }
   const recent = recents().filter((r) => r !== workspace)
+  const body = useSettle()
   const label = crew.length ? crew.map((id) => agentOf(id, agents).bin ?? agentOf(id, agents).short.toLowerCase()).join(' + ') : 'no agents yet'
 
   return (
     <div className={`newroom${starting ? ' starting' : ''}`}>
-      <div className="newbody">
+      <div className="newbody" ref={body}>
         <Band rows={9} label={label} busy={starting} patterned />
         <h1 className="rise" style={{ '--i': 1 } as CSSProperties}>What are we working on?</h1>
         <div className="rise" style={{ '--i': 2 } as CSSProperties}>
@@ -166,10 +197,13 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
           <button className={`chip${!pack ? ' on' : ''}`} onClick={() => setPack(undefined)}>General</button>
           {shownPacks.map((p) => <button key={p.id} className={`chip${pack === p.id ? ' on' : ''}`} onClick={() => setPack(p.id)} title={p.line}>{p.name}</button>)}
           {morePacks.length > 0 && (
-            <select className="chip select" value="" onChange={(e) => e.target.value && setPack(e.target.value)} aria-label="More packs">
-              <option value="">More</option>
-              {morePacks.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <Menu label="More packs" className={`packmenu${picked ? ' on' : ''}`} button={<span className="pilltext">{picked?.name ?? 'More'}</span>}>
+              {(close) => morePacks.map((p) => (
+                <button key={p.id} role="menuitemradio" aria-checked={pack === p.id} className={`item${pack === p.id ? ' on' : ''}`} onClick={() => { setPack(p.id); close() }}>
+                  <span className="grow"><b>{p.name}</b><span>{p.line}</span></span>
+                </button>
+              ))}
+            </Menu>
           )}
         </div>
         <div className="ideas rise" style={{ '--i': 4 } as CSSProperties}>

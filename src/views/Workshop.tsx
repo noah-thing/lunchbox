@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { WorkshopState } from '../../shared/types'
-import { Loader, Sure } from '../ui/bits'
+import { Loader, Mark, Sure } from '../ui/bits'
+import { Field, type Scene } from '../ui/Field'
 import { IconFolder, IconPlay, IconShare } from '../ui/icons'
-import { ago, desk, isDesktop, mod, reason, useApp } from '../lib/desk'
+import { agentOf, ago, desk, isDesktop, mod, reason, unavailable, useApp } from '../lib/desk'
+import { Menu } from '../ui/Access'
+import { CrewMenu } from '../ui/ModelPicker'
 import type { View } from '../App'
 
 // A release reads as its version; anything else, such as a commit in tests, by its short id.
@@ -13,6 +16,69 @@ const IDEAS = [
   'A shortcut that opens the room\'s folder in my editor',
   'A page that lists my open GitHub pull requests',
   'A sound when an agent finishes',
+]
+
+// The crew the main process starts a Workshop room with: the default crew, or the first three ready.
+function useBuilders() {
+  const agents = useApp((s) => s.agents)
+  const defaults = useApp((s) => s.settings.defaultCrew)
+  const ready = agents.filter((a) => !unavailable(a)).map((a) => a.id)
+  const preferred = defaults.filter((id) => ready.includes(id))
+  return (preferred.length ? preferred : ready.slice(0, 3)).map((id) => agentOf(id, agents))
+}
+
+// The Workshop at a glance, drawn the way a room's panel draws its crew: each builder is a region
+// of its own alphabet, the field quickens while a version is being built and nearly stops when one
+// waits to be tried.
+function Now({ state, busy, waiting }: { state: WorkshopState | null; busy: boolean; waiting: boolean }) {
+  const crew = useBuilders()
+  const scene = useRef<Scene>({ sources: [], active: -1, cables: [] })
+  scene.current.sources = crew.map((a, i) => ({ alphabet: a.alphabet, x: (i + 0.5) / crew.length, y: i % 2 ? 0.66 : 0.34, energy: 0.1 }))
+  scene.current.active = busy && crew.length ? 0 : -1
+  scene.current.hold = waiting
+  const phase = busy ? 'working' : waiting ? 'waiting' : 'idle'
+  const seen = useRef(phase)
+  if (seen.current !== phase) { seen.current = phase; scene.current.bump = (scene.current.bump ?? 0) + 1 }
+  const caption = busy ? state!.busy!.step : state?.mine ? 'This is your Lunchbox' : waiting ? 'Ready to try' : crew.length ? 'Ready when you are' : 'No agent is ready yet'
+  return (
+    <div className="ws-now rise" aria-hidden="true">
+      <Field scene={scene} height={98} quiet={0.3} fill={0.2} spread={0.21} className="nowfield" />
+      <div className={`ws-nowline ${phase}`}><i /><span>{caption}</span>{state?.ready && <code>Lunchbox {label(state.base)}</code>}</div>
+    </div>
+  )
+}
+
+// The three steps, each drawn in box lines: the box you type in, the builders' alphabets running
+// together into one part, and the two buttons at the end.
+type Run = [string, string?]
+// Symbols past ASCII can come from a fallback font of another width, so each sits in a cell of its own.
+const cells = (text: string) => [...text].map((c, i) => (c.charCodeAt(0) > 127 ? <i key={i} className="cell">{c}</i> : c))
+const line = (runs: Run[], key: number) => <div key={key}>{runs.map(([text, cls], j) => <span key={j} className={cls}>{cells(text)}</span>)}</div>
+const repeat = (alphabet: string, n: number) => alphabet.repeat(Math.ceil(n / Math.max(1, alphabet.length))).slice(0, n)
+
+function streams(alphabets: string[]): Run[][] {
+  const list = (alphabets.length ? alphabets : ['.:-=+*#']).slice(0, 3)
+  const n = list.length
+  const join = n === 1 ? ['───▸ '] : n === 2 ? ['─╮   ', '─┴─▸ '] : ['─╮   ', '─┼─▸ ', '─╯   ']
+  const at = n === 1 ? 0 : 1
+  return list.map((a, i) => [[repeat(a, 9), 'bn-dim'], [' ' + join[i], 'bn-frame'], [i === at ? '▓▓▓▓▓▓' : '', 'bn-ink']])
+}
+
+const STEPS: { name: string; line: string; art: (alphabets: string[]) => Run[][] }[] = [
+  { name: 'Say what you want', line: 'A button, a page, a provider, an integration. Anything Lunchbox could do.',
+    art: () => [
+      [['╭' + '─'.repeat(26) + '╮', 'bn-frame']],
+      [['│ ', 'bn-frame'], ['a sound when an agent', 'bn-dim'], ['▍', 'bn-ink caretblink'], ['   │', 'bn-frame']],
+      [['╰' + '─'.repeat(26) + '╯', 'bn-frame']],
+    ] },
+  { name: 'An agent builds it', line: 'In your own copy of Lunchbox, the way the rest of the app is made. The first time takes a minute to set up.',
+    art: streams },
+  { name: 'Try it, or send it', line: 'Open your Lunchbox with one click and switch back any time. Send it to us if everyone should have it.',
+    art: () => [
+      [['╭' + '─'.repeat(10) + '╮ ╭' + '─'.repeat(10) + '╮', 'bn-frame']],
+      [['│ ', 'bn-frame'], ['▸ Try it', 'bn-ink'], [' │ │ ', 'bn-frame'], ['↑ Send  ', 'bn-dim'], [' │', 'bn-frame']],
+      [['╰' + '─'.repeat(10) + '╯ ╰' + '─'.repeat(10) + '╯', 'bn-frame']],
+    ] },
 ]
 
 // Where the person asks for what Lunchbox is missing. An agent builds it into their own copy of
@@ -34,7 +100,10 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
     if (state?.launched && state.launched.at > opened.current) go({ name: 'room', id: state.launched.room })
   }, [state?.launched?.at])
 
+  // The job that ran last, so Try again repeats that one and not whatever the state suggests.
+  const last = useRef<string | null>(null)
   const act = async (channel: string, done?: string) => {
+    if (['workshop:setup', 'workshop:open', 'workshop:update', 'workshop:reset'].includes(channel)) last.current = channel
     try {
       const s = (await desk.call(channel)) as WorkshopState | undefined
       if (s && typeof s === 'object' && 'ready' in s) setState(s)
@@ -45,9 +114,9 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
     }
   }
 
-  const build = async (text: string) => {
+  const build = async (text: string, crew?: string[]) => {
     try {
-      const r = await desk.call('workshop:idea', text)
+      const r = await desk.call('workshop:idea', text, crew)
       if (r?.room) go({ name: 'room', id: r.room })
       else setState(await desk.call('workshop'))
     } catch (e) {
@@ -56,6 +125,7 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
   }
 
   const ideas = rooms.filter((r) => r.pack === 'workshop' && !r.archived)
+  const builders = useBuilders().map((a) => a.alphabet)
   const busy = !!state?.busy && !state.busy.error
   const behind = !!state?.ready && !!state.base && state.base !== state.current
   const changed = state?.changes.length ?? 0
@@ -70,11 +140,12 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
 
         {!isDesktop && <div className="hint rise">The Workshop works in the desktop app.</div>}
 
+        <Now state={state} busy={busy} waiting={!!state?.ready && changed > 0 && !behind && !busy && !state.mine} />
+
         {state?.mine && (
           <section className="ws-mine rise" style={{ '--i': 1 } as CSSProperties}>
             <span className="ws-dot" aria-hidden />
             <div className="grow"><b>You are using your Lunchbox</b><span>Everything you built is in this one. Updates arrive in the standard Lunchbox.</span></div>
-            {(state.changes.length ?? 0) > 0 && <Suggest disabled={busy} say={say} />}
             <button className="btn small quiet" onClick={() => act('workshop:back')}>Switch back</button>
           </section>
         )}
@@ -89,7 +160,7 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
         <Ask disabled={busy || !!state?.waiting} onStart={build} />
 
         {state && (busy || state.busy?.error) && (
-          <Progress state={state} first={!state.ready} retry={() => (state.waiting ? build(state.waiting) : act(state.ready ? 'workshop:open' : 'workshop:setup'))} clear={() => act('workshop:dismiss')}
+          <Progress state={state} first={!state.ready} retry={() => (state.waiting ? build(state.waiting) : act(last.current ?? (state.ready ? 'workshop:open' : 'workshop:setup')))} clear={() => act('workshop:dismiss')}
             agent={state.conflict ? () => build(`Bring my Workshop changes from Lunchbox ${state.base} onto ${state.current}. Git could not move them on its own, because the same code changed in the release. Rebase the commits on the branch mine onto the tag ${state.current} by hand, keep what each change was for, and make the typecheck, the tests and the build pass.`) : undefined} />
         )}
 
@@ -103,9 +174,13 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
         {state?.ready && changed > 0 && !behind && (
           <section className="ws-card ws-built rise" style={{ '--i': 2 } as CSSProperties}>
             <div className="grow">
-              <b>{state.mine ? 'Your Lunchbox' : 'Ready to try'}</b>
+              <b><i className="ws-lit" aria-hidden />{state.mine ? 'Your Lunchbox' : 'Ready to try'}</b>
               <span>{changed} file{changed === 1 ? '' : 's'} changed{ideas.length ? `, from ${ideas.length} idea${ideas.length === 1 ? '' : 's'}` : ''}. <button className="linkish" onClick={() => setDetails(!details)} aria-expanded={details}>{details ? 'Hide details' : 'Details'}</button></span>
             </div>
+            <span className="ws-tally" title="One mark per file. Lit marks are new files.">
+              <span className="ws-ticks" aria-hidden>{state.changes.slice(0, 40).map((c) => <i key={c.file} className={c.fresh ? 'new' : ''} />)}</span>
+              <span className="ws-count"><i>+{state.changes.reduce((n, c) => n + c.added, 0)}</i><em>−{state.changes.reduce((n, c) => n + c.removed, 0)}</em></span>
+            </span>
             <button className="btn" disabled={busy} onClick={() => act('workshop:open')}><IconPlay />{state.mine ? 'Restart with changes' : 'Try it'}</button>
             <div className="ws-also"><span>Want everyone to have it too?</span><Suggest disabled={busy} say={say} /></div>
             {details && (
@@ -140,9 +215,14 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
 
         {state && !state.ready && !busy && !state.busy?.error && !ideas.length && (
           <ol className="ws-steps rise" style={{ '--i': 2 } as CSSProperties}>
-            <li><code>01</code><div><b>Say what you want</b><span>A button, a page, a provider, an integration. Anything Lunchbox could do.</span></div></li>
-            <li><code>02</code><div><b>An agent builds it</b><span>In your own copy of Lunchbox, the way the rest of the app is made. The first time takes a minute to set up.</span></div></li>
-            <li><code>03</code><div><b>Try it, or send it</b><span>Open your Lunchbox with one click and switch back any time. Send it to us if everyone should have it.</span></div></li>
+            {STEPS.map((st, i) => (
+              <li key={st.name}>
+                <div className="ws-stephead"><code>0{i + 1}</code><i /></div>
+                <pre aria-hidden="true">{st.art(builders).map(line)}</pre>
+                <b>{st.name}</b>
+                <span>{st.line}</span>
+              </li>
+            ))}
           </ol>
         )}
       </div>
@@ -203,18 +283,37 @@ function Progress({ state, first, retry, clear, agent }: { state: WorkshopState;
   )
 }
 
-function Ask({ disabled, onStart }: { disabled: boolean; onStart: (text: string) => void }) {
+// Who builds starts as the default crew and can be changed here, the same menu as a room's.
+function Ask({ disabled, onStart }: { disabled: boolean; onStart: (text: string, crew: string[]) => void }) {
   const [text, setText] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
-  const go = () => { if (text.trim() && !disabled) { onStart(text.trim()); setText('') } }
+  const agents = useApp((s) => s.agents)
+  const builders = useBuilders()
+  const [picked, setPicked] = useState<string[] | null>(null)
+  const crew = (picked ?? builders.map((a) => a.id)).filter((id) => agents.some((a) => a.id === id))
+  const names = crew.map((id) => agentOf(id, agents).short)
+  const toggle = (id: string) => setPicked(crew.includes(id) ? (crew.length > 1 ? crew.filter((w) => w !== id) : crew) : [...crew, id])
+  const listed = [...agents].filter((a) => a.found || crew.includes(a.id)).sort((a, b) => Number(!!unavailable(a)) - Number(!!unavailable(b)))
+  const go = () => { if (text.trim() && !disabled && crew.length) { onStart(text.trim(), crew); setText('') } }
   return (
     <section className="ws-ask rise" style={{ '--i': 1 } as CSSProperties}>
       <div className="ws-field">
         <textarea ref={field} rows={2} value={text} disabled={disabled} placeholder="What should Lunchbox do that it does not do yet?"
           onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } }} />
-        <button className="btn" disabled={!text.trim() || disabled} onClick={go}>Build it<kbd>↵</kbd></button>
+        <div className="ws-fieldfoot">
+          {crew.length > 0 ? (
+            <>
+              <Menu label="Who builds it" button={<><span className="stack">{crew.map((id) => <span key={id}><Mark seed={agentOf(id, agents).mark} size={12} /></span>)}</span><span className="crewpill">{crew.length === 1 ? names[0] : `${crew.length} agents`}</span></>}>
+                {(close) => <CrewMenu listed={listed} crew={crew} toggle={toggle} close={close} promote={(id) => setPicked([id, ...crew.filter((w) => w !== id)])} footer={null} />}
+              </Menu>
+              <span className="ws-by">{names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} build it` : `${names[0]} builds it`}, in a room of its own</span>
+            </>
+          ) : <span className="ws-by">Connect an agent on the Agents page to build it</span>}
+          <button className="btn small" disabled={!text.trim() || disabled || !crew.length} onClick={go}>Build it<kbd>↵</kbd></button>
+        </div>
       </div>
       <div className="ws-chips">
+        <small>For example</small>
         {IDEAS.map((i) => <button key={i} className="ws-chip" onClick={() => { setText(i); field.current?.focus() }}>{i}</button>)}
       </div>
     </section>

@@ -441,11 +441,24 @@ function codexCache(): CodexModel[] {
   }
 }
 const codexModels = () => codexCache().map((m) => m.slug!)
+// The model Codex runs when none is picked: the one in its config, else the first it lists.
+function codexDefault(list: CodexModel[]) {
+  try {
+    const conf = readFileSync(join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'config.toml'), 'utf8')
+    // Only the top of the file, before the first [table], holds the model Codex starts with.
+    const top = conf.split(/^\s*\[/m)[0]
+    const slug = top.match(/^\s*model\s*=\s*["']([^"']+)["']/m)?.[1]
+    const m = slug && list.find((x) => x.slug === slug)
+    if (m) return m
+    if (slug) return undefined
+  } catch {}
+  return list[0]
+}
 // A level the model does not list is left out rather than failing the turn; with no cache to ask,
 // Codex is trusted to judge it.
 function codexTakes(model: string | undefined, effort: string) {
   const list = codexCache()
-  const m = model ? list.find((x) => x.slug === model) : list[0]
+  const m = model ? list.find((x) => x.slug === model) : codexDefault(list)
   return !m?.supported_reasoning_levels?.length || m.supported_reasoning_levels.some((l) => l.effort === effort)
 }
 
@@ -455,7 +468,7 @@ export async function effortsFor(id: string, model?: string): Promise<string[]> 
   if (id === 'claude') return ['low', 'medium', 'high', 'xhigh', 'max']
   if (id === 'codex') {
     const list = codexCache()
-    const m = (model && list.find((x) => x.slug === model)) || (!model ? list[0] : undefined)
+    const m = model ? list.find((x) => x.slug === model) : codexDefault(list)
     return (m?.supported_reasoning_levels ?? []).map((l) => l.effort!).filter(Boolean)
   }
   if (id === 'antigravity') {

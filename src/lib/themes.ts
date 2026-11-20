@@ -16,7 +16,9 @@ type Ramp = [string, string, string, string]
 // A theme made by hand or by an agent may also set its own text, sheet, frame and message box,
 // which then replace the neutrals for that mode. pinned says waiting and failure were picked by
 // hand, so no reach recolours them.
-type Tone = { block: string; onBlock: string; accent: string; onAccent: string; glyphs: Ramp; warn?: string; bad?: string; text?: string; sheet?: string; frame?: string; box?: string; pinned?: boolean }
+// ring and full are for a theme whose accent is kept for one thing, such as Cobalt's yellow send
+// button: ring is the colour it reaches with instead, full its Full access.
+type Tone = { block: string; onBlock: string; accent: string; onAccent: string; glyphs: Ramp; warn?: string; bad?: string; text?: string; sheet?: string; frame?: string; box?: string; pinned?: boolean; ring?: string; full?: string }
 export type Theme = { id: ThemeId; name: string; note: string; hue: number; chroma: number; dark: Tone; light: Tone; custom?: boolean }
 
 export const THEMES: Theme[] = [
@@ -29,8 +31,8 @@ export const THEMES: Theme[] = [
     light: { block: '#0f3a44', onBlock: '#e6f8c8', accent: '#0e8c9c', onAccent: '#ffffff', glyphs: ['#9fd3c6', '#3fb3a2', '#13849a', '#0f3a44'] } },
   // After Infinite Ascent: cobalt on navy, sky and ice, and one yellow that acts. Waiting is orange.
   { id: 'cobalt', name: 'Cobalt', note: 'Cobalt, ice, one yellow', hue: 264, chroma: 0.034,
-    dark: { block: '#2b5cf2', onBlock: '#ffffff', accent: '#ffd84a', onAccent: '#0a1f6b', glyphs: ['#2a4fb8', '#2f7bf0', '#74ccf8', '#e3f2fc'], warn: '#ff9f43', bad: '#ff7a6b' },
-    light: { block: '#0b45d6', onBlock: '#ffffff', accent: '#ffcf2e', onAccent: '#0a1f6b', glyphs: ['#a9cdf0', '#5cb2ec', '#1c74d5', '#0b2a86'], warn: '#c26a00', bad: '#d1342a' } },
+    dark: { block: '#2b5cf2', onBlock: '#ffffff', accent: '#ffd84a', onAccent: '#0a1f6b', glyphs: ['#2a4fb8', '#2f7bf0', '#74ccf8', '#e3f2fc'], warn: '#ff9f43', bad: '#ff7a6b', ring: '#4d86ff', full: '#8fb8ff' },
+    light: { block: '#0b45d6', onBlock: '#ffffff', accent: '#ffcf2e', onAccent: '#0a1f6b', glyphs: ['#a9cdf0', '#5cb2ec', '#1c74d5', '#0b2a86'], warn: '#c26a00', bad: '#d1342a', ring: '#0b45d6', full: '#2f6cf0' } },
   // After Zeroflow: mint and sage, blush, butter and moss.
   { id: 'meadow', name: 'Meadow', note: 'Mint, blush and butter', hue: 152, chroma: 0.02,
     dark: { block: '#f6e3a6', onBlock: '#2b3424', accent: '#f4a29a', onAccent: '#3b1712', glyphs: ['#4b6a55', '#93b09d', '#e9a596', '#fbe9bc'] },
@@ -108,11 +110,12 @@ function waiting(t: Theme, mode: Mode, bg: string, lead: string, avoid: string[]
   return bright(0.86, mode === 'dark' ? 0.12 : 0.16, h, bg, mode)
 }
 
-// Full access: a step round from the theme's hue towards red, by way of violet on a cool theme
+// Full access: a step round from the theme's hue towards red, by way of violet on a blue theme
 // so it never lands on green, and fuller than anything near it. A warm theme is already beside
-// red, so there it is the theme's failure colour, as it is in Quiet.
+// red, so there it is the theme's failure colour, as it is in Quiet. So is it on a green theme,
+// where the way round through violet starts at teal, a colour Meadow's mint and blush never use.
 function risk(t: Theme, mode: Mode, bg: string, bad: string, avoid: string[]) {
-  if (!cool(t.hue)) return bad
+  if (!cool(t.hue) || t.hue < 180) return bad
   const h = [t.hue + 50, t.hue + 70, t.hue + 30].find((x) => far(x % 360, avoid)) ?? t.hue + 50
   return bright(mode === 'dark' ? 0.74 : 0.5, 0.19, h, bg, mode)
 }
@@ -147,16 +150,16 @@ function reaching(t: Theme, mode: Mode, reach: Reach): Record<string, string> {
   if (reach === 'quiet') return {}
   const tone = t[mode], s = solid(t, mode)
   // A pale accent, a yellow by day, cannot draw a ring on paper; the block colour can.
-  const strong = contrast(tone.accent, s.sheet) >= 2 || !loud(tone.block) || contrast(tone.block, s.sheet) < 2 ? tone.accent : tone.block
+  const strong = tone.ring ?? (contrast(tone.accent, s.sheet) >= 2 || !loud(tone.block) || contrast(tone.block, s.sheet) < 2 ? tone.accent : tone.block)
   const focus = lift(lift(strong, s.sheet, 3, mode), s.ground, 3, mode)
   // A built in cool theme's own failure and waiting colours are its Quiet ones; here they join
   // the family. What a person picked, in a theme of their own or by hand, is left alone.
   const kept = t.custom || tone.pinned || !cool(t.hue)
   const bad = kept && tone.bad ? tone.bad : failure(t, mode, s.sheet, [tone.accent])
-  const full = kept && tone.bad ? bad : risk(t, mode, s.well, bad, [strong, tone.accent])
+  const full = tone.full ? lift(tone.full, s.well, 3, mode) : kept && tone.bad ? bad : risk(t, mode, s.well, bad, [strong, tone.accent])
   const warn = kept && tone.warn ? tone.warn : waiting(t, mode, s.sheet, strong, [strong, tone.accent, bad, full])
   // The modes other than Full access take a colour that cannot be read as failure or waiting.
-  const safe = (c: string) => loud(c) && apart(oklch(c).h, oklch(bad).h) >= 40 && far(oklch(c).h, [warn, full])
+  const safe = (c: string) => loud(c) && apart(oklch(c).h, oklch(bad).h) >= 40 && far(oklch(c).h, tone.full ? [warn] : [warn, full])
   const calm = [strong, tone.accent, tone.block, tone.glyphs[1]].find(safe)
   const auto = calm && lift(calm, s.well, 3, mode)
   const set: Record<string, string> = {

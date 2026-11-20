@@ -132,7 +132,8 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .sbroom,.sbitem.needsyou{animation:land 300ms var(--out) backwards}
 .sbroom .grow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sblabel{padding:20px 8px 6px;font:11px var(--mono);color:var(--faint)}
-.sbrooms{flex:1;overflow:auto;display:flex;flex-direction:column;gap:1px}
+/* The list's scrollbar sits in the sidebar's own padding, so a long list keeps its rows as wide. */
+.sbrooms{flex:1;overflow:auto;display:flex;flex-direction:column;gap:1px;margin-right:-8px;scrollbar-gutter:stable}
 .sbfoot{display:flex;flex-direction:column;gap:1px;padding-top:8px}
 /* backwards, not both: a transform left on the page after it lands would trap every dialog's
    fixed backdrop inside the page instead of the window. */
@@ -307,7 +308,8 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .cbar .shellnote{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cbar{display:flex;align-items:center;gap:4px;padding:8px}
 .shellnote{font:11px var(--mono);color:var(--faint);margin-left:8px}
-.send{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}
+/* Send keeps its shape in a narrow room; the note beside the pills gives way instead. */
+.send{flex:none;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--ink);color:var(--ground);transition:opacity 160ms var(--out),transform 120ms var(--out)}
 .send:disabled{opacity:.2}
 .send span{display:none}
 .send:active:not(:disabled){transform:scale(.94)}
@@ -334,15 +336,16 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .menunote{padding:10px;font-size:12px;color:var(--faint)}
 /* Models live in the crew menu: a quiet label beside each agent in the room. It opens that
    agent's list in place; the menu eases to its new height and the views slide, never jump. */
-.fit{overflow:hidden;transition:height 220ms var(--out)}
-.slide{animation:slidein 200ms var(--out) both}
-.slide.returning{animation-name:slideback}
-@keyframes slideback{from{opacity:0;transform:translateX(-10px)}}
+.fit{overflow:hidden;transition:height 280ms cubic-bezier(.32,.72,0,1)}
+.slide{animation:pushin 280ms cubic-bezier(.32,.72,0,1) both}
+.slide.returning{animation-name:pushback}
+@keyframes pushin{from{opacity:0;transform:translateX(18px)}}
+@keyframes pushback{from{opacity:0;transform:translateX(-18px)}}
 .crewrow{position:relative}
-.crewrow .modelchip{position:absolute;right:30px;top:8px;display:inline-flex;align-items:center;gap:4px;max-width:130px;height:20px;padding:0 6px 0 8px;border-radius:6px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 140ms var(--out),background-color 140ms var(--out)}
+.crewrow .modelchip{position:absolute;right:30px;top:8px;display:inline-flex;align-items:center;gap:4px;max-width:150px;height:20px;padding:0 6px 0 8px;border-radius:6px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 140ms var(--out),background-color 140ms var(--out)}
 @media (hover:hover){.crewrow .modelchip:hover{color:var(--ink);background:var(--hover)}}
 .crewrow .modelchip .chev{flex:none;opacity:.7}
-.crewrow.checked .item .grow b{padding-right:112px}
+.crewrow.checked .item .grow b{padding-right:150px}
 .crewname{display:flex;align-items:center;gap:8px;min-width:0}
 .crewname>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crewrow.off .item .grow span{color:var(--faint)}
@@ -350,11 +353,16 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .maintag.make{display:none;color:var(--faint);box-shadow:none;background:var(--hover);animation:fadein 160ms var(--out) both;transition:color 140ms var(--out)}
 @media (hover:hover){.crewrow:hover .maintag.make{display:inline-block}.maintag.make:hover{color:var(--ink)}}
 .crewrow:focus-within .maintag.make{display:inline-block}
-.menu:has(.crewrow){width:344px}
+.menu:has(>.fit){width:356px}
 /* The crew list scrolls inside the menu so it fits a short window. */
 .menu:has(>.fit){max-height:min(560px,calc(100vh - 140px));overflow-y:auto;overscroll-behavior:contain}
 .crewrow.off .item>.mark{opacity:.45}
-.modellist{max-height:280px;overflow-y:auto;overscroll-behavior:contain}
+/* Lists in a menu scroll without a bar: their edges fade instead, and only where there is more. */
+.menu ::-webkit-scrollbar,.menu::-webkit-scrollbar{width:0;height:0}
+@property --fade-top{syntax:'<length>';inherits:false;initial-value:0px}
+@property --fade-bottom{syntax:'<length>';inherits:false;initial-value:0px}
+.modellist{max-height:280px;overflow-y:auto;overscroll-behavior:contain;mask-image:linear-gradient(to bottom,transparent,#000 var(--fade-top),#000 calc(100% - var(--fade-bottom)),transparent);animation:edges linear both;animation-timeline:scroll(self)}
+@keyframes edges{0%{--fade-top:0px;--fade-bottom:22px}8%,92%{--fade-top:22px;--fade-bottom:22px}100%{--fade-top:22px;--fade-bottom:0px}}
 .item.modelrow{align-items:center;gap:10px;padding:7px 8px}
 .item.modelrow .grow{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .item.modelrow code,.item.modelrow .modelnow{flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--faint)}
@@ -368,11 +376,32 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .soleagent .mark{filter:grayscale(1);opacity:.7}
 @media (hover:hover){.soleagent:hover{color:var(--dim);opacity:1}}
 @media (hover:hover){.modelhead:hover svg:first-child{color:var(--ink)}}
-.modeleffort{display:flex;align-items:center;gap:10px;margin:4px 4px 2px;padding:8px 4px 2px;border-top:1px solid var(--line)}
-.modeleffort b{font-size:12px;font-weight:500;color:var(--dim)}
-.modeleffort .seg{margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+/* Effort sits under the models as one slim bar cut into a step per level, lit from the left in a
+   quick wave. Pointing at a step previews its name and line; the lit colour is the theme's. */
+.effort{margin:4px 4px 2px;padding:10px 6px 4px;border-top:1px solid var(--line)}
+.efforthead{display:flex;align-items:center;gap:8px;height:20px}
+.efforthead b{font-size:12px;font-weight:500;color:var(--dim)}
+.effortname{font-size:12px;color:var(--ink);animation:effortin 180ms var(--out) both}
+.effortreset{margin-left:auto;height:20px;padding:0 7px;border-radius:5px;font-size:11.5px;color:var(--faint);transition:opacity 160ms var(--out),color 140ms var(--out),background-color 140ms var(--out)}
+.effortreset.hidden{opacity:0;pointer-events:none}
+@media (hover:hover){.effortreset:hover{color:var(--ink);background:var(--hover)}}
+.effortsteps{display:grid;grid-template-columns:repeat(var(--n),1fr);gap:3px;margin-top:4px;border-radius:6px;outline:0}
+.effortsteps:focus-visible{box-shadow:0 0 0 1px var(--focus)}
+.effortstep{display:flex;align-items:center;height:22px;padding:0;border-radius:4px;cursor:pointer}
+.effortstep i{display:block;width:100%;height:6px;border-radius:2px;background:var(--line2);transition:background-color 200ms var(--out) calc(var(--i) * 28ms),transform 160ms var(--out),opacity 160ms var(--out)}
+.effortstep.lit i{background:var(--lit)}
+.effortstep.lit.peeking i{opacity:.55}
+.effortstep.lit.peeking:is(:hover,.at) i,.effortstep.at:not(.peeking) i{opacity:1}
+@media (hover:hover){.effortstep:hover i{transform:scaleY(1.35)}}
+.effortstep:active i{transform:scaleY(1)}
+.effortstep:first-child i{border-radius:3px 2px 2px 3px}.effortstep:last-child i{border-radius:2px 3px 3px 2px}
+.effortline{margin:2px 0 0;min-height:17px;font-size:11.5px;line-height:17px;color:var(--faint);animation:effortin 180ms var(--out) both}
+@keyframes effortin{from{opacity:0;transform:translateY(2px)}}
+/* The crew row names the model and, when one is picked, the effort after a hairline. */
+.crewrow .modelchip .chipmodel{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.crewrow .modelchip .chiplevel{flex:none;padding-left:5px;margin-left:1px;border-left:1px solid var(--line2);color:var(--dim)}
 .modelfind{display:block;width:calc(100% - 8px);height:30px;margin:2px 4px 4px;padding:0 10px;border-radius:7px;font-size:12.5px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
-@media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*{animation:none}}
+@media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*,.effortname,.effortline{animation:none}.effortstep i{transition:none}}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
 /* lib/fit.ts drops a menu below its button when there is no room above, and caps its height. */
 .menu,.suggest{overscroll-behavior:contain}
@@ -389,7 +418,10 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 
 /* Panel: the room at a glance. Field on top, then who is here, how far along, what they share. */
 .room.withdetails{grid-template-columns:minmax(0,1fr) 320px}
-.panel{border-left:1px solid var(--line);overflow:auto;min-width:0;display:flex;flex-direction:column;animation:slidein 640ms cubic-bezier(.65,0,.35,1) both}
+/* The panel scrolls the way menus do, with no bar and a fade where there is more, so nothing in
+   it narrows the moment it grows past the window. */
+.panel{border-left:1px solid var(--line);overflow:auto;min-width:0;display:flex;flex-direction:column;mask-image:linear-gradient(to bottom,transparent,#000 var(--fade-top),#000 calc(100% - var(--fade-bottom)),transparent);animation:slidein 640ms cubic-bezier(.65,0,.35,1) both,edges linear both;animation-timeline:auto,scroll(self)}
+.panel::-webkit-scrollbar{width:0;height:0}
 @keyframes slidein{from{opacity:0;transform:translateX(8px)}}
 /* The panel's header lines up with the room header, so one hairline runs across both panes. */
 .panelhead{height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink);white-space:nowrap;-webkit-app-region:drag}
@@ -522,7 +554,10 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .pinput .pclose{display:flex;padding:4px;margin:-4px;border-radius:6px;cursor:pointer}
 @media (hover:hover){.pinput .pclose:hover kbd{color:var(--ink);box-shadow:inset 0 0 0 1px var(--faint)}}
 .pinput kbd{margin:0;padding:2px 6px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2);opacity:1;color:var(--faint);font-size:10.5px}
-.plist{overflow:auto;padding:6px}
+/* Room for the bar is always kept, as wide as the padding on the other side, so the rows do not
+   widen when a search leaves too few to scroll. */
+.plist{overflow:auto;padding:6px 0 6px 6px;scrollbar-gutter:stable}
+.plist::-webkit-scrollbar{width:6px}
 .pgroup{padding:10px 12px 4px;font:11px var(--mono);color:var(--faint)}
 .pgroup:first-child{padding-top:4px}
 .plist button{display:flex;width:100%;align-items:center;gap:16px;height:34px;padding:0 12px;border-radius:8px;color:var(--dim);transition:background-color 90ms var(--out),color 90ms var(--out)}
@@ -543,7 +578,7 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .booting,.room.loading{height:100%;display:grid;place-items:center;color:var(--faint)}
 .roomfail{display:flex;flex-direction:column;align-items:center;gap:12px;max-width:340px;text-align:center;color:var(--dim);animation:fadein 300ms var(--out) both}
 .rise{animation:rise 640ms var(--out) both;animation-delay:calc(var(--i,0) * 70ms + 60ms)}
-.titleedit{font-size:14px;font-weight:500;height:28px;padding:0 8px;margin-left:-8px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line2);min-width:240px}
+.titleedit{font-size:13.5px;font-weight:500;height:28px;padding:0 8px;margin-left:-8px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line2);min-width:240px}
 .tag{height:20px;padding:0 6px;border-radius:4px;font:10.5px var(--mono);color:var(--faint);box-shadow:inset 0 0 0 1px var(--line2)}
 .replaybar{display:flex;align-items:center;gap:10px;height:40px;padding:0 24px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim);animation:fadein 200ms var(--out) both}
 .replaybar .dot{width:6px;height:6px;border-radius:50%;background:var(--live);animation:breathe 1.2s ease-in-out infinite}
@@ -652,7 +687,8 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .msgtools>button svg,.msgtools>.menuwrap>button svg{width:14px;height:14px}
 .msgtools .menu{font:13px/1.5 var(--sans);color:var(--ink)}
 
-.arena{margin-top:24px;display:flex;flex-direction:column;gap:12px;animation:land 380ms var(--out) both}
+/* Not the message box, which is .composer.arena while side by side is on. */
+.arena:not(.composer){margin-top:24px;display:flex;flex-direction:column;gap:12px;animation:land 380ms var(--out) both}
 .arenahead{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dim)}
 .arenahead b{font-weight:500;color:var(--ink)}
 .arenahead span{margin-left:auto;font:11px var(--mono);color:var(--faint)}
@@ -694,7 +730,21 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 
 /* New room */
 .newroom.starting .newbody>*:not(.band){opacity:.4;transition:opacity 300ms var(--out)}
-.newmeta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.newmeta{display:flex;align-items:center;gap:6px}
+.newmeta>*{flex:none}
+.newmeta>.foldermenu{flex:0 1 auto;min-width:0}
+.foldermenu .pill{max-width:100%}
+.foldermenu .pill>.mono{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.packmenu .pill{height:28px;padding:0 8px 0 12px;gap:4px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--line)}
+.packmenu .pilltext{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.packmenu.on .pill{color:var(--ink);background:var(--hover);box-shadow:inset 0 0 0 1px var(--line2)}
+.packmenu .menu{top:calc(100% + 6px);bottom:auto;left:auto;right:0;width:360px;transform-origin:top right}
+.packmenu .item{padding:7px 10px}
+.packmenu .item .grow{flex-direction:row;align-items:baseline;gap:10px;overflow-wrap:normal}
+.packmenu .item b{flex:none}
+.packmenu .item .grow span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--faint)}
+/* An open menu that has to flip upward lies over the message box, not under it. */
+.newmeta:has(.menu){z-index:30}
 .newmeta .divider{width:1px;height:16px;margin:0 6px;background:var(--line2)}
 .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border-radius:14px;font-size:12px;color:var(--dim);box-shadow:inset 0 0 0 1px var(--line);transition-duration:140ms}
 .chip.mono{font:11.5px var(--mono)}
@@ -864,7 +914,7 @@ label.field{display:flex;flex-direction:column;gap:6px;max-width:440px}
 .sbitem.needsyou small{color:var(--warn)}
 .sbpin{display:flex;color:var(--faint)}
 .sbpin svg{width:11px;height:11px}
-.sbarchived{height:26px;padding:0 8px;margin-top:6px;border-radius:6px;font-size:11.5px;color:var(--faint);text-align:left;transition:color 140ms var(--out)}
+.sbarchived{animation:fadein 200ms var(--out) both;height:26px;padding:0 8px;margin-top:6px;border-radius:6px;font-size:11.5px;color:var(--faint);text-align:left;transition:color 140ms var(--out)}
 @media (hover:hover){.sbarchived:hover{color:var(--dim)}}
 .sbroom.archived{opacity:.6}
 .inboxrow .grow b.mono{font:12.5px var(--mono)}
@@ -1052,6 +1102,11 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .planside .planrow{font-size:12.5px;line-height:18px;padding:4px 0}
 .planside .planbox{width:14px;height:14px;margin-top:2px}
 .planside.arriving{animation:planglow 1400ms var(--out) both}
+/* A plan that arrives in a panel already open takes its room over a moment, so the sections
+   under it slide down. */
+.planside.opening{interpolate-size:allow-keywords;flex:none;min-height:0;overflow:clip;animation:sideopen 520ms cubic-bezier(.65,0,.35,1) both}
+.planside.opening.arriving{animation:planglow 1400ms var(--out) both,sideopen 520ms cubic-bezier(.65,0,.35,1) both}
+@keyframes sideopen{from{height:0;padding-block:0;opacity:0}}
 @keyframes planglow{from{background-color:var(--hover)}}
 .planwho{display:block;font-size:11px;color:var(--faint)}
 .plannow{display:block;margin-top:3px;font:11px/16px var(--mono);color:var(--faint);font-feature-settings:"tnum"}
@@ -1074,3 +1129,9 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .ev.live .rich>:is(pre,h4,ul,ol):last-child{animation:fadein 240ms var(--out) both}
 .ev.settled :is(.plan,.workstep){animation:none}
 .ev.settled .plan *{animation:none!important;transition:none!important}
+.shellnote.lowplan{display:inline-flex;align-items:center;gap:6px;color:var(--dim)}
+.shellnote.lowplan::before{content:"";width:5px;height:5px;border-radius:1.5px;background:currentColor;opacity:.7}
+.npoints{list-style:none;margin:2px 0 4px;padding:0;display:flex;flex-direction:column;gap:9px}
+.npoints li{display:flex;gap:10px;font-size:13.5px;line-height:1.45;color:var(--ink)}
+.npoints svg{flex:none;width:14px;height:14px;margin-top:2px;color:var(--focus,var(--ink));opacity:.85}
+.nfoot{font-size:12px;color:var(--faint)}

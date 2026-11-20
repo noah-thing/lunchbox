@@ -69,8 +69,8 @@ export function CrewMenu({ listed, crew, toggle, promote, footer, close }: { lis
                   <i className="check" />
                 </button>
                 {on && !why && (
-                  <button className="modelchip" onClick={() => open(a)} title={`Model for ${a.short}`}>
-                    {models[a.id] ? modelName(models[a.id]) : 'Default model'}<IconChevron />
+                  <button className="modelchip" onClick={() => open(a)} title={`Model and effort for ${a.short}`}>
+                    <ChipLabel a={a} model={models[a.id] ?? ''} /><IconChevron />
                   </button>
                 )}
               </div>
@@ -140,27 +140,78 @@ function Choices({ a, value, back, alone }: { a: AgentInfo; value: string; back:
 }
 
 const LEVEL_NAMES: Record<string, string> = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' }
+const LEVEL_LINES: Record<string, string> = {
+  minimal: 'Answers almost at once',
+  low: 'Quick, for small and clear jobs',
+  medium: 'Balanced for everyday work',
+  high: 'Thinks a job through before it acts',
+  xhigh: 'Takes longer on hard problems',
+  max: 'Its deepest thinking, and the slowest',
+  ultra: 'Everything it has, and the most of your plan',
+}
 
-// How hard the agent thinks, for the model picked above. Only the levels that model takes are
-// offered; a model with no such setting shows nothing.
-export function Effort({ a, model, plain }: { a: AgentInfo; model: string; plain?: boolean }) {
-  const efforts = useApp((s) => s.settings.effort)
+// The levels a model takes, asked once per agent and model while the app runs.
+const levelCache = new Map<string, Promise<string[]>>()
+function levelsOf(id: string, model: string) {
+  const k = `${id}|${model}`
+  if (!levelCache.has(k)) levelCache.set(k, desk.call('agents:efforts', id, model).then((r: unknown) => (Array.isArray(r) ? (r as string[]) : []), () => { levelCache.delete(k); return [] as string[] }))
+  return levelCache.get(k)!
+}
+function useLevels(id: string, model: string) {
   const [levels, setLevels] = useState<string[]>([])
-  useEffect(() => {
-    let on = true
-    desk.call('agents:efforts', a.id, model).then((r: unknown) => on && setLevels(Array.isArray(r) ? (r as string[]) : []), () => on && setLevels([]))
-    return () => { on = false }
-  }, [a.id, model])
+  useEffect(() => { let on = true; levelsOf(id, model).then((l) => on && setLevels(l)); return () => { on = false } }, [id, model])
+  return levels
+}
+
+// The level that is really sent: one saved for another model that this one lacks reads as Default.
+function useLevel(a: AgentInfo, model: string) {
+  const efforts = useApp((s) => s.settings.effort)
+  const levels = useLevels(a.id, model)
+  const saved = efforts?.[a.id] ?? ''
+  return { levels, now: levels.includes(saved) ? saved : '', efforts }
+}
+
+// What the crew row shows beside an agent: its model, and its effort when one is picked.
+function ChipLabel({ a, model }: { a: AgentInfo; model: string }) {
+  const { now } = useLevel(a, model)
+  return <><span className="chipmodel">{model ? modelName(model) : now ? 'Default' : 'Default model'}</span>{now && <span className="chiplevel">{LEVEL_NAMES[now] ?? now}</span>}</>
+}
+
+// How hard the agent thinks, for the model picked above: a row of steps that fills from the left,
+// like a signal meter. Only the levels that model takes are offered, and a model with no such
+// setting shows nothing. Pointing at a step says what it does before it is picked; picking the lit
+// step again, or Default, leaves the level to the tool.
+export function Effort({ a, model }: { a: AgentInfo; model: string }) {
+  const { levels, now, efforts } = useLevel(a, model)
+  const [peek, setPeek] = useState<string | null>(null)
   if (!levels.length) return null
-  // A level saved for another model that this one lacks is not sent, so it reads as Default.
-  const now = levels.includes(efforts?.[a.id] ?? '') ? efforts![a.id] : ''
   const set = (v: string) => reload.settings({ effort: { ...efforts, [a.id]: v } })
-  const seg = (
-    <div className={`seg${plain ? '' : ' small'}`} role="radiogroup" aria-label={`Effort for ${a.short}`}>
-      {['', ...levels].map((v) => (
-        <button key={v || 'default'} role="radio" aria-checked={now === v} className={now === v ? 'on' : ''} onClick={() => set(v)} title={v ? undefined : `As set up in ${a.name}`}>{v ? LEVEL_NAMES[v] ?? v : 'Default'}</button>
-      ))}
+  const shown = peek ?? now
+  const lit = levels.indexOf(shown)
+  const key = (e: React.KeyboardEvent) => {
+    const i = levels.indexOf(now)
+    if (e.key === 'ArrowRight' && i < levels.length - 1) { e.preventDefault(); set(levels[i + 1]) }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); set(i > 0 ? levels[i - 1] : '') }
+    else if (e.key === 'Home') { e.preventDefault(); set('') }
+    else if (e.key === 'End') { e.preventDefault(); set(levels.at(-1)!) }
+  }
+  return (
+    <div className="effort">
+      <div className="efforthead">
+        <b>Effort</b>
+        <span key={shown || 'default'} className="effortname">{shown ? LEVEL_NAMES[shown] ?? shown : 'Default'}</span>
+        <button className={`effortreset${now ? '' : ' hidden'}`} onClick={() => set('')} tabIndex={now ? 0 : -1} aria-hidden={!now}>Default</button>
+      </div>
+      <div className="effortsteps" role="slider" tabIndex={0} aria-label={`Effort for ${a.short}`}
+        aria-valuemin={0} aria-valuemax={levels.length} aria-valuenow={levels.indexOf(now) + 1} aria-valuetext={now ? LEVEL_NAMES[now] ?? now : 'Default'}
+        onKeyDown={key} onPointerLeave={() => setPeek(null)} style={{ ['--n' as string]: levels.length }}>
+        {levels.map((v, i) => (
+          <button key={v} tabIndex={-1} className={`effortstep${i <= lit ? ' lit' : ''}${v === now ? ' at' : ''}${peek !== null ? ' peeking' : ''}`}
+            style={{ ['--i' as string]: i }} onPointerEnter={() => setPeek(v)} onFocus={() => setPeek(v)}
+            onClick={() => set(v === now ? '' : v)} aria-label={LEVEL_NAMES[v] ?? v}><i /></button>
+        ))}
+      </div>
+      <p key={`l${shown}`} className="effortline">{shown ? LEVEL_LINES[shown] ?? 'A level this model offers' : `As you set it up in ${a.name}`}</p>
     </div>
   )
-  return plain ? seg : <div className="modeleffort"><b>Effort</b>{seg}</div>
 }

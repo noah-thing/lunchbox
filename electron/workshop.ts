@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -189,8 +190,14 @@ export class Workshop {
   // In the person's own build: back to the standard app, which stays standard from now on.
   back() {
     this.save({ use: false })
-    const standard = process.env.LUNCHBOX_STANDARD
-    if (!standard || !existsSync(standard)) return false
+    // The standard app this build was started from, or where an installer puts it when this build
+    // was started some other way.
+    const standard = process.env.LUNCHBOX_STANDARD ?? [
+      '/Applications/Lunchbox.app/Contents/MacOS/Lunchbox',
+      join(homedir(), 'Applications', 'Lunchbox.app', 'Contents', 'MacOS', 'Lunchbox'),
+      join(process.env.LOCALAPPDATA ?? '', 'Programs', 'Lunchbox', 'Lunchbox.exe'),
+    ].find((p) => process.platform !== 'linux' && existsSync(p))
+    if (!standard || !existsSync(standard)) throw new Error('The standard Lunchbox could not be found from here. Quit this one and open Lunchbox again, and the standard one opens.')
     app.releaseSingleInstanceLock()
     spawn(standard, [], { detached: true, stdio: 'ignore', env: withoutMine() }).unref()
     app.quit()
@@ -250,6 +257,7 @@ export class Workshop {
 
   dismiss() {
     this.save({ failed: undefined })
+    if (this.busy?.error) this.busy = undefined
     return this.state()
   }
 

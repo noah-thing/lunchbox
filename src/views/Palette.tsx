@@ -85,6 +85,22 @@ export function Palette({ commands, close, openHit, anchor }: { commands: Comman
   useEffect(() => setAt(0), [q])
   useEffect(() => { list.current?.querySelector('.on')?.scrollIntoView({ block: 'nearest' }) }, [sel])
 
+  // The list gets longer and shorter as you type. The box eases to its new height from wherever
+  // it stands, instead of snapping there.
+  const tall = useRef(0)
+  const easing = useRef<Animation | null>(null)
+  useLayoutEffect(() => {
+    const el = clip.current!
+    const was = easing.current ? el.offsetHeight : tall.current
+    easing.current?.cancel()
+    easing.current = null
+    const now = tall.current = el.offsetHeight
+    if (!was || Math.abs(was - now) < 2 || still()) return
+    const run = el.animate([{ height: `${was}px` }, { height: `${now}px` }], { duration: 220, easing: 'cubic-bezier(.23,1,.32,1)' })
+    run.onfinish = () => { if (easing.current === run) easing.current = null }
+    easing.current = run
+  }, [ordered.length])
+
   const pick = (i: Item) => { close(); i.run() }
   let group = ''
   return (

@@ -470,10 +470,13 @@ function wire() {
   })
   h('workshop:setup', () => workshop.setup())
   // An idea starts a Workshop room straight away, or, the first time, once the copy is set up.
-  h('workshop:idea', async (text: string) => {
+  h('workshop:idea', async (text: string, chosen?: unknown) => {
     const idea = String(text ?? '').trim()
     if (!idea) throw new Error('Say what Lunchbox should do')
-    const { crew } = defaults()
+    // The crew picked in the Workshop's own menu, when it names agents Lunchbox knows.
+    const known = new Set(engine.agents.filter((a) => !engine.why(a.id)).map((a) => a.id))
+    const picked = Array.isArray(chosen) ? chosen.filter((id): id is string => typeof id === 'string' && known.has(id)) : []
+    const crew = picked.length ? picked : defaults().crew
     if (!crew.length) throw new Error('Connect an agent first, on the Agents page')
     const start = () => {
       const meta = engine.create({ crew, workspace: workshop.dir, pack: 'workshop', name: idea.split('\n')[0].slice(0, 60) })

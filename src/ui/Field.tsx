@@ -1,5 +1,6 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { still } from './bits'
+import { along, DAY_FLOOR } from './Band'
 
 // A source is one agent's region of the field. It writes in its own alphabet.
 export type Source = { alphabet: string; x: number; y: number; energy: number }
@@ -39,7 +40,9 @@ const MOODS = [
 
 type Ripple = { c: number; r: number; at: number; amp: number }
 
-export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { scene: MutableRefObject<Scene>; height?: number; quiet?: number; className?: string }) {
+// `fill` lifts the whole ground so the strip reads as one woven texture instead of islands, and
+// `spread` is how far each agent's region reaches, as a share of the width.
+export function Field({ scene, height = 168, quiet = 0.25, fill = 0, spread = 0.15, className = '' }: { scene: MutableRefObject<Scene>; height?: number; quiet?: number; fill?: number; spread?: number; className?: string }) {
   const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -47,7 +50,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
     const ctx = el.getContext('2d')!
     let cols = 0, rows = 0, cellW = 7.2, raf = 0, last = 0, shown = true, bumps = scene.current.bump ?? 0
     let slow = 0, vt = 0, prev = 0
-    let ink = '', mid = '', faint = '', font = '', ramped = false
+    let ink = '', mid = '', faint = '', font = '', ramped = false, light = false
     const energy: number[] = []
     const ripples: Ripple[] = []
     const pointer = { c: -99, r: -99, lift: 0 }
@@ -62,6 +65,9 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
       ink = (ramped && glyph(4)) || s.getPropertyValue('--ink').trim()
       mid = (ramped && glyph(3)) || ink
       faint = (ramped && glyph(1)) || s.getPropertyValue('--faint').trim()
+      // By day the quiet cells start further up the ramp, as the bands do, or they wash into the paper.
+      light = document.documentElement.dataset.theme === 'light'
+      if (light && ramped) faint = along([1, 2, 3, 4].map(glyph), DAY_FLOOR)
       font = `12px ${s.getPropertyValue('--mono')}`
     }
     const size = () => {
@@ -100,7 +106,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
         c: src.x * cols + Math.sin(mt * 0.13 + i * 1.7) * cols * 0.04,
         r: src.y * rows + Math.cos(mt * 0.11 + i * 2.3) * rows * 0.12,
       }))
-      const sigma = Math.max(el.clientWidth, 260) * 0.15
+      const sigma = Math.max(el.clientWidth, 260) * spread
 
       // Cables are sampled into cells once a frame, each with the character its slope calls for.
       const wire = new Map<number, [number, string]>()
@@ -165,7 +171,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
             if (wi > bw) { bw = wi; best = i }
           }
           const alphabet = best >= 0 ? s.sources[best].alphabet : '.:-=+*#%@'
-          let k = Math.max(0, Math.min(1, 0.42 * v + bw * 0.8 - hush))
+          let k = Math.max(0, Math.min(1, 0.42 * v + bw * 0.8 - hush + fill))
 
           const cell = wire.get(c * 1000 + r)
           if (s.mask && ms) {
@@ -189,7 +195,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
         ctx.fillStyle = faint
         ctx.fillText(line[DIM], 0, yy)
         ctx.fillStyle = mid
-        ctx.globalAlpha = ramped ? 0.85 : 0.6
+        ctx.globalAlpha = ramped ? (light ? 1 : 0.85) : 0.6
         ctx.fillText(line[MID], 0, yy)
         ctx.globalAlpha = 1
         ctx.fillStyle = ink
@@ -228,7 +234,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerdown', press)
     }
-  }, [height, quiet, scene])
+  }, [height, quiet, fill, spread, scene])
 
   return <canvas ref={canvas} className={`field ${className}`} style={{ height }} aria-hidden="true" />
 }
