@@ -4,6 +4,8 @@ import { Loader, Mark, Sure } from '../ui/bits'
 import { Field, type Scene } from '../ui/Field'
 import { IconFolder, IconPlay, IconShare } from '../ui/icons'
 import { agentOf, ago, desk, isDesktop, mod, reason, unavailable, useApp } from '../lib/desk'
+import { Menu } from '../ui/Access'
+import { CrewMenu } from '../ui/ModelPicker'
 import type { View } from '../App'
 
 // A release reads as its version; anything else, such as a commit in tests, by its short id.
@@ -109,9 +111,9 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
     }
   }
 
-  const build = async (text: string) => {
+  const build = async (text: string, crew?: string[]) => {
     try {
-      const r = await desk.call('workshop:idea', text)
+      const r = await desk.call('workshop:idea', text, crew)
       if (r?.room) go({ name: 'room', id: r.room })
       else setState(await desk.call('workshop'))
     } catch (e) {
@@ -278,22 +280,33 @@ function Progress({ state, first, retry, clear, agent }: { state: WorkshopState;
   )
 }
 
-function Ask({ disabled, onStart }: { disabled: boolean; onStart: (text: string) => void }) {
+// Who builds starts as the default crew and can be changed here, the same menu as a room's.
+function Ask({ disabled, onStart }: { disabled: boolean; onStart: (text: string, crew: string[]) => void }) {
   const [text, setText] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
-  const crew = useBuilders()
-  const names = crew.map((a) => a.short)
-  const go = () => { if (text.trim() && !disabled) { onStart(text.trim()); setText('') } }
+  const agents = useApp((s) => s.agents)
+  const builders = useBuilders()
+  const [picked, setPicked] = useState<string[] | null>(null)
+  const crew = (picked ?? builders.map((a) => a.id)).filter((id) => agents.some((a) => a.id === id))
+  const names = crew.map((id) => agentOf(id, agents).short)
+  const toggle = (id: string) => setPicked(crew.includes(id) ? (crew.length > 1 ? crew.filter((w) => w !== id) : crew) : [...crew, id])
+  const listed = [...agents].filter((a) => a.found || crew.includes(a.id)).sort((a, b) => Number(!!unavailable(a)) - Number(!!unavailable(b)))
+  const go = () => { if (text.trim() && !disabled && crew.length) { onStart(text.trim(), crew); setText('') } }
   return (
     <section className="ws-ask rise" style={{ '--i': 1 } as CSSProperties}>
       <div className="ws-field">
         <textarea ref={field} rows={2} value={text} disabled={disabled} placeholder="What should Lunchbox do that it does not do yet?"
           onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } }} />
         <div className="ws-fieldfoot">
-          {crew.length > 0
-            ? <span className="ws-by"><span className="stack">{crew.map((a) => <span key={a.id}><Mark seed={a.mark} size={12} /></span>)}</span>{names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} build it` : `${names[0]} builds it`}, in a room of its own</span>
-            : <span className="ws-by">Connect an agent on the Agents page to build it</span>}
-          <button className="btn small" disabled={!text.trim() || disabled} onClick={go}>Build it<kbd>↵</kbd></button>
+          {crew.length > 0 ? (
+            <>
+              <Menu label="Who builds it" button={<><span className="stack">{crew.map((id) => <span key={id}><Mark seed={agentOf(id, agents).mark} size={12} /></span>)}</span><span className="crewpill">{crew.length === 1 ? names[0] : `${crew.length} agents`}</span></>}>
+                {(close) => <CrewMenu listed={listed} crew={crew} toggle={toggle} close={close} promote={(id) => setPicked([id, ...crew.filter((w) => w !== id)])} footer={null} />}
+              </Menu>
+              <span className="ws-by">{names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} build it` : `${names[0]} builds it`}, in a room of its own</span>
+            </>
+          ) : <span className="ws-by">Connect an agent on the Agents page to build it</span>}
+          <button className="btn small" disabled={!text.trim() || disabled || !crew.length} onClick={go}>Build it<kbd>↵</kbd></button>
         </div>
       </div>
       <div className="ws-chips">
