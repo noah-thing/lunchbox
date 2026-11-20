@@ -8,7 +8,7 @@ import { join } from 'node:path'
 // the way people will. node test/show-notice.mjs <id>. Close the window to end.
 const root = new URL('..', import.meta.url).pathname
 const id = process.argv[2]
-const notice = JSON.parse(readFileSync(join(homedir(), 'lunchbox/notices.json'), 'utf8')).find((n) => n.id === id)
+const notice = JSON.parse(readFileSync(process.env.NOTICES ?? join(homedir(), 'lunchbox/notices.json'), 'utf8')).find((n) => n.id === id)
 if (!notice) throw new Error(`No notice ${id}`)
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
