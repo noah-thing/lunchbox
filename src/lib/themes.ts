@@ -108,13 +108,12 @@ function waiting(t: Theme, mode: Mode, bg: string, lead: string, avoid: string[]
   return bright(0.86, mode === 'dark' ? 0.12 : 0.16, h, bg, mode)
 }
 
-// Full access: a step round from the theme's hue towards red, by way of violet on a cool theme
-// so it never lands on green, and fuller than anything near it. A warm theme is already beside
-// red, so there it is the theme's failure colour, as it is in Quiet.
-function risk(t: Theme, mode: Mode, bg: string, bad: string, avoid: string[]) {
+// Full access: the theme's own hue, a little towards violet and fuller and brighter than anything
+// near it, so on a blue theme it is a vivid blue; the open padlock says what it means. A warm theme
+// is already beside red, so there it is the theme's failure colour, as it is in Quiet.
+function risk(t: Theme, mode: Mode, bg: string, bad: string) {
   if (!cool(t.hue)) return bad
-  const h = [t.hue + 50, t.hue + 70, t.hue + 30].find((x) => far(x % 360, avoid)) ?? t.hue + 50
-  return bright(mode === 'dark' ? 0.74 : 0.5, 0.19, h, bg, mode)
+  return bright(mode === 'dark' ? 0.8 : 0.48, 0.21, t.hue + 16, bg, mode)
 }
 
 // Failure stays a red, since it has to be read as one, turned to the end of red that sits with
@@ -146,17 +145,24 @@ function filled(color: string, mode: Mode) {
 function reaching(t: Theme, mode: Mode, reach: Reach): Record<string, string> {
   if (reach === 'quiet') return {}
   const tone = t[mode], s = solid(t, mode)
-  // A pale accent, a yellow by day, cannot draw a ring on paper; the block colour can.
-  const strong = contrast(tone.accent, s.sheet) >= 2 || !loud(tone.block) || contrast(tone.block, s.sheet) < 2 ? tone.accent : tone.block
+  // What the theme reaches with is its own colour: of its colours with any strength, the one
+  // nearest its hue. Cobalt's is its blue, not the yellow it keeps for the send button. A theme
+  // with no such colour, such as plain Lunchbox, uses its accent, or its block when a pale accent
+  // could not draw a ring on paper.
+  const own = [tone.block, tone.accent, ...tone.glyphs].filter(loud).sort((a, b) => apart(oklch(a).h, t.hue) - apart(oklch(b).h, t.hue))[0]
+  // An accent the person chose, by hand or in a theme of their own, is theirs to keep.
+  const chosen = t.custom || tone.accent !== THEMES.find((x) => x.id === t.id)?.[mode].accent
+  const strong = !chosen && t.chroma >= 0.01 && own ? own : contrast(tone.accent, s.sheet) >= 2 || !loud(tone.block) || contrast(tone.block, s.sheet) < 2 ? tone.accent : tone.block
   const focus = lift(lift(strong, s.sheet, 3, mode), s.ground, 3, mode)
   // A built in cool theme's own failure and waiting colours are its Quiet ones; here they join
   // the family. What a person picked, in a theme of their own or by hand, is left alone.
   const kept = t.custom || tone.pinned || !cool(t.hue)
   const bad = kept && tone.bad ? tone.bad : failure(t, mode, s.sheet, [tone.accent])
-  const full = kept && tone.bad ? bad : risk(t, mode, s.well, bad, [strong, tone.accent])
+  const full = kept && tone.bad ? bad : risk(t, mode, s.well, bad)
   const warn = kept && tone.warn ? tone.warn : waiting(t, mode, s.sheet, strong, [strong, tone.accent, bad, full])
   // The modes other than Full access take a colour that cannot be read as failure or waiting.
-  const safe = (c: string) => loud(c) && apart(oklch(c).h, oklch(bad).h) >= 40 && far(oklch(c).h, [warn, full])
+  // Full access may share their family: its padlock and its brightness set it apart.
+  const safe = (c: string) => loud(c) && apart(oklch(c).h, oklch(bad).h) >= 40 && far(oklch(c).h, [warn])
   const calm = [strong, tone.accent, tone.block, tone.glyphs[1]].find(safe)
   const auto = calm && lift(calm, s.well, 3, mode)
   const set: Record<string, string> = {
