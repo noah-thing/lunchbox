@@ -100,7 +100,10 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
     if (state?.launched && state.launched.at > opened.current) go({ name: 'room', id: state.launched.room })
   }, [state?.launched?.at])
 
+  // The job that ran last, so Try again repeats that one and not whatever the state suggests.
+  const last = useRef<string | null>(null)
   const act = async (channel: string, done?: string) => {
+    if (['workshop:setup', 'workshop:open', 'workshop:update', 'workshop:reset'].includes(channel)) last.current = channel
     try {
       const s = (await desk.call(channel)) as WorkshopState | undefined
       if (s && typeof s === 'object' && 'ready' in s) setState(s)
@@ -157,7 +160,7 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
         <Ask disabled={busy || !!state?.waiting} onStart={build} />
 
         {state && (busy || state.busy?.error) && (
-          <Progress state={state} first={!state.ready} retry={() => (state.waiting ? build(state.waiting) : act(state.ready ? 'workshop:open' : 'workshop:setup'))} clear={() => act('workshop:dismiss')}
+          <Progress state={state} first={!state.ready} retry={() => (state.waiting ? build(state.waiting) : act(last.current ?? (state.ready ? 'workshop:open' : 'workshop:setup')))} clear={() => act('workshop:dismiss')}
             agent={state.conflict ? () => build(`Bring my Workshop changes from Lunchbox ${state.base} onto ${state.current}. Git could not move them on its own, because the same code changed in the release. Rebase the commits on the branch mine onto the tag ${state.current} by hand, keep what each change was for, and make the typecheck, the tests and the build pass.`) : undefined} />
         )}
 
