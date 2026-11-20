@@ -75,7 +75,7 @@ const toast = async (page, re) => { try { await page.waitForSelector(`.toast >> 
   await page.waitForSelector('.menu .crewrow')
   await page.click('.menu .crewrow:has-text("Codex") .item')
   await page.keyboard.press('Escape')
-  check(/^Claude Code builds it/.test(await page.textContent('.ws-by')), `the crew menu changes who builds (${await page.textContent('.ws-by')})`)
+  check(/^Claude builds it/.test(await page.textContent('.ws-by')), `the crew menu changes who builds (${await page.textContent('.ws-by')})`)
   await page.fill('.ws-field textarea', 'A sound when an agent finishes')
   await page.click('.ws-field button:has-text("Build it")')
   await page.waitForSelector('.room .ws-bar', { timeout: 15000 })

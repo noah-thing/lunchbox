@@ -257,6 +257,7 @@ export class Workshop {
 
   dismiss() {
     this.save({ failed: undefined })
+    if (this.busy?.error) this.busy = undefined
     return this.state()
   }
 

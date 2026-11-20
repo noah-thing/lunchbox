@@ -110,11 +110,12 @@ function waiting(t: Theme, mode: Mode, bg: string, lead: string, avoid: string[]
   return bright(0.86, mode === 'dark' ? 0.12 : 0.16, h, bg, mode)
 }
 
-// Full access: a step round from the theme's hue towards red, by way of violet on a cool theme
+// Full access: a step round from the theme's hue towards red, by way of violet on a blue theme
 // so it never lands on green, and fuller than anything near it. A warm theme is already beside
-// red, so there it is the theme's failure colour, as it is in Quiet.
+// red, so there it is the theme's failure colour, as it is in Quiet. So is it on a green theme,
+// where the way round through violet starts at teal, a colour Meadow's mint and blush never use.
 function risk(t: Theme, mode: Mode, bg: string, bad: string, avoid: string[]) {
-  if (!cool(t.hue)) return bad
+  if (!cool(t.hue) || t.hue < 180) return bad
   const h = [t.hue + 50, t.hue + 70, t.hue + 30].find((x) => far(x % 360, avoid)) ?? t.hue + 50
   return bright(mode === 'dark' ? 0.74 : 0.5, 0.19, h, bg, mode)
 }
