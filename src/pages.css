@@ -185,8 +185,11 @@ input[type=number].select{width:64px}
 .gone,.gone *{animation:none!important;transition:none!important;pointer-events:none!important}
 .scrim.center.gone{animation:fadeout 180ms ease both!important}
 .scrim.center.gone>*{animation:sheetout 180ms var(--out) both!important}
-.menu.gone{animation:menuout 120ms var(--out) both!important}
+.menu.gone,.suggest.gone{animation:menuout 120ms var(--out) both!important}
 .toast.long.gone{animation:toastout 180ms var(--out) both!important}
+/* The room panel has already given its width back, so its copy fades over the edge it left. */
+.panel.gone{position:absolute;top:0;right:0;bottom:0;width:320px;background:var(--sheet);animation:panelout 180ms var(--out) both!important}
+@keyframes panelout{to{opacity:0;transform:translateX(8px)}}
 @keyframes toastout{to{opacity:0;transform:translate(-50%,4px)}}
 @keyframes sheetout{to{opacity:0;transform:scale(.98) translateY(4px)}}
 @keyframes menuout{to{opacity:0;transform:scale(.98)}}

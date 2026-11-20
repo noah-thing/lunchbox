@@ -132,7 +132,7 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // A new plan lifts out of the chat into the panel, so the panel opens for it. Only for now: the
   // choice to keep it closed stays saved. Pressing Stop is no moment for a panel to slide in.
   useEffect(() => {
-    const open = () => { if (!panelOn.current && performance.now() - stopped.current > 4000) { glideFrom.current = columnLeft(); reflow(); setPanel(true) } }
+    const open = () => { if (!panelOn.current && performance.now() - stopped.current > 4000) { glideFrom.current = lefts(); reflow(); setPanel(true) } }
     addEventListener('lunchbox:plan', open)
     return () => removeEventListener('lunchbox:plan', open)
   }, [])
@@ -140,19 +140,32 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   // jumping, on the compositor.
   const panelOn = useRef(panel)
   panelOn.current = panel
-  const glideFrom = useRef<number | null>(null)
+  const glideFrom = useRef<Lefts | null>(null)
   useLayoutEffect(() => {
     const from = glideFrom.current
     glideFrom.current = null
-    const to = columnLeft()
-    if (from === null || to === null || Math.abs(from - to) < 2 || matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    for (const el of document.querySelectorAll('.convo .column, .convo .dock')) {
-      el.animate([{ transform: `translateX(${from - to}px)` }, { transform: 'none' }], { duration: 760, easing: 'cubic-bezier(.65,0,.35,1)' })
+    const to = lefts()
+    if (!from || !to || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const slide = (sel: string, d: number) => {
+      if (Math.abs(d) < 2) return
+      for (const el of document.querySelectorAll(sel)) el.animate([{ transform: `translateX(${d}px)` }, { transform: 'none' }], { duration: 760, easing: 'cubic-bezier(.65,0,.35,1)' })
     }
+    slide('.convo .column, .convo .dock', from.column - to.column)
+    // The buttons at the end of the header ride with the edge they are pinned to, and the header
+    // cuts them off at that edge so they come out from under the panel, not across it.
+    slide('.convo .roomhead > .spacer ~ *', from.edge - to.edge)
+    document.querySelector('.convo .roomhead')?.animate([{ clipPath: 'inset(0)' }, { clipPath: 'inset(0)' }], { duration: 760 })
+    // A name or a folder that gets its room back is uncovered at the pace the buttons move, so
+    // the two never lie on each other on the way.
+    const uncover = (sel: string, grown: number, side: 'left' | 'right') => {
+      if (grown > 2) document.querySelector(sel)?.animate([{ clipPath: side === 'right' ? `inset(0 ${grown}px 0 0)` : `inset(0 0 0 ${grown}px)` }, { clipPath: 'inset(0)' }], { duration: 760, easing: 'cubic-bezier(.65,0,.35,1)' })
+    }
+    uncover('.convo .roomhead h1', to.title - from.title, 'right')
+    uncover('.convo .roomhead > .ghostbtn', to.folder - from.folder, 'left')
   }, [panel])
   // Defined before the loading return: the shortcut can fire while the room is still loading.
   const togglePanel = () => {
-    glideFrom.current = columnLeft()
+    glideFrom.current = lefts()
     reflow()
     setPanel((p) => { localStorage.setItem('lb.panel', String(!p)); return !p })
   }
@@ -237,7 +250,15 @@ export function RoomView({ id, access, setAccess, open, focus, say }: {
   )
 }
 
-const columnLeft = () => document.querySelector('.convo .column')?.getBoundingClientRect().left ?? null
+type Lefts = { column: number; edge: number; title: number; folder: number }
+// Where the chat column and the right end of the room header are, and how wide the name and the
+// folder are, before and after the panel moves them.
+const lefts = (): Lefts | null => {
+  const column = document.querySelector('.convo .column'), convo = document.querySelector('.convo')
+  if (!column || !convo) return null
+  const wide = (sel: string) => convo.querySelector(sel)?.getBoundingClientRect().width ?? 0
+  return { column: column.getBoundingClientRect().left, edge: convo.getBoundingClientRect().right, title: wide('.roomhead h1'), folder: wide('.roomhead > .ghostbtn') }
+}
 
 function Title({ name, rename }: { name: string; rename: (n: string) => void }) {
   const [editing, setEditing] = useState(false)
@@ -1279,6 +1300,9 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
   const prev = useRef(events.length)
   if (prev.current !== events.length) { prev.current = events.length; scene.current.bump = (scene.current.bump ?? 0) + 1 }
 
+  // A plan that turns up once the panel is standing opens its own room instead of shoving the
+  // sections under it down; one that is there from the start is simply part of the panel.
+  const born = useRef(performance.now())
   const state = waiting ? 'waiting' : live.active ? 'working' : 'idle'
   const caption = waiting ? 'Waiting for you' : live.doing || (events.length ? 'Quiet' : 'Ready when you are')
   const settledSteps = useMemo(() => plan(events, crew), [events, meta.crew.join(), agents])
@@ -1289,7 +1313,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
       <div className={`panelhead ${state}`}><i /><span>{caption}</span></div>
       <div className="now"><Field scene={scene} height={132} quiet={0.3} className="nowfield" /></div>
 
-      {steps.length > 0 && <PlanSide steps={steps} live={live} agents={agents} crew={crew} />}
+      {steps.length > 0 && <PlanSide steps={steps} live={live} agents={agents} crew={crew} late={performance.now() - born.current > 700} />}
 
       <section>
         <h2>Crew<small>{crew.length}</small></h2>
@@ -1320,7 +1344,8 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
 
 // The plan, pinned. A new plan waits for its card to land from the chat, then draws row by row;
 // the step being worked on breathes and carries what is happening under it.
-function PlanSide({ steps, live, agents, crew }: { steps: Step[]; live: Live; agents: AgentInfo[]; crew: AgentInfo[] }) {
+function PlanSide({ steps, live, agents, crew, late }: { steps: Step[]; live: Live; agents: AgentInfo[]; crew: AgentInfo[]; late: boolean }) {
+  const [opening] = useState(late)
   const turn = live.turns.find((t) => t.who === live.active) ?? live.turns[live.turns.length - 1]
   const key = steps.slice(0, 2).map((s) => s.text).join('\n')
   // Opened for a plan being handed over, the panel draws it as it slides in.
@@ -1343,7 +1368,7 @@ function PlanSide({ steps, live, agents, crew }: { steps: Step[]; live: Live; ag
   // A plan still being drawn in the chat arrives here when it is handed over.
   if (!ready) return null
   return (
-    <section className={`planside${ready ? '' : ' waiting'}${drawing ? ' arriving' : ''}`} key={shown}>
+    <section className={`planside${ready ? '' : ' waiting'}${drawing ? ' arriving' : ''}${opening ? ' opening' : ''}`} key={shown}>
       <h2>Plan<small>{ready ? done : 0} of {steps.length}</small></h2>
       <Bar items={ready ? steps : steps.map(() => ({}))} active={ready ? active : -1} />
       {ready && (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { PLAYBOOKS } from '../../shared/skills'
 import type { Skill } from '../../shared/types'
 import { Band } from '../ui/Band'
@@ -55,6 +55,33 @@ function defaultCrew(ids: string[], preferred: string[]) {
   const fromSettings = preferred.filter((id) => ids.includes(id))
   if (fromSettings.length) return fromSettings
   return ids.slice(0, 3)
+}
+
+// The page is centred, so anything that changes its height, a longer message or a second row of
+// ideas, moves all of it. It travels to its new place instead of jumping there. A window being
+// resized moves it every frame and takes its places.
+function useSettle() {
+  const body = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = body.current
+    if (!el) return
+    let top = el.offsetTop
+    let win = `${innerWidth} ${innerHeight}`
+    const born = performance.now()
+    const ro = new ResizeObserver(() => {
+      const was = top + new DOMMatrix(getComputedStyle(el).transform).m42
+      const same = win === `${innerWidth} ${innerHeight}`
+      top = el.offsetTop
+      win = `${innerWidth} ${innerHeight}`
+      // The first second belongs to the page rising in.
+      if (!same || Math.abs(was - top) < 1 || performance.now() - born < 1000 || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      for (const a of el.getAnimations()) if (a.id === 'settle') a.cancel()
+      el.animate([{ transform: `translateY(${was - top}px)` }, { transform: 'none' }], { id: 'settle', duration: 260, easing: 'cubic-bezier(.23,1,.32,1)' })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return body
 }
 
 const skillText = (s: Skill) => `${s.brief}\n\nSteps that worked last time:\n${s.steps.map((x) => `- ${x}`).join('\n')}`
@@ -125,11 +152,12 @@ export function NewRoom({ onCreated, go, say, access, setAccess, workspace, setW
   const picked = morePacks.find((p) => p.id === pack)
   const pick = async () => { const p = await desk.call('pick'); if (p) setWorkspace(p) }
   const recent = recents().filter((r) => r !== workspace)
+  const body = useSettle()
   const label = crew.length ? crew.map((id) => agentOf(id, agents).bin ?? agentOf(id, agents).short.toLowerCase()).join(' + ') : 'no agents yet'
 
   return (
     <div className={`newroom${starting ? ' starting' : ''}`}>
-      <div className="newbody">
+      <div className="newbody" ref={body}>
         <Band rows={9} label={label} busy={starting} patterned />
         <h1 className="rise" style={{ '--i': 1 } as CSSProperties}>What are we working on?</h1>
         <div className="rise" style={{ '--i': 2 } as CSSProperties}>
