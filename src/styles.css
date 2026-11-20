@@ -1101,9 +1101,12 @@ html[data-platform=win32] .ntoasts,html[data-platform=win32] .nbanner{top:60px}
 .planside h2 small{font-feature-settings:"tnum"}
 .planside .planrow{font-size:12.5px;line-height:18px;padding:4px 0}
 .planside .planbox{width:14px;height:14px;margin-top:2px}
-/* A plan handed to the panel opens its own room first, so the sections under it slide down. */
-.planside.arriving{interpolate-size:allow-keywords;overflow:clip;animation:planglow 1400ms var(--out) both,sideopen 520ms cubic-bezier(.65,0,.35,1) both}
-@keyframes sideopen{from{height:0;padding-block:0}}
+.planside.arriving{animation:planglow 1400ms var(--out) both}
+/* A plan that arrives in a panel already open takes its room over a moment, so the sections
+   under it slide down. */
+.planside.opening{interpolate-size:allow-keywords;flex:none;min-height:0;overflow:clip;animation:sideopen 520ms cubic-bezier(.65,0,.35,1) both}
+.planside.opening.arriving{animation:planglow 1400ms var(--out) both,sideopen 520ms cubic-bezier(.65,0,.35,1) both}
+@keyframes sideopen{from{height:0;padding-block:0;opacity:0}}
 @keyframes planglow{from{background-color:var(--hover)}}
 .planwho{display:block;font-size:11px;color:var(--faint)}
 .plannow{display:block;margin-top:3px;font:11px/16px var(--mono);color:var(--faint);font-feature-settings:"tnum"}

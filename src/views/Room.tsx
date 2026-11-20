@@ -1300,6 +1300,9 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
   const prev = useRef(events.length)
   if (prev.current !== events.length) { prev.current = events.length; scene.current.bump = (scene.current.bump ?? 0) + 1 }
 
+  // A plan that turns up once the panel is standing opens its own room instead of shoving the
+  // sections under it down; one that is there from the start is simply part of the panel.
+  const born = useRef(performance.now())
   const state = waiting ? 'waiting' : live.active ? 'working' : 'idle'
   const caption = waiting ? 'Waiting for you' : live.doing || (events.length ? 'Quiet' : 'Ready when you are')
   const settledSteps = useMemo(() => plan(events, crew), [events, meta.crew.join(), agents])
@@ -1310,7 +1313,7 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
       <div className={`panelhead ${state}`}><i /><span>{caption}</span></div>
       <div className="now"><Field scene={scene} height={132} quiet={0.3} className="nowfield" /></div>
 
-      {steps.length > 0 && <PlanSide steps={steps} live={live} agents={agents} crew={crew} />}
+      {steps.length > 0 && <PlanSide steps={steps} live={live} agents={agents} crew={crew} late={performance.now() - born.current > 700} />}
 
       <section>
         <h2>Crew<small>{crew.length}</small></h2>
@@ -1341,7 +1344,8 @@ function Panel({ meta, events, live, agents }: { meta: RoomMeta; events: Event[]
 
 // The plan, pinned. A new plan waits for its card to land from the chat, then draws row by row;
 // the step being worked on breathes and carries what is happening under it.
-function PlanSide({ steps, live, agents, crew }: { steps: Step[]; live: Live; agents: AgentInfo[]; crew: AgentInfo[] }) {
+function PlanSide({ steps, live, agents, crew, late }: { steps: Step[]; live: Live; agents: AgentInfo[]; crew: AgentInfo[]; late: boolean }) {
+  const [opening] = useState(late)
   const turn = live.turns.find((t) => t.who === live.active) ?? live.turns[live.turns.length - 1]
   const key = steps.slice(0, 2).map((s) => s.text).join('\n')
   // Opened for a plan being handed over, the panel draws it as it slides in.
@@ -1364,7 +1368,7 @@ function PlanSide({ steps, live, agents, crew }: { steps: Step[]; live: Live; ag
   // A plan still being drawn in the chat arrives here when it is handed over.
   if (!ready) return null
   return (
-    <section className={`planside${ready ? '' : ' waiting'}${drawing ? ' arriving' : ''}`} key={shown}>
+    <section className={`planside${ready ? '' : ' waiting'}${drawing ? ' arriving' : ''}${opening ? ' opening' : ''}`} key={shown}>
       <h2>Plan<small>{ready ? done : 0} of {steps.length}</small></h2>
       <Bar items={ready ? steps : steps.map(() => ({}))} active={ready ? active : -1} />
       {ready && (
