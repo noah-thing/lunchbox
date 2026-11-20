@@ -339,10 +339,10 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .slide.returning{animation-name:slideback}
 @keyframes slideback{from{opacity:0;transform:translateX(-10px)}}
 .crewrow{position:relative}
-.crewrow .modelchip{position:absolute;right:30px;top:8px;display:inline-flex;align-items:center;gap:4px;max-width:130px;height:20px;padding:0 6px 0 8px;border-radius:6px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 140ms var(--out),background-color 140ms var(--out)}
+.crewrow .modelchip{position:absolute;right:30px;top:8px;display:inline-flex;align-items:center;gap:4px;max-width:150px;height:20px;padding:0 6px 0 8px;border-radius:6px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color 140ms var(--out),background-color 140ms var(--out)}
 @media (hover:hover){.crewrow .modelchip:hover{color:var(--ink);background:var(--hover)}}
 .crewrow .modelchip .chev{flex:none;opacity:.7}
-.crewrow.checked .item .grow b{padding-right:112px}
+.crewrow.checked .item .grow b{padding-right:150px}
 .crewname{display:flex;align-items:center;gap:8px;min-width:0}
 .crewname>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crewrow.off .item .grow span{color:var(--faint)}
@@ -350,7 +350,7 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .maintag.make{display:none;color:var(--faint);box-shadow:none;background:var(--hover);animation:fadein 160ms var(--out) both;transition:color 140ms var(--out)}
 @media (hover:hover){.crewrow:hover .maintag.make{display:inline-block}.maintag.make:hover{color:var(--ink)}}
 .crewrow:focus-within .maintag.make{display:inline-block}
-.menu:has(.crewrow){width:344px}
+.menu:has(.crewrow){width:356px}
 /* The crew list scrolls inside the menu so it fits a short window. */
 .menu:has(>.fit){max-height:min(560px,calc(100vh - 140px));overflow-y:auto;overscroll-behavior:contain}
 .crewrow.off .item>.mark{opacity:.45}
@@ -368,12 +368,32 @@ textarea:focus-visible,input:focus-visible,[role=dialog]:focus{outline:0}
 .soleagent .mark{filter:grayscale(1);opacity:.7}
 @media (hover:hover){.soleagent:hover{color:var(--dim);opacity:1}}
 @media (hover:hover){.modelhead:hover svg:first-child{color:var(--ink)}}
-.modeleffort{display:flex;align-items:center;gap:10px;margin:4px 4px 2px;padding:8px 4px 2px;border-top:1px solid var(--line)}
-.modeleffort b{font-size:12px;font-weight:500;color:var(--dim)}
-.modeleffort .seg{margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
-.suggest .nomark{width:12px;flex:none}
+/* Effort sits under the models as one slim bar cut into a step per level, lit from the left in a
+   quick wave. Pointing at a step previews its name and line; the lit colour is the theme's. */
+.effort{margin:4px 4px 2px;padding:10px 6px 4px;border-top:1px solid var(--line)}
+.efforthead{display:flex;align-items:center;gap:8px;height:20px}
+.efforthead b{font-size:12px;font-weight:500;color:var(--dim)}
+.effortname{font-size:12px;color:var(--ink);animation:effortin 180ms var(--out) both}
+.effortreset{margin-left:auto;height:20px;padding:0 7px;border-radius:5px;font-size:11.5px;color:var(--faint);transition:opacity 160ms var(--out),color 140ms var(--out),background-color 140ms var(--out)}
+.effortreset.hidden{opacity:0;pointer-events:none}
+@media (hover:hover){.effortreset:hover{color:var(--ink);background:var(--hover)}}
+.effortsteps{display:grid;grid-template-columns:repeat(var(--n),1fr);gap:3px;margin-top:4px;border-radius:6px;outline:0}
+.effortsteps:focus-visible{box-shadow:0 0 0 1px var(--focus)}
+.effortstep{display:flex;align-items:center;height:22px;padding:0;border-radius:4px;cursor:pointer}
+.effortstep i{display:block;width:100%;height:6px;border-radius:2px;background:var(--line2);transition:background-color 200ms var(--out) calc(var(--i) * 28ms),transform 160ms var(--out),opacity 160ms var(--out)}
+.effortstep.lit i{background:var(--lit)}
+.effortstep.lit.peeking i{opacity:.55}
+.effortstep.lit.peeking:is(:hover,.at) i,.effortstep.at:not(.peeking) i{opacity:1}
+@media (hover:hover){.effortstep:hover i{transform:scaleY(1.35)}}
+.effortstep:active i{transform:scaleY(1)}
+.effortstep:first-child i{border-radius:3px 2px 2px 3px}.effortstep:last-child i{border-radius:2px 3px 3px 2px}
+.effortline{margin:2px 0 0;min-height:17px;font-size:11.5px;line-height:17px;color:var(--faint);animation:effortin 180ms var(--out) both}
+@keyframes effortin{from{opacity:0;transform:translateY(2px)}}
+/* The crew row names the model and, when one is picked, the effort after a hairline. */
+.crewrow .modelchip .chipmodel{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.crewrow .modelchip .chiplevel{flex:none;padding-left:5px;margin-left:1px;border-left:1px solid var(--line2);color:var(--dim)}
 .modelfind{display:block;width:calc(100% - 8px);height:30px;margin:2px 4px 4px;padding:0 10px;border-radius:7px;font-size:12.5px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line)}
-@media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*{animation:none}}
+@media (prefers-reduced-motion:reduce){.fit{transition:none}.slide,.unfold,.unfold>div>*,.effortname,.effortline{animation:none}.effortstep i{transition:none}}
 @keyframes menu{from{opacity:0;transform:scale(.97) translateY(4px)}}
 /* lib/fit.ts drops a menu below its button when there is no room above, and caps its height. */
 .menu,.suggest{overscroll-behavior:contain}
