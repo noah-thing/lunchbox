@@ -4,6 +4,7 @@ import { Menu, ModePicker } from '../ui/Access'
 import { CrewMenu } from '../ui/ModelPicker'
 import { IconClip, IconClose, IconSplit, IconStudio, IconStop, IconUp } from '../ui/icons'
 import { agentOf, desk, machine, unavailable, useApp, type Access } from '../lib/desk'
+import { lowOn } from '../lib/low'
 import { follow } from '../lib/fit'
 import { PLAYBOOKS, fillPlaybook } from '../../shared/skills'
 import { addOpenCode, hasOpenCode, openCodeFound } from './Connect'
@@ -75,6 +76,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
   const crewNow = useRef(crew)
   crewNow.current = crew
   const agents = useApp((s) => s.agents)
+  const limits = useApp((s) => s.limits)
   const connectors = useApp((s) => s.settings.connectors) ?? []
   const skills = useApp((s) => s.skills)
   const packs = useApp((s) => s.packs)
@@ -186,6 +188,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
     setCaret(0)
   }
   const ready = crew.filter((id) => !unavailable(agentOf(id, agents)))
+  const low = lowOn(ready, limits, (id) => agentOf(id, agents).short)
   const toggle = (id: string) => setCrew(crew.includes(id) ? (crew.length > 1 ? crew.filter((w) => w !== id) : crew) : [...crew, id])
   const listed = [...agents].filter((a) => a.found || crew.includes(a.id)).sort((a, b) => Number(!!unavailable(a)) - Number(!!unavailable(b)))
 
@@ -279,6 +282,7 @@ export function Composer({ crew, setCrew, onSend, access, setAccess, busy = fals
         )}
         {shell && <span className="shellnote">Runs on {machine()}</span>}
         {!shell && ready.length < crew.length && <span className="shellnote">{crew.length - ready.length} unavailable</span>}
+        {!shell && low && <span className="shellnote lowplan" title={low.next ? `If it runs out, ${low.next} picks up the work with the same memory.` : 'If it runs out, the room waits until it resets, or until you add another agent.'}>{low.text}</span>}
         <span className="spacer" />
         {!shell && <button className="iconbtn" onClick={attach} aria-label="Attach files" title="Attach files, or drop and paste them"><IconClip /></button>}
         <ModePicker value={access} onChange={setAccess} />

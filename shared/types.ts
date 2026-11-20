@@ -335,6 +335,11 @@ export type Notice = {
   title: string
   body?: string
   image?: string
+  // From 0.1.9: a small label over the title, what is new as a list shown instead of body, and a
+  // line under it. Older versions ignore these and show body, so a notice carries both.
+  kicker?: string
+  points?: string[]
+  foot?: string
   action?: { label: string; url: string }
   // Who sees it: versions from and to (inclusive), platforms, and a window in time.
   from?: string

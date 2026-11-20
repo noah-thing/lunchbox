@@ -2357,3 +2357,18 @@ test('claude: Auto keeps the web, skills and the person\'s own MCP servers, othe
   }
 })
 
+test('plan heads-up: the answering agent near the end of a window is named, with who takes over', async () => {
+  const { lowOn } = await import('../src/lib/low')
+  const name = (id: string) => ({ claude: 'Claude', codex: 'Codex' })[id] ?? id
+  const at = Date.now()
+  const limits = {
+    claude: { agent: 'claude', at, windows: [{ id: '5h', label: '5 hours', used: 0.93 }, { id: 'week', label: 'Week', used: 0.4 }] },
+    codex: { agent: 'codex', at, windows: [{ id: 'week', label: 'Week', used: 0.95 }] },
+  }
+  assert.deepEqual(lowOn(['claude', 'codex'], limits, name), { text: 'Claude: 7% of its five hour window left', next: 'Codex' })
+  assert.deepEqual(lowOn(['codex'], limits, name), { text: 'Codex: 5% of its week left', next: null })
+  assert.equal(lowOn(['claude'], { claude: { ...limits.claude, windows: [{ id: '5h', label: '5 hours', used: 0.5 }] } }, name), null, 'plenty left says nothing')
+  assert.equal(lowOn(['claude'], { claude: { ...limits.claude, reached: true } }, name), null, 'an agent that is out already shows as unavailable')
+  assert.equal(lowOn([], limits, name), null)
+})
+

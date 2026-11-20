@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useModal } from '../lib/modal'
 import type { Notice, UpdateState } from '../../shared/types'
-import { IconClose } from './icons'
+import { IconCheck, IconClose } from './icons'
 import { desk, useApp } from '../lib/desk'
 
 // Messages pushed from the signed feed, and the app's own update state, in three forms: a toast in
@@ -119,10 +119,13 @@ export function Notices() {
             {card.image && <img src={card.image} alt="" />}
             <button className="iconbtn nclose" onClick={() => dismiss(card.id)} aria-label="Close"><IconClose /></button>
             <div className="nbody">
+              {card.kicker && <span className="nkicker">{card.kicker}</span>}
               <h2>{card.title}</h2>
-              {card.body && <p>{card.body}</p>}
+              {card.points?.length ? (
+                <ul className="npoints">{card.points.map((p) => <li key={p}><IconCheck />{p}</li>)}</ul>
+              ) : card.body && <p>{card.body}</p>}
               <div className="row">
-                <span className="grow" />
+                {card.foot ? <span className="nfoot grow">{card.foot}</span> : <span className="grow" />}
                 <button className="btn small quiet" onClick={() => dismiss(card.id)}>Close</button>
                 {card.action && <button className="btn small" onClick={() => go(card)}>{card.action.label}</button>}
               </div>
