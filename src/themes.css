@@ -33,7 +33,7 @@
    focused message box: its edge is the focus colour. */
 :root[data-palette]:not([data-reach=quiet]) .tabs button.on{background:color-mix(in oklab,var(--block) 20%,var(--well));color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--block) 34%,transparent)}
 :root[data-palette]:not([data-reach=quiet]) .tabs button.on small{color:var(--dim)}
-:root[data-palette] .chip.on{background:color-mix(in oklab,var(--block) 18%,transparent);color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--block) 34%,transparent)}
+:root[data-palette] :is(.chip.on,.packmenu.on .pill){background:color-mix(in oklab,var(--block) 18%,transparent);color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--block) 34%,transparent)}
 
 /* The accent: what acts, and what shows progress. */
 ::selection{background:var(--accent);color:var(--on-accent)}
