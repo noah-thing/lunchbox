@@ -40,7 +40,9 @@ const MOODS = [
 
 type Ripple = { c: number; r: number; at: number; amp: number }
 
-export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { scene: MutableRefObject<Scene>; height?: number; quiet?: number; className?: string }) {
+// `fill` lifts the whole ground so the strip reads as one woven texture instead of islands, and
+// `spread` is how far each agent's region reaches, as a share of the width.
+export function Field({ scene, height = 168, quiet = 0.25, fill = 0, spread = 0.15, className = '' }: { scene: MutableRefObject<Scene>; height?: number; quiet?: number; fill?: number; spread?: number; className?: string }) {
   const canvas = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -104,7 +106,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
         c: src.x * cols + Math.sin(mt * 0.13 + i * 1.7) * cols * 0.04,
         r: src.y * rows + Math.cos(mt * 0.11 + i * 2.3) * rows * 0.12,
       }))
-      const sigma = Math.max(el.clientWidth, 260) * 0.15
+      const sigma = Math.max(el.clientWidth, 260) * spread
 
       // Cables are sampled into cells once a frame, each with the character its slope calls for.
       const wire = new Map<number, [number, string]>()
@@ -169,7 +171,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
             if (wi > bw) { bw = wi; best = i }
           }
           const alphabet = best >= 0 ? s.sources[best].alphabet : '.:-=+*#%@'
-          let k = Math.max(0, Math.min(1, 0.42 * v + bw * 0.8 - hush))
+          let k = Math.max(0, Math.min(1, 0.42 * v + bw * 0.8 - hush + fill))
 
           const cell = wire.get(c * 1000 + r)
           if (s.mask && ms) {
@@ -232,7 +234,7 @@ export function Field({ scene, height = 168, quiet = 0.25, className = '' }: { s
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerdown', press)
     }
-  }, [height, quiet, scene])
+  }, [height, quiet, fill, spread, scene])
 
   return <canvas ref={canvas} className={`field ${className}`} style={{ height }} aria-hidden="true" />
 }

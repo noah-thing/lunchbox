@@ -31,7 +31,7 @@ function useBuilders() {
 function Now({ state, busy, waiting }: { state: WorkshopState | null; busy: boolean; waiting: boolean }) {
   const crew = useBuilders()
   const scene = useRef<Scene>({ sources: [], active: -1, cables: [] })
-  scene.current.sources = crew.map((a, i) => ({ alphabet: a.alphabet, x: (i + 0.5) / crew.length, y: i % 2 ? 0.66 : 0.34, energy: 0.22 }))
+  scene.current.sources = crew.map((a, i) => ({ alphabet: a.alphabet, x: (i + 0.5) / crew.length, y: i % 2 ? 0.66 : 0.34, energy: 0.1 }))
   scene.current.active = busy && crew.length ? 0 : -1
   scene.current.hold = waiting
   const phase = busy ? 'working' : waiting ? 'waiting' : 'idle'
@@ -40,7 +40,7 @@ function Now({ state, busy, waiting }: { state: WorkshopState | null; busy: bool
   const caption = busy ? state!.busy!.step : state?.mine ? 'This is your Lunchbox' : waiting ? 'Ready to try' : crew.length ? 'Ready when you are' : 'No agent is ready yet'
   return (
     <div className="ws-now rise" aria-hidden="true">
-      <Field scene={scene} height={84} quiet={0.3} className="nowfield" />
+      <Field scene={scene} height={98} quiet={0.3} fill={0.2} spread={0.21} className="nowfield" />
       <div className={`ws-nowline ${phase}`}><i /><span>{caption}</span>{state?.ready && <code>Lunchbox {label(state.base)}</code>}</div>
     </div>
   )
@@ -48,11 +48,15 @@ function Now({ state, busy, waiting }: { state: WorkshopState | null; busy: bool
 
 // The three steps, each with a small drawing in the app's own characters: the box you type in, the
 // alphabets of the agents at work, and the two buttons at the end.
+// The builders' alphabets, each climbing its ramp and back down, as the middle step's drawing.
+const weave = (alphabets: string[]) => (alphabets.length ? alphabets : ['.:-=+*#%@', '.-01', '.:/\\|X#']).slice(0, 3)
+  .map((a) => { const ramp = a + [...a].reverse().slice(1, -1).join(''); return ramp.repeat(Math.ceil(24 / ramp.length)).slice(0, 24) }).join('\n')
+
 const STEPS = [
   { name: 'Say what you want', line: 'A button, a page, a provider, an integration. Anything Lunchbox could do.',
     art: '+----------------------+\n| > a sound when an_   |\n+----------------------+' },
   { name: 'An agent builds it', line: 'In your own copy of Lunchbox, the way the rest of the app is made. The first time takes a minute to set up.',
-    art: '.:-=+*#%@@%#*+=-:..:-=+*\n.-01.-0110.-01.-0110.-01\n.:/\\|X#X|\\/:..:/\\|X#X|\\/' },
+    art: '' },
   { name: 'Try it, or send it', line: 'Open your Lunchbox with one click and switch back any time. Send it to us if everyone should have it.',
     art: '+----------+ +---------+\n| > try it | | ^ send  |\n+----------+ +---------+' },
 ]
@@ -98,6 +102,7 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
   }
 
   const ideas = rooms.filter((r) => r.pack === 'workshop' && !r.archived)
+  const builders = useBuilders().map((a) => a.alphabet)
   const busy = !!state?.busy && !state.busy.error
   const behind = !!state?.ready && !!state.base && state.base !== state.current
   const changed = state?.changes.length ?? 0
@@ -190,7 +195,7 @@ export function Workshop({ go, say }: { go: (v: View) => void; say: (t: string) 
             {STEPS.map((st, i) => (
               <li key={st.name}>
                 <div className="ws-stephead"><code>0{i + 1}</code><i /></div>
-                <pre aria-hidden="true">{st.art}</pre>
+                <pre aria-hidden="true">{st.art || weave(builders)}</pre>
                 <b>{st.name}</b>
                 <span>{st.line}</span>
               </li>
