@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { WorkshopState } from '../../shared/types'
-import { Loader, Sure } from '../ui/bits'
+import { Loader, Mark, Sure } from '../ui/bits'
 import { IconFolder, IconPlay, IconShare } from '../ui/icons'
-import { ago, desk, isDesktop, mod, reason, useApp } from '../lib/desk'
+import { agentOf, ago, desk, isDesktop, mod, reason, unavailable, useApp } from '../lib/desk'
 import type { View } from '../App'
 
 // A release reads as its version; anything else, such as a commit in tests, by its short id.
@@ -206,15 +206,28 @@ function Progress({ state, first, retry, clear, agent }: { state: WorkshopState;
 function Ask({ disabled, onStart }: { disabled: boolean; onStart: (text: string) => void }) {
   const [text, setText] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
+  const agents = useApp((s) => s.agents)
+  const defaults = useApp((s) => s.settings.defaultCrew)
+  // The crew the main process starts a Workshop room with: the default crew, or the first three ready.
+  const ready = agents.filter((a) => !unavailable(a)).map((a) => a.id)
+  const preferred = defaults.filter((id) => ready.includes(id))
+  const crew = preferred.length ? preferred : ready.slice(0, 3)
+  const names = crew.map((id) => agentOf(id, agents).short)
   const go = () => { if (text.trim() && !disabled) { onStart(text.trim()); setText('') } }
   return (
     <section className="ws-ask rise" style={{ '--i': 1 } as CSSProperties}>
       <div className="ws-field">
         <textarea ref={field} rows={2} value={text} disabled={disabled} placeholder="What should Lunchbox do that it does not do yet?"
           onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go() } }} />
-        <button className="btn" disabled={!text.trim() || disabled} onClick={go}>Build it<kbd>↵</kbd></button>
+        <div className="ws-fieldfoot">
+          {crew.length > 0
+            ? <span className="ws-by"><span className="stack">{crew.map((id) => <span key={id}><Mark seed={agentOf(id, agents).mark} size={12} /></span>)}</span>{names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} build it` : `${names[0]} builds it`}, in a room of its own</span>
+            : <span className="ws-by">Connect an agent on the Agents page to build it</span>}
+          <button className="btn small" disabled={!text.trim() || disabled} onClick={go}>Build it<kbd>↵</kbd></button>
+        </div>
       </div>
       <div className="ws-chips">
+        <small>For example</small>
         {IDEAS.map((i) => <button key={i} className="ws-chip" onClick={() => { setText(i); field.current?.focus() }}>{i}</button>)}
       </div>
     </section>
