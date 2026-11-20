@@ -131,13 +131,15 @@ const step = async (name, act, { ms = 700, shots = [50, 130, 260], quiet = [] } 
 }
 const key = (k) => () => page.keyboard.press(k)
 const click = (sel) => () => page.click(sel)
+// A point on the dimmed backdrop, clear of any sheet.
+const innerEdge = W - 20
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
 
 try {
   await page.waitForSelector('.onboard')
   for (let i = 0; i < 4; i++) { await page.keyboard.press('Enter'); await page.waitForTimeout(i ? 900 : 2600) }
   await page.waitForSelector('.newroom')
-  if (process.env.DAY) await page.evaluate(() => { localStorage.setItem('lb.theme', '"light"'); location.reload() }).then(() => page.waitForSelector('.newroom'))
+  if (process.env.DAY) { await page.evaluate(() => localStorage.setItem('lb.theme', '"light"')); await page.reload(); await page.waitForSelector('.newroom') }
   await page.waitForTimeout(1500)
 
   // New room: every menu, open and shut.
@@ -234,11 +236,11 @@ try {
   await page.waitForTimeout(500)
   for (const i of [1, 2, 3, 0]) await step(`77d-library-tab-${i}`, () => page.click(`.tabs button >> nth=${i}`).catch(() => {}), { ms: 700 })
   await step('77e-playbook-open', click('.cards .card >> nth=0'))
-  await step('77f-playbook-close', () => page.mouse.click(260, 500))
+  await step('77f-playbook-close', () => page.mouse.click(innerEdge, 300))
   await step('77g-import-open', click('.sbimport'))
-  await step('77h-import-close', () => page.mouse.click(260, 500))
+  await step('77h-import-close', () => page.mouse.click(innerEdge, 300))
   await step('77i-report-open', click('.sbbeta'))
-  await step('77j-report-close', () => page.mouse.click(260, 500))
+  await step('77j-report-close', () => page.mouse.click(innerEdge, 300))
   await step('78-room-open', click('.sbroom >> nth=0'), { ms: 900, shots: [30, 80, 160, 300] })
   await step('79-newroom', click('.sbitem >> text=New room'), { ms: 900 })
   await page.click('.composer textarea')
