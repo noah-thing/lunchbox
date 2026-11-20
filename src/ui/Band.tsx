@@ -28,6 +28,29 @@ function noise(x: number, y: number) {
   const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1)
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
 }
+
+// A colour somewhere along a ramp, 0 at its faint end and 1 at its loud end.
+let probe: CanvasRenderingContext2D | null = null
+function rgb(css: string): [number, number, number] {
+  probe ??= Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true })!
+  probe.clearRect(0, 0, 1, 1)
+  probe.fillStyle = css
+  probe.fillRect(0, 0, 1, 1)
+  const d = probe.getImageData(0, 0, 1, 1).data
+  return [d[0], d[1], d[2]]
+}
+export function along(stops: string[], at: number) {
+  const x = Math.max(0, Math.min(1, at)) * (stops.length - 1)
+  const i = Math.min(stops.length - 2, Math.floor(x)), f = x - i
+  const a = rgb(stops[i]), b = rgb(stops[i + 1])
+  return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(' ')})`
+}
+// By day the faint end of a ramp is nearly the paper itself, and thin strokes on a light page read
+// weaker than the same strokes on black. So the day ramp starts part of the way up and climbs in
+// even steps, one colour per strength, where the night ramp has four.
+export const DAY_FLOOR = 0.15
+const dayRamp = (stops: string[]) => Array.from({ length: STEPS }, (_, s) => along(stops, DAY_FLOOR + (1 - DAY_FLOOR) * (s / (STEPS - 1))))
+
 const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
 
 export function Band({ rows = 9, label = '', word, busy = false, patterned = false, className = '' }: { rows?: number; label?: string; word?: string; busy?: boolean; patterned?: boolean; className?: string }) {
@@ -51,6 +74,7 @@ export function Band({ rows = 9, label = '', word, busy = false, patterned = fal
     let ink = '#f0eee8'
     // A theme's ASCII ramp, faint to bright; without one the band is ink at eight strengths.
     let ramp: string[] | null = null
+    let day: string[] | null = null, light = false
     let shownWord = props.current.word, wordAt = performance.now() / 1000 + 0.3, wordK = 0
     let shownLabel = props.current.label, labelAt = 0
     const h = rows * LH
@@ -141,8 +165,9 @@ export function Band({ rows = 9, label = '', word, busy = false, patterned = fal
         for (let s = 1; s < STEPS; s++) {
           if (!line[s].length) continue
           const k = s / (STEPS - 1)
-          if (ramp) { ctx.fillStyle = ramp[Math.min(3, Math.floor(k * 4))]; ctx.globalAlpha = 0.45 + 0.55 * k }
-          else ctx.globalAlpha = k
+          if (day) { ctx.fillStyle = day[s]; ctx.globalAlpha = 0.6 + 0.4 * k }
+          else if (ramp) { ctx.fillStyle = ramp[Math.min(3, Math.floor(k * 4))]; ctx.globalAlpha = 0.45 + 0.55 * k }
+          else ctx.globalAlpha = light ? 0.16 + 0.84 * k : k
           ctx.fillText(line[s].join(''), 0, y)
         }
       }
@@ -167,6 +192,8 @@ export function Band({ rows = 9, label = '', word, busy = false, patterned = fal
       ink = css.getPropertyValue('--ink').trim() || ink
       const stops = [1, 2, 3, 4].map((i) => css.getPropertyValue(`--glyph-${i}`).trim())
       ramp = document.documentElement.hasAttribute('data-glyphs') && stops.every(Boolean) ? stops : null
+      light = document.documentElement.dataset.theme === 'light'
+      day = light && ramp ? dayRamp(ramp) : null
     }
     colour()
     const theme = new MutationObserver(() => { colour(); draw(performance.now()) })
